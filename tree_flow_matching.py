@@ -147,17 +147,20 @@ class TreeFlowMatching:
             x1, y = x1.to(self.device), y.to(self.device)
             
             # Sample noise level from fitted Gaussian
-            sampled_noise = torch.normal(noise_mean, noise_std)
-            breakpoint()
-            
+            sampled_noise = torch.normal(
+                noise_mean.expand(x1.shape[0]),
+                noise_std.expand(x1.shape[0])
+            )
             # Create noisy sample by adding appropriate noise to ground truth
             noise = torch.randn_like(x1)
-            noisy_sample = x1 + noise * sampled_noise
+            noise = noise / torch.norm(noise.view(x1.shape[0], -1), dim=1).view(-1, 1, 1, 1)
+            noisy_sample = x1 + noise * sampled_noise.view(-1, 1, 1, 1)
+            noisy_sample = torch.clamp(noisy_sample, -1, 1) # we need to clamp to be in the image space
             
             # Train value model
             self.value_optimizer.zero_grad()
             noise_estimate = self.value_model(
-                torch.ones(1, device=self.device),
+                torch.ones(x1.shape[0], device=self.device),
                 noisy_sample,
                 y
             )
@@ -174,7 +177,7 @@ class TreeFlowMatching:
         return next_depth_samples, value_losses
   
     def sample(self, num_samples, class_labels, 
-            num_branches=5, num_select=2, num_steps=3):
+            num_branches=5, num_select=2, num_steps=None):
         """
         Generate samples using tree-based exploration guided by value model.
         
@@ -183,8 +186,10 @@ class TreeFlowMatching:
             class_labels: Class conditioning for each sample
             num_branches: Number of branches to create at each node
             num_select: Number of best branches to keep at each step
-            num_steps: Number of refinement steps
+            num_steps: Number of refinement steps (defaults to max_depth)
         """
+        if num_steps is None or num_steps > self.max_depth:
+            num_steps = self.max_depth
         self.flow_model.eval()
         self.value_model.eval()
         
@@ -290,7 +295,7 @@ class ValueModel(UNetModel):
         
     def forward(self, t, x, y):
         features = super().forward(t, x, y)
-        return self.final_layer(features).mean()
+        return self.final_layer(features).mean(dim=[1, 2, 3])
     
 
 class SigmaConditionedUNet(UNetModel):
