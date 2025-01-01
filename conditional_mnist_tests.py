@@ -189,7 +189,7 @@ def evaluate_tree_cfm(tree_fm, test_loader, device=None, num_samples=100):
 def main():
     # Set up parameters
     batch_size = 32
-    max_batches = 100 # Set to None to use all data
+    max_batches = 50 # Set to None to use all data
     n_epochs = 1
     sigma = 0.0
     device = get_device()
@@ -202,11 +202,11 @@ def main():
     train_loader = load_mnist_data(batch_size, max_batches, train=True)
     test_loader = load_mnist_data(batch_size, max_batches=10, train=False)
     
-    # Train standard CFM
-    print("Training standard CFM...")
-    standard_model = train_standard_cfm(train_loader, n_epochs, sigma, device)
-    print("\nEvaluating standard CFM...")
-    evaluate_standard_cfm(standard_model, test_loader, device)
+    # # Train standard CFM
+    # print("Training standard CFM...")
+    # standard_model = train_standard_cfm(train_loader, n_epochs, sigma, device)
+    # print("\nEvaluating standard CFM...")
+    # evaluate_standard_cfm(standard_model, test_loader, device)
     
     # Train custom CFM
     print("\nTraining Tree CFM...")
