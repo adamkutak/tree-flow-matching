@@ -52,11 +52,26 @@ class TreeFlowMatching:
         # Training metrics
         self.flow_losses = []
         self.value_losses = []
-    
+
+    def _add_noise(self, x1, sigma):
+        """Add scaled Gaussian noise to samples.
+        
+        Args:
+            x1 (torch.Tensor): Input samples to add noise to
+            sigma (torch.Tensor): Noise scale for each sample in batch
+                (represents amount of noise to add)
+            
+        Returns:
+            torch.Tensor: Noisy samples with approximately sigma amount of noise
+        """
+        noise = torch.randn_like(x1)
+        return x1 + noise * sigma.view(-1, 1, 1, 1)
+
     def train_epoch(self, train_loader):
         """Train both flow and value models for one epoch."""
-        # Initialize datasets for each depth
-        depth_datasets = {0: [(x, y) for x, y in train_loader]}
+        # Initialize datasets for depth 0 with sigma=1.0 for full noise
+        depth_datasets = {0: [(x, y, torch.ones(x.shape[0], device=self.device)) 
+                            for x, y in train_loader]}
         
         for depth in range(self.max_depth):
             print(f"\nTraining at depth {depth}")
@@ -80,20 +95,16 @@ class TreeFlowMatching:
         losses = []
         pbar = tqdm(dataset, desc=f"Training flow model (depth {depth})")
         
-        for i, (x1, y) in enumerate(pbar):
-            x1, y = x1.to(self.device), y.to(self.device)
-            self.flow_optimizer.zero_grad()
+        for i, batch in enumerate(pbar):
+            x1, y, sigma = batch
+            x1, y, sigma = x1.to(self.device), y.to(self.device), sigma.to(self.device)
             
-            # At depth 0, start from random noise like standard CFM
-            # At deeper levels, start from x1 plus scaled noise
             if depth == 0:
-                x0 = torch.randn_like(x1)
-                sigma = torch.ones(x1.shape[0], device=self.device)  # Full noise
+                x0 = torch.randn_like(x1)  # For depth 0, we start from pure noise
             else:
-                sigma_estimate = 1.0 / (depth + 1)
-                x0 = x1 + torch.randn_like(x1) * sigma_estimate
-                sigma = torch.full((x1.shape[0],), sigma_estimate, device=self.device)
+                x0 = self._add_noise(x1, sigma)
             
+            self.flow_optimizer.zero_grad()
             t, xt, ut = self.FM.sample_location_and_conditional_flow(x0, x1)
             vt = self.flow_model(t, xt, y, sigma=sigma)
             flow_loss = torch.mean((vt - ut) ** 2)
@@ -117,13 +128,13 @@ class TreeFlowMatching:
         noise_values = []
         ode_pbar = tqdm(dataset[:num_ode_samples], desc=f"Generating ODE samples (depth {depth})")
         with torch.no_grad():
-            for x1, y in ode_pbar:
-                x1, y = x1.to(self.device), y.to(self.device)
-                x0 = torch.randn_like(x1)
+            for x1, y, sigma in ode_pbar:
+                x1, y, sigma = x1.to(self.device), y.to(self.device), sigma.to(self.device)
+                x0 = self._add_noise(x1, sigma)
                 
-                # Generate sample using ODE
+                # Generate sample using ODE with sigma conditioning
                 traj = torchdiffeq.odeint(
-                    lambda t, x: self.flow_model(t, x, y),
+                    lambda t, x: self.flow_model(t, x, y, sigma=sigma),
                     x0,
                     torch.linspace(0, 1, 2, device=self.device),
                     atol=1e-4, rtol=1e-4
@@ -136,14 +147,15 @@ class TreeFlowMatching:
                 
                 noise_levels = torch.norm(diff_flat, dim=1) / torch.norm(x1_flat, dim=1)
                 noise_values.extend(noise_levels.tolist())
-        
+
         # Fit Gaussian to all noise values across batches
         noise_mean = torch.tensor(noise_values).mean()
         noise_std = torch.tensor(noise_values).std()
 
         # Now train value model using ground truth + sampled noise
+        # Train value model
         value_pbar = tqdm(dataset, desc=f"Training value model (depth {depth})")
-        for i, (x1, y) in enumerate(value_pbar):
+        for x1, y, _ in value_pbar:
             x1, y = x1.to(self.device), y.to(self.device)
             
             # Sample noise level from fitted Gaussian
@@ -151,11 +163,9 @@ class TreeFlowMatching:
                 noise_mean.expand(x1.shape[0]),
                 noise_std.expand(x1.shape[0])
             )
-            # Create noisy sample by adding appropriate noise to ground truth
-            noise = torch.randn_like(x1)
-            noise = noise / torch.norm(noise.view(x1.shape[0], -1), dim=1).view(-1, 1, 1, 1)
-            noisy_sample = x1 + noise * sampled_noise.view(-1, 1, 1, 1)
-            noisy_sample = torch.clamp(noisy_sample, -1, 1) # we need to clamp to be in the image space
+            
+            # Create noisy sample
+            noisy_sample = self._add_noise(x1, sampled_noise)
             
             # Train value model
             self.value_optimizer.zero_grad()
@@ -171,95 +181,85 @@ class TreeFlowMatching:
             
             value_pbar.set_postfix({'loss': f'{value_loss.item():.4f}'})
             
-            # Add to next depth's dataset
-            next_depth_samples.append((noisy_sample.detach(), y))
+            # Add to next depth's dataset with true noise levels
+            next_depth_samples.append((noisy_sample.detach(), y, sampled_noise.detach()))
         
         return next_depth_samples, value_losses
   
     def sample(self, num_samples, class_labels, 
             num_branches=5, num_select=2, num_steps=None):
-        """
-        Generate samples using tree-based exploration guided by value model.
-        
-        Args:
-            num_samples: Number of final samples to generate
-            class_labels: Class conditioning for each sample
-            num_branches: Number of branches to create at each node
-            num_select: Number of best branches to keep at each step
-            num_steps: Number of refinement steps (defaults to max_depth)
-        """
+        """Generate samples using tree-based exploration guided by value model."""
         if num_steps is None or num_steps > self.max_depth:
             num_steps = self.max_depth
         self.flow_model.eval()
         self.value_model.eval()
         
         with torch.no_grad():
-            # Initialize samples from noise
             current_samples = torch.randn(
                 num_samples, 1, 28, 28, 
                 device=self.device
             )
+            current_sigmas = torch.ones(num_samples, device=self.device)
             
-            for step in range(num_steps):
+            pbar = tqdm(range(num_steps), desc="Generating samples")
+            for step in pbar:
+                # Create all perturbed samples at once
+                noise_scale = 0.1 * (num_steps - step) / num_steps
+                # Repeat each sample num_branches times
+                x0_expanded = current_samples.repeat_interleave(num_branches, dim=0)
+                perturbations = torch.randn_like(x0_expanded) * noise_scale
+                perturbed_x0 = x0_expanded + perturbations
+                
+                # Repeat class labels and sigmas for each branch
+                y_expanded = class_labels.repeat_interleave(num_branches)
+                sigma_expanded = current_sigmas.repeat_interleave(num_branches)
+                
+                # Generate all samples in one batch
+                traj = torchdiffeq.odeint(
+                    lambda t, x: self.flow_model(
+                        t, x, y_expanded, 
+                        sigma=sigma_expanded
+                    ),
+                    perturbed_x0,
+                    torch.linspace(0, 1, 2, device=self.device),
+                    atol=1e-4, rtol=1e-4
+                )
+                generated = traj[-1]
+                
+                # Get all noise estimates in one batch
+                noise_estimates = self.value_model(
+                    torch.ones(len(generated), device=self.device),
+                    generated,
+                    y_expanded
+                )
+                
+                # Reshape to (num_samples, num_branches, ...)
+                generated = generated.view(num_samples, num_branches, *generated.shape[1:])
+                noise_estimates = noise_estimates.view(num_samples, num_branches)
+                
+                # Select best branches for each sample
+                best_branch_indices = torch.topk(-noise_estimates, k=num_select, dim=1)
+                
+                # Gather best samples and their scores
                 next_samples = []
-                next_scores = []
+                next_sigmas = []
+                for i in range(num_samples):
+                    sample_branches = generated[i]
+                    best_indices = best_branch_indices.indices[i]
+                    next_samples.extend([sample_branches[j] for j in best_indices])
+                    next_sigmas.extend([noise_estimates[i, j] for j in best_indices])
                 
-                # For each current sample
-                for i in range(len(current_samples)):
-                    x0 = current_samples[i]
-                    y = class_labels[i]
-                    
-                    branch_samples = []
-                    branch_scores = []
-                    
-                    # Generate branches by adding small perturbations
-                    for _ in range(num_branches):
-                        # Add decreasing noise for each step
-                        noise_scale = 0.1 * (num_steps - step) / num_steps
-                        perturbed_x0 = x0 + torch.randn_like(x0) * noise_scale
-                        
-                        # Generate sample using flow model
-                        traj = torchdiffeq.odeint(
-                            lambda t, x: self.flow_model(t, x, y.unsqueeze(0)),
-                            perturbed_x0.unsqueeze(0),
-                            torch.linspace(0, 1, 2, device=self.device),
-                            atol=1e-4, rtol=1e-4
-                        )
-                        generated = traj[-1][0]  # Remove batch dimension
-                        
-                        # Get value estimate
-                        noise_estimate = self.value_model(
-                            torch.ones(1, device=self.device),
-                            generated.unsqueeze(0),
-                            y.unsqueeze(0)
-                        )
-                        
-                        branch_samples.append(generated)
-                        branch_scores.append(noise_estimate.item())
-                    
-                    # Select best branches
-                    branch_samples = torch.stack(branch_samples)
-                    branch_scores = torch.tensor(branch_scores)
-                    best_indices = torch.topk(
-                        -branch_scores,  # Negative because we want lowest noise
-                        k=min(num_select, num_branches)
-                    ).indices
-                    
-                    next_samples.extend(branch_samples[best_indices])
-                    next_scores.extend(branch_scores[best_indices])
+                # Stack and select final samples for next iteration
+                next_samples = torch.stack(next_samples)
+                next_sigmas = torch.stack(next_sigmas)
                 
-                # Prepare for next step: select overall best samples
                 if step < num_steps - 1:
-                    next_samples = torch.stack(next_samples)
-                    next_scores = torch.tensor(next_scores)
-                    best_indices = torch.topk(
-                        -next_scores,
-                        k=num_samples
-                    ).indices
+                    best_indices = torch.topk(-next_sigmas, k=num_samples).indices
                     current_samples = next_samples[best_indices]
+                    current_sigmas = next_sigmas[best_indices]
+                    pbar.set_postfix({'avg_sigma': f'{current_sigmas.mean().item():.4f}'})
                 else:
-                    # For final step, return all samples
-                    current_samples = torch.stack(next_samples)
+                    current_samples = next_samples
             
             return current_samples
 
