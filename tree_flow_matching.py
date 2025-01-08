@@ -1,11 +1,13 @@
+from matplotlib import pyplot as plt
 import torch
 import torch.nn as nn
 from torch.nn import MSELoss
 import torchdiffeq
 from tqdm import tqdm
 from torchcfm.models.unet import UNetModel
-from torchcfm.conditional_flow_matching import ExactOptimalTransportConditionalFlowMatcher
+from torchcfm.conditional_flow_matching import ExactOptimalTransportConditionalFlowMatcher, TargetConditionalFlowMatcher
 from torchcfm.models.unet.nn import timestep_embedding
+from torchvision.utils import make_grid
 
 class TreeFlowMatching:
     def __init__(
@@ -152,8 +154,13 @@ class TreeFlowMatching:
         noise_mean = torch.tensor(noise_values).mean()
         noise_std = torch.tensor(noise_values).std()
 
+        print(f"\nDepth {depth} ODE-generated Noise Statistics:")
+        print(f"Mean relative noise: {noise_mean:.4f}")
+        print(f"Std relative noise: {noise_std:.4f}")
+
         # Now train value model using ground truth + sampled noise
-        # Train value model
+        # Also collect statistics about sampled noise for validation
+        sampled_noise_values = []
         value_pbar = tqdm(dataset, desc=f"Training value model (depth {depth})")
         for x1, y, _ in value_pbar:
             x1, y = x1.to(self.device), y.to(self.device)
@@ -166,6 +173,12 @@ class TreeFlowMatching:
             
             # Create noisy sample
             noisy_sample = self._add_noise(x1, sampled_noise)
+            
+            # Calculate actual noise level for validation
+            diff_flat = (noisy_sample - x1).view(x1.shape[0], -1)
+            x1_flat = x1.view(x1.shape[0], -1)
+            actual_noise_levels = torch.norm(diff_flat, dim=1) / torch.norm(x1_flat, dim=1)
+            sampled_noise_values.extend(actual_noise_levels.tolist())
             
             # Train value model
             self.value_optimizer.zero_grad()
@@ -184,6 +197,13 @@ class TreeFlowMatching:
             # Add to next depth's dataset with true noise levels
             next_depth_samples.append((noisy_sample.detach(), y, sampled_noise.detach()))
         
+        # Print statistics about the sampled noise
+        sampled_noise_mean = torch.tensor(sampled_noise_values).mean()
+        sampled_noise_std = torch.tensor(sampled_noise_values).std()
+        print(f"\nDepth {depth} Sampled Noise Statistics:")
+        print(f"Mean relative noise: {sampled_noise_mean:.4f}")
+        print(f"Std relative noise: {sampled_noise_std:.4f}")
+        
         return next_depth_samples, value_losses
   
     def sample(self, num_samples, class_labels, 
@@ -200,6 +220,22 @@ class TreeFlowMatching:
                 device=self.device
             )
             current_sigmas = torch.ones(num_samples, device=self.device)
+            
+            # Get initial noise estimates
+            initial_noise_estimates = self.value_model(
+                torch.ones(num_samples, device=self.device),
+                current_samples,
+                class_labels
+            )
+            
+            # Visualize initial noise
+            plt.figure(figsize=(10, 4))
+            grid = make_grid(current_samples[:8], nrow=8, normalize=True, padding=2)
+            plt.imshow(grid.cpu().permute(1, 2, 0))
+            plt.title(f'Initial Noise Samples\nEstimated noise levels: ' + 
+                    ', '.join([f'{x:.3f}' for x in initial_noise_estimates[:8].cpu()]))
+            plt.axis('off')
+            plt.show()
             
             pbar = tqdm(range(num_steps), desc="Generating samples")
             for step in pbar:
@@ -260,33 +296,25 @@ class TreeFlowMatching:
                     pbar.set_postfix({'avg_sigma': f'{current_sigmas.mean().item():.4f}'})
                 else:
                     current_samples = next_samples
+                
+                # Get noise estimates for displayed samples
+                display_noise_estimates = self.value_model(
+                    torch.ones(len(current_samples), device=self.device),
+                    current_samples,
+                    class_labels.repeat(num_select) if step == num_steps - 1 else class_labels
+                )
+                
+                # Visualize current state
+                plt.figure(figsize=(10, 4))
+                grid = make_grid(current_samples[:8], nrow=8, normalize=True, padding=2)
+                plt.imshow(grid.cpu().permute(1, 2, 0))
+                plt.title(f'After Step {step+1}, Avg Sigma: {current_sigmas.mean().item():.4f}\n' +
+                        'Estimated noise levels: ' + 
+                        ', '.join([f'{x:.3f}' for x in display_noise_estimates[:8].cpu()]))
+                plt.axis('off')
+                plt.show()
             
             return current_samples
-
-    # def sample(self, num_samples, class_labels):
-    #     """
-    #     Simple sampling using just one forward pass through flow model.
-        
-    #     Args:
-    #         num_samples: Number of samples to generate
-    #         class_labels: Class conditioning for each sample
-    #     """
-    #     self.flow_model.eval()
-        
-    #     with torch.no_grad():
-    #         # Initialize samples from noise
-    #         x0 = torch.randn(num_samples, 1, 28, 28, device=self.device)
-            
-    #         # Generate samples using flow model
-    #         traj = torchdiffeq.odeint(
-    #             lambda t, x: self.flow_model(t, x, class_labels),
-    #             x0,
-    #             torch.linspace(0, 1, 2, device=self.device),
-    #             atol=1e-4, rtol=1e-4
-    #         )
-    #         generated_samples = traj[-1]
-            
-    #         return generated_samples
 
 class ValueModel(UNetModel):
     def __init__(self, *args, **kwargs):
