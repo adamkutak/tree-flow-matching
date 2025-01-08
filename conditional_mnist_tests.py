@@ -18,7 +18,9 @@ from evaluation import (
     visualize_class_samples,
     calculate_fid
 )
-from tree_flow_matching import TreeFlowMatching, ValueModel
+from tree_flow_matching import TreeFlowMatching
+from mcts_flow_model import MCTSFlowSampler
+
 
 def get_device():
     """Set up CUDA device if available."""
@@ -186,11 +188,77 @@ def evaluate_tree_cfm(tree_fm, test_loader, device=None, num_samples=100):
     
     return results, generated_samples
 
+def train_mcts_cfm(train_loader, n_epochs=10, device=None):
+    """Train MCTS-based conditional flow matching model."""
+    if device is None:
+        device = get_device()
+    
+    # Initialize MCTS Flow Sampler
+    mcts_fm = MCTSFlowSampler(
+        dim=(1, 28, 28),
+        num_channels=32,
+        num_res_blocks=1,
+        device=device,
+        num_noise_levels=5
+    )
+    
+    # Train the model
+    mcts_fm.train(train_loader, n_epochs=n_epochs)
+    
+    return mcts_fm
+
+def evaluate_mcts_cfm(mcts_fm, test_loader, device=None, samples_per_class=1):
+    """Evaluate MCTS CFM model using MCTS-based sampling."""
+    if device is None:
+        device = get_device()
+    
+    mcts_fm.flow_model.eval()
+    mcts_fm.policy_model.eval()
+    results = {}
+    
+    # Generate samples for each class independently
+    print("Generating samples...")
+    all_samples = []
+    all_labels = []
+    
+    for class_label in range(10):
+        print(f"\nGenerating samples for class {class_label}...")
+        class_labels = torch.full((samples_per_class,), class_label, device=device)
+        
+        samples, labels = mcts_fm.sample(
+            num_samples=samples_per_class,
+            class_labels=class_labels,
+            num_branches=32,
+            num_keep=8
+        )
+        
+        all_samples.append(samples)
+        all_labels.append(labels)
+    
+    # Combine all generated samples
+    generated_samples = torch.cat(all_samples, dim=0)
+    generated_labels = torch.cat(all_labels, dim=0)
+    
+    # Calculate all metrics
+    print("\nCalculating metrics...")
+    results['diversity_metrics'] = calculate_diversity_metrics(generated_samples)
+    results['fid_score'] = calculate_fid(generated_samples, test_loader, len(generated_samples), device)
+    
+    # Visualizations
+    print("\nGenerating visualizations...")
+    visualize_samples(generated_samples[:100])
+    visualize_class_samples(generated_samples, generated_labels)
+
+    print(f"FID score: {results['fid_score']}")
+    print(f"Diversity metrics: {results['diversity_metrics']}")
+    
+    return results, generated_samples
+
 def main():
     # Set up parameters
-    batch_size = 32
-    max_batches = 50 # Set to None to use all data
-    n_epochs = 1
+    batch_size = 64
+    max_batches = 200 # Set to None to use all data
+    n_epochs = 20
     sigma = 0.0
     device = get_device()
     
@@ -202,17 +270,23 @@ def main():
     train_loader = load_mnist_data(batch_size, max_batches, train=True)
     test_loader = load_mnist_data(batch_size, max_batches=10, train=False)
     
-    # # Train standard CFM
+    # Train standard CFM
     # print("Training standard CFM...")
     # standard_model = train_standard_cfm(train_loader, n_epochs, sigma, device)
     # print("\nEvaluating standard CFM...")
     # evaluate_standard_cfm(standard_model, test_loader, device)
+
+    # Train MCTS CFM
+    print("\nTraining MCTS CFM...")
+    mcts_model = train_mcts_cfm(train_loader, n_epochs, device)
+    print("\nEvaluating MCTS CFM...")
+    evaluate_mcts_cfm(mcts_model, test_loader, device)
     
     # Train custom CFM
-    print("\nTraining Tree CFM...")
-    tree_model = train_tree_cfm(train_loader, n_epochs, sigma, device)
-    print("\nEvaluating Tree CFM...")
-    evaluate_tree_cfm(tree_model, test_loader, device)
+    # print("\nTraining Tree CFM...")
+    # tree_model = train_tree_cfm(train_loader, n_epochs, sigma, device)
+    # print("\nEvaluating Tree CFM...")
+    # evaluate_tree_cfm(tree_model, test_loader, device)
 
 if __name__ == "__main__":
     main()
