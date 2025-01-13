@@ -77,8 +77,10 @@ def train_standard_cfm(train_loader, n_epochs=10, sigma=0.0, device=None):
     # Check if saved model exists
     if os.path.exists(save_path):
         print(f"Loading pre-trained model from {save_path}")
-        model.load_state_dict(torch.load(save_path, weights_only=True))
-        return model
+        model.load_state_dict(
+            torch.load(save_path, weights_only=True, map_location=device)
+        )
+        # return model
 
     print("Training new model...")
     optimizer = torch.optim.Adam(model.parameters())
@@ -120,7 +122,9 @@ def evaluate_standard_cfm(model, test_loader, device=None, num_samples=5):
             f"No pre-trained classifier found at {classifier_path}. "
             f"Please run train_mnist_classifier.py first."
         )
-    classifier.load_state_dict(torch.load(classifier_path, weights_only=True))
+    classifier.load_state_dict(
+        torch.load(classifier_path, weights_only=True, map_location=device)
+    )
     classifier.eval()
 
     def compute_sample_quality(samples, target_labels):
@@ -159,17 +163,16 @@ def evaluate_standard_cfm(model, test_loader, device=None, num_samples=5):
             std_confidence = confidence_scores.std().item()
             print(f"Mean confidence: {mean_confidence:.4f} ± {std_confidence:.4f}")
 
-            all_samples.append(samples[:10])  # Keep first 10 samples from each class
-            all_scores.extend(confidence_scores.tolist())
+            # Visualize samples for this class
+            plt.figure(figsize=(15, 3))
+            grid = make_grid(samples, nrow=num_samples, normalize=True, padding=2)
+            plt.imshow(grid.cpu().permute(1, 2, 0))
+            plt.title(f"Generated Samples for Digit {class_label}")
+            plt.axis("off")
+            plt.show()
 
-    # Combine samples and visualize
-    # all_samples = torch.cat(all_samples)
-    # plt.figure(figsize=(15, 6))
-    # grid = make_grid(all_samples, nrow=10, normalize=True, padding=2)
-    # plt.imshow(grid.cpu().permute(1, 2, 0))
-    # plt.title("Generated Samples (10 per class)")
-    # plt.axis("off")
-    # plt.show()
+            all_samples.append(samples[:10])
+            all_scores.extend(confidence_scores.tolist())
 
     # Report overall statistics
     scores = torch.tensor(all_scores)
@@ -182,9 +185,9 @@ def evaluate_standard_cfm(model, test_loader, device=None, num_samples=5):
 
 def main():
     # Set up parameters
-    batch_size = 64
+    batch_size = 128
     max_batches = None  # Set to None to use all data
-    n_epochs = 20
+    n_epochs = 100
     sigma = 0.0
     device = get_device()
 

@@ -134,7 +134,9 @@ class MCTSFlowSampler:
                 f"No pre-trained classifier found at {path}. "
                 f"Please run train_mnist_classifier.py first."
             )
-        self.classifier.load_state_dict(torch.load(path, weights_only=True))
+        self.classifier.load_state_dict(
+            torch.load(path, weights_only=True, map_location=self.device)
+        )
         print(f"Loaded pre-trained classifier from {path}")
 
     def compute_sample_quality(self, samples, target_labels):
@@ -386,12 +388,16 @@ class MCTSFlowSampler:
         value_exists = os.path.exists(value_path)
 
         if flow_exists:
-            checkpoint = torch.load(flow_path, weights_only=True)
+            checkpoint = torch.load(
+                flow_path, weights_only=True, map_location=self.device
+            )
             self.flow_model.load_state_dict(checkpoint["model"])
             print(f"Flow model loaded from {flow_path}")
 
         if value_exists:
-            checkpoint = torch.load(value_path, weights_only=True)
+            checkpoint = torch.load(
+                value_path, weights_only=True, map_location=self.device
+            )
             self.value_model.load_state_dict(checkpoint["model"])
             print(f"Value model loaded from {value_path}")
 

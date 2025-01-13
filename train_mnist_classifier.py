@@ -74,7 +74,9 @@ def train_and_save_classifier(n_epochs=5):
     model = MNISTClassifier().to(device)
     if os.path.exists(save_path):
         print(f"Loading existing classifier from {save_path}")
-        model.load_state_dict(torch.load(save_path, weights_only=True))
+        model.load_state_dict(
+            torch.load(save_path, weights_only=True, map_location=device)
+        )
         initial_accuracy = evaluate_model(model, test_loader, device)
         print(f"Initial accuracy: {initial_accuracy:.2f}%")
     else:
