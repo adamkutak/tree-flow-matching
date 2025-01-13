@@ -127,4 +127,4 @@ def train_and_save_classifier(n_epochs=5):
 
 
 if __name__ == "__main__":
-    train_and_save_classifier()
+    train_and_save_classifier(n_epochs=20)
