@@ -18,8 +18,7 @@ from evaluation import (
     visualize_class_samples,
     calculate_fid,
 )
-from tree_flow_matching import TreeFlowMatching
-from mcts_flow_model import MCTSFlowSampler
+from train_mnist_classifier import MNISTClassifier
 
 
 def get_device():
@@ -64,7 +63,9 @@ def train_standard_cfm(train_loader, n_epochs=10, sigma=0.0, device=None):
     if device is None:
         device = get_device()
 
-    # Initialize model and optimizer
+    save_path = "saved_models/standard_cfm.pt"
+
+    # Initialize model
     model = UNetModel(
         dim=(1, 28, 28),
         num_channels=32,
@@ -73,12 +74,20 @@ def train_standard_cfm(train_loader, n_epochs=10, sigma=0.0, device=None):
         class_cond=True,
     ).to(device)
 
+    # Check if saved model exists
+    if os.path.exists(save_path):
+        print(f"Loading pre-trained model from {save_path}")
+        model.load_state_dict(torch.load(save_path, weights_only=True))
+        # return model
+
+    print("Training new model...")
     optimizer = torch.optim.Adam(model.parameters())
     FM = ExactOptimalTransportConditionalFlowMatcher(sigma=sigma)
 
     # Training loop
     for epoch in range(n_epochs):
-        for i, data in enumerate(train_loader):
+        pbar = tqdm(train_loader, desc=f"Epoch {epoch+1}/{n_epochs}")
+        for data in pbar:
             optimizer.zero_grad()
             x1 = data[0].to(device)
             y = data[1].to(device)
@@ -88,184 +97,93 @@ def train_standard_cfm(train_loader, n_epochs=10, sigma=0.0, device=None):
             loss = torch.mean((vt - ut) ** 2)
             loss.backward()
             optimizer.step()
-            print(f"epoch: {epoch}, steps: {i}, loss: {loss.item():.4}", end="\r")
+            pbar.set_postfix({"loss": f"{loss.item():.4f}"})
+
+    # Save the model
+    os.makedirs(os.path.dirname(save_path), exist_ok=True)
+    torch.save(model.state_dict(), save_path)
+    print(f"Model saved to {save_path}")
 
     return model
 
 
-def train_tree_cfm(train_loader, n_epochs=10, sigma=0.0, device=None):
-    """Train tree-structured conditional flow matching model."""
-    if device is None:
-        device = get_device()
-
-    # Initialize TreeFlowMatcher
-    tree_fm = TreeFlowMatching(device=device, sigma=sigma)
-
-    # Training loop
-    for epoch in range(n_epochs):
-        print(f"\nEpoch {epoch + 1}/{n_epochs}")
-        tree_fm.train_epoch(train_loader)
-
-    return tree_fm
-
-
-def evaluate_standard_cfm(model, test_loader, device=None, num_samples=100):
+def evaluate_standard_cfm(model, test_loader, device=None, num_samples=5):
     """Evaluate standard CFM model using neural ODE for sampling."""
     if device is None:
         device = get_device()
 
+    # Initialize classifier for evaluation
+    classifier = MNISTClassifier().to(device)
+    classifier_path = "saved_models/mnist_classifier.pt"
+    if not os.path.exists(classifier_path):
+        raise FileNotFoundError(
+            f"No pre-trained classifier found at {classifier_path}. "
+            f"Please run train_mnist_classifier.py first."
+        )
+    classifier.load_state_dict(torch.load(classifier_path, weights_only=True))
+    classifier.eval()
+
+    def compute_sample_quality(samples, target_labels):
+        """Compute quality score using MNIST classifier confidence."""
+        with torch.no_grad():
+            logits = classifier(samples)
+            target_probs = logits[torch.arange(len(samples)), target_labels]
+            return target_probs
+
     model.eval()
     results = {}
 
-    # Generate samples using neural ODE
-    print("Generating samples...")
-    generated_class_list = torch.arange(10, device=device).repeat(
-        num_samples // 10 + 1
-    )[:num_samples]
-
-    with torch.no_grad():
-        traj = torchdiffeq.odeint(
-            lambda t, x: model.forward(t, x, generated_class_list),
-            torch.randn(num_samples, 1, 28, 28, device=device),
-            torch.linspace(0, 1, 2, device=device),
-            atol=1e-4,
-            rtol=1e-4,
-            method="dopri5",
-        )
-        generated_samples = traj[-1]
-
-    # Calculate all metrics
-    print("\nCalculating metrics...")
-    results["diversity_metrics"] = calculate_diversity_metrics(generated_samples)
-    results["fid_score"] = calculate_fid(
-        generated_samples, test_loader, num_samples, device
-    )
-
-    # Visualizations
-    print("\nGenerating visualizations...")
-    visualize_samples(generated_samples)
-    visualize_class_samples(generated_samples, generated_class_list)
-
-    print(f"FID score: {results['fid_score']}")
-    print(f"Diversity metrics: {results['diversity_metrics']}")
-
-    return results, generated_samples
-
-
-def evaluate_tree_cfm(tree_fm, test_loader, device=None, num_samples=100):
-    """Evaluate tree CFM model using tree-based sampling."""
-    if device is None:
-        device = get_device()
-
-    tree_fm.flow_model.eval()
-    tree_fm.value_model.eval()
-    results = {}
-
-    # Generate class labels
-    generated_class_list = torch.arange(10, device=device).repeat(
-        num_samples // 10 + 1
-    )[:num_samples]
-
-    # Generate samples using tree-based sampling
-    print("Generating samples...")
-    generated_samples = tree_fm.sample(
-        num_samples=num_samples,
-        class_labels=generated_class_list,
-        # num_branches=8,
-        # num_select=3,
-    )
-
-    # Calculate all metrics
-    print("\nCalculating metrics...")
-    results["diversity_metrics"] = calculate_diversity_metrics(generated_samples)
-    results["fid_score"] = calculate_fid(
-        generated_samples, test_loader, num_samples, device
-    )
-
-    # Visualizations
-    print("\nGenerating visualizations...")
-    visualize_samples(generated_samples[:100])
-    visualize_class_samples(generated_samples, generated_class_list)
-
-    print(f"FID score: {results['fid_score']}")
-    print(f"Diversity metrics: {results['diversity_metrics']}")
-
-    return results, generated_samples
-
-
-def train_mcts_cfm(train_loader, n_epochs=10, device=None):
-    """Train MCTS-based conditional flow matching model."""
-    if device is None:
-        device = get_device()
-
-    # Initialize MCTS Flow Sampler
-    mcts_fm = MCTSFlowSampler(
-        dim=(1, 28, 28),
-        num_channels=32,
-        num_res_blocks=1,
-        device=device,
-        num_noise_levels=5,
-    )
-
-    # Train the model
-    mcts_fm.train(train_loader, n_epochs=n_epochs)
-
-    return mcts_fm
-
-
-def evaluate_mcts_cfm(mcts_fm, test_loader, device=None, samples_per_class=1):
-    """Evaluate MCTS CFM model using MCTS-based sampling."""
-    if device is None:
-        device = get_device()
-
-    mcts_fm.flow_model.eval()
-    mcts_fm.policy_model.eval()
-    results = {}
-
-    # Generate samples for each class independently
-    print("Generating samples...")
+    # Generate samples for each class
+    print("\nGenerating and evaluating samples for each class...")
     all_samples = []
-    all_labels = []
+    all_scores = []
 
-    for class_label in range(2):
-        print(f"\nGenerating samples for class {class_label}...")
-        class_labels = torch.full((samples_per_class,), class_label, device=device)
+    for class_label in range(10):
+        print(f"\nGenerating samples for digit {class_label}")
+        class_labels = torch.full((num_samples,), class_label, device=device)
 
-        samples, labels = mcts_fm.sample(
-            num_samples=samples_per_class,
-            class_labels=class_labels,
-            num_branches=8,
-            num_keep=4,
-        )
+        # Generate samples using neural ODE
+        with torch.no_grad():
+            traj = torchdiffeq.odeint(
+                lambda t, x: model.forward(t, x, class_labels),
+                torch.randn(num_samples, 1, 28, 28, device=device),
+                torch.linspace(0, 1, 2, device=device),
+                atol=1e-4,
+                rtol=1e-4,
+            )
+            samples = traj[-1]
 
-        all_samples.append(samples)
-        all_labels.append(labels)
+            # Compute classifier confidence
+            confidence_scores = compute_sample_quality(samples, class_labels)
+            mean_confidence = confidence_scores.mean().item()
+            std_confidence = confidence_scores.std().item()
+            print(f"Mean confidence: {mean_confidence:.4f} ± {std_confidence:.4f}")
 
-    # Combine all generated samples
-    generated_samples = torch.cat(all_samples, dim=0)
-    generated_labels = torch.cat(all_labels, dim=0)
+            all_samples.append(samples[:10])  # Keep first 10 samples from each class
+            all_scores.extend(confidence_scores.tolist())
 
-    # Calculate all metrics
-    # print("\nCalculating metrics...")
-    # results["diversity_metrics"] = calculate_diversity_metrics(generated_samples)
-    # results["fid_score"] = calculate_fid(
-    #     generated_samples, test_loader, len(generated_samples), device
-    # )
-    # print(f"FID score: {results['fid_score']}")
-    # print(f"Diversity metrics: {results['diversity_metrics']}")
+    # Combine samples and visualize
+    all_samples = torch.cat(all_samples)
+    plt.figure(figsize=(15, 6))
+    grid = make_grid(all_samples, nrow=10, normalize=True, padding=2)
+    plt.imshow(grid.cpu().permute(1, 2, 0))
+    plt.title("Generated Samples (10 per class)")
+    plt.axis("off")
+    plt.show()
 
-    # Visualizations
-    print("\nGenerating visualizations...")
-    visualize_samples(generated_samples[:100])
-    visualize_class_samples(generated_samples, generated_labels)
+    # Report overall statistics
+    scores = torch.tensor(all_scores)
+    mean_confidence = scores.mean().item()
+    std_confidence = scores.std().item()
+    print(f"\nOverall confidence: {mean_confidence:.4f} ± {std_confidence:.4f}")
 
-    return results, generated_samples
+    return results, all_samples
 
 
 def main():
     # Set up parameters
     batch_size = 64
-    max_batches = 200  # Set to None to use all data
+    max_batches = None  # Set to None to use all data
     n_epochs = 20
     sigma = 0.0
     device = get_device()
@@ -279,22 +197,10 @@ def main():
     test_loader = load_mnist_data(batch_size, max_batches=10, train=False)
 
     # Train standard CFM
-    # print("Training standard CFM...")
-    # standard_model = train_standard_cfm(train_loader, n_epochs, sigma, device)
-    # print("\nEvaluating standard CFM...")
-    # evaluate_standard_cfm(standard_model, test_loader, device)
-
-    # Train MCTS CFM
-    print("\nTraining MCTS CFM...")
-    mcts_model = train_mcts_cfm(train_loader, n_epochs, device)
-    print("\nEvaluating MCTS CFM...")
-    evaluate_mcts_cfm(mcts_model, test_loader, device)
-
-    # Train custom CFM
-    # print("\nTraining Tree CFM...")
-    # tree_model = train_tree_cfm(train_loader, n_epochs, sigma, device)
-    # print("\nEvaluating Tree CFM...")
-    # evaluate_tree_cfm(tree_model, test_loader, device)
+    print("Training standard CFM...")
+    standard_model = train_standard_cfm(train_loader, n_epochs, sigma, device)
+    print("\nEvaluating standard CFM...")
+    evaluate_standard_cfm(standard_model, test_loader, device)
 
 
 if __name__ == "__main__":
