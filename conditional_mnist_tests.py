@@ -78,7 +78,7 @@ def train_standard_cfm(train_loader, n_epochs=10, sigma=0.0, device=None):
     if os.path.exists(save_path):
         print(f"Loading pre-trained model from {save_path}")
         model.load_state_dict(torch.load(save_path, weights_only=True))
-        # return model
+        return model
 
     print("Training new model...")
     optimizer = torch.optim.Adam(model.parameters())
@@ -163,13 +163,13 @@ def evaluate_standard_cfm(model, test_loader, device=None, num_samples=5):
             all_scores.extend(confidence_scores.tolist())
 
     # Combine samples and visualize
-    all_samples = torch.cat(all_samples)
-    plt.figure(figsize=(15, 6))
-    grid = make_grid(all_samples, nrow=10, normalize=True, padding=2)
-    plt.imshow(grid.cpu().permute(1, 2, 0))
-    plt.title("Generated Samples (10 per class)")
-    plt.axis("off")
-    plt.show()
+    # all_samples = torch.cat(all_samples)
+    # plt.figure(figsize=(15, 6))
+    # grid = make_grid(all_samples, nrow=10, normalize=True, padding=2)
+    # plt.imshow(grid.cpu().permute(1, 2, 0))
+    # plt.title("Generated Samples (10 per class)")
+    # plt.axis("off")
+    # plt.show()
 
     # Report overall statistics
     scores = torch.tensor(all_scores)
