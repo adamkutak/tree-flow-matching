@@ -79,6 +79,17 @@ for epoch in range(n_epochs):
         optimizer.step()
         print(f"epoch: {epoch}, steps: {i}, loss: {loss.item():.4}", end="\r")
 
+torch.save(
+    {
+        "model_state_dict": model.state_dict(),
+        "optimizer_state_dict": optimizer.state_dict(),
+        "epoch": n_epochs,
+        "loss": loss.item(),
+    },
+    os.path.join(savedir, "conditional_mnist_model.pt"),
+)
+
+print(f"\nModel saved to {os.path.join(savedir, 'conditional_mnist_model.pt')}")
 
 # In[5]:
 
