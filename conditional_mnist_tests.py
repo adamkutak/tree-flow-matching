@@ -187,7 +187,7 @@ def main():
     # Set up parameters
     batch_size = 128
     max_batches = None  # Set to None to use all data
-    n_epochs = 100
+    n_epochs = 10
     sigma = 0.0
     device = get_device()
 
