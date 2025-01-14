@@ -190,7 +190,7 @@ class MCTSFlowSampler:
 
         return trajectories, ts, current_labels, final_scores
 
-    def train(self, train_loader, n_epochs=3, initial_flow_epochs=10, value_epochs=4):
+    def train(self, train_loader, n_epochs=3, initial_flow_epochs=3, value_epochs=20):
         """Train both flow and value models."""
         # Initial flow model training
         print("\nInitial flow model training...")

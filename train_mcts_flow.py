@@ -105,7 +105,7 @@ def main():
 
     # Training configuration
     n_epochs_per_cycle = 1
-    n_training_cycles = 5
+    n_training_cycles = 20
     branch_keep_pairs = [(1, 1), (8, 3), (16, 7)]
 
     # Training loop with periodic evaluation
@@ -113,7 +113,12 @@ def main():
         print(f"\nTraining Cycle {cycle + 1}/{n_training_cycles}")
 
         # Train for n epochs
-        sampler.train(train_loader, n_epochs=n_epochs_per_cycle)
+        sampler.train(
+            train_loader,
+            n_epochs=n_epochs_per_cycle,
+            initial_flow_epochs=1,
+            value_epochs=10,
+        )
 
         # Evaluate
         evaluate_with_viz(sampler, branch_keep_pairs=branch_keep_pairs)
