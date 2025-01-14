@@ -80,7 +80,7 @@ def train_standard_cfm(train_loader, n_epochs=10, sigma=0.0, device=None):
         model.load_state_dict(
             torch.load(save_path, weights_only=True, map_location=device)
         )
-        # return model
+        return model
 
     print("Training new model...")
     optimizer = torch.optim.Adam(model.parameters())
