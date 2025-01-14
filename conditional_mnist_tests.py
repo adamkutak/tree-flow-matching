@@ -154,6 +154,7 @@ def evaluate_standard_cfm(model, test_loader, device=None, num_samples=5):
                 torch.linspace(0, 1, 2, device=device),
                 atol=1e-4,
                 rtol=1e-4,
+                method="dopri5",
             )
             samples = traj[-1]
 
