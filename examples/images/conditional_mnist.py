@@ -66,31 +66,41 @@ node = NeuralODE(model, solver="dopri5", sensitivity="adjoint", atol=1e-4, rtol=
 # In[4]:
 
 
-for epoch in range(n_epochs):
-    for i, data in enumerate(train_loader):
-        optimizer.zero_grad()
-        x1 = data[0].to(device)
-        y = data[1].to(device)
-        x0 = torch.randn_like(x1)
-        t, xt, ut = FM.sample_location_and_conditional_flow(x0, x1)
-        vt = model(t, xt, y)
-        loss = torch.mean((vt - ut) ** 2)
-        loss.backward()
-        optimizer.step()
-        print(f"epoch: {epoch}, steps: {i}, loss: {loss.item():.4}", end="\r")
+model_path = os.path.join(savedir, "conditional_mnist_model.pt")
 
-torch.save(
-    {
-        "model_state_dict": model.state_dict(),
-        "optimizer_state_dict": optimizer.state_dict(),
-        "epoch": n_epochs,
-        "loss": loss.item(),
-    },
-    os.path.join(savedir, "conditional_mnist_model.pt"),
-)
+# Check if saved model exists
+if os.path.exists(model_path):
+    # Load the saved model
+    checkpoint = torch.load(model_path, map_location=device)
+    model.load_state_dict(checkpoint["model_state_dict"])
+    optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
+    print(f"Loaded pre-trained model from {model_path}")
+else:
+    # Train the model
+    for epoch in range(n_epochs):
+        for i, data in enumerate(train_loader):
+            optimizer.zero_grad()
+            x1 = data[0].to(device)
+            y = data[1].to(device)
+            x0 = torch.randn_like(x1)
+            t, xt, ut = FM.sample_location_and_conditional_flow(x0, x1)
+            vt = model(t, xt, y)
+            loss = torch.mean((vt - ut) ** 2)
+            loss.backward()
+            optimizer.step()
+            print(f"epoch: {epoch}, steps: {i}, loss: {loss.item():.4}", end="\r")
 
-print(f"\nModel saved to {os.path.join(savedir, 'conditional_mnist_model.pt')}")
-
+    # Save the model
+    torch.save(
+        {
+            "model_state_dict": model.state_dict(),
+            "optimizer_state_dict": optimizer.state_dict(),
+            "epoch": n_epochs,
+            "loss": loss.item(),
+        },
+        model_path,
+    )
+    print(f"\nModel saved to {model_path}")
 # In[5]:
 
 

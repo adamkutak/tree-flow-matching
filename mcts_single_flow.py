@@ -8,6 +8,7 @@ import torchvision.transforms as transforms
 from torchcfm.models.unet import UNetModel
 from torchcfm.conditional_flow_matching import (
     ExactOptimalTransportConditionalFlowMatcher,
+    ConditionalFlowMatcher,
 )
 import numpy as np
 import torch.nn as nn
@@ -118,7 +119,7 @@ class MCTSFlowSampler:
         self.flow_optimizer = torch.optim.Adam(self.flow_model.parameters())
         self.value_optimizer = torch.optim.Adam(self.value_model.parameters())
 
-        self.FM = ExactOptimalTransportConditionalFlowMatcher(sigma=0.0)
+        self.FM = ConditionalFlowMatcher(sigma=0.0)
         self.trajectory_buffer = TrajectoryBuffer()
 
         # Try to load pre-trained models

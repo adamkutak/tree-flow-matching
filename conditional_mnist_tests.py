@@ -84,7 +84,7 @@ def train_standard_cfm(train_loader, n_epochs=10, sigma=0.0, device=None):
 
     print("Training new model...")
     optimizer = torch.optim.Adam(model.parameters())
-    FM = ExactOptimalTransportConditionalFlowMatcher(sigma=sigma)
+    FM = ConditionalFlowMatcher(sigma=sigma)
 
     # Training loop
     for epoch in range(n_epochs):
