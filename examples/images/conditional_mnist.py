@@ -4,8 +4,6 @@
 # In[1]:
 
 
-get_ipython().run_line_magic('load_ext', 'autoreload')
-get_ipython().run_line_magic('autoreload', '2')
 import os
 
 import matplotlib.pyplot as plt
@@ -37,7 +35,9 @@ trainset = datasets.MNIST(
     "../data",
     train=True,
     download=True,
-    transform=transforms.Compose([transforms.ToTensor(), transforms.Normalize((0.5,), (0.5,))]),
+    transform=transforms.Compose(
+        [transforms.ToTensor(), transforms.Normalize((0.5,), (0.5,))]
+    ),
 )
 
 train_loader = torch.utils.data.DataLoader(
@@ -101,7 +101,10 @@ with torch.no_grad():
             t_span=torch.linspace(0, 1, 2, device=device),
         )
 grid = make_grid(
-    traj[-1, :100].view([-1, 1, 28, 28]).clip(-1, 1), value_range=(-1, 1), padding=0, nrow=10
+    traj[-1, :100].view([-1, 1, 28, 28]).clip(-1, 1),
+    value_range=(-1, 1),
+    padding=0,
+    nrow=10,
 )
 img = ToPILImage()(grid)
 plt.imshow(img)
@@ -162,7 +165,10 @@ with torch.no_grad():
             t_span=torch.linspace(0, 1, 2, device=device),
         )
 grid = make_grid(
-    traj[-1, :100].view([-1, 1, 28, 28]).clip(-1, 1), value_range=(-1, 1), padding=0, nrow=10
+    traj[-1, :100].view([-1, 1, 28, 28]).clip(-1, 1),
+    value_range=(-1, 1),
+    padding=0,
+    nrow=10,
 )
 img = ToPILImage()(grid)
 plt.imshow(img)
@@ -238,7 +244,10 @@ with torch.no_grad():
             t_span=torch.linspace(0, 1, 2, device=device),
         )
 grid = make_grid(
-    traj[-1, :100].view([-1, 1, 28, 28]).clip(-1, 1), value_range=(-1, 1), padding=0, nrow=10
+    traj[-1, :100].view([-1, 1, 28, 28]).clip(-1, 1),
+    value_range=(-1, 1),
+    padding=0,
+    nrow=10,
 )
 img = ToPILImage()(grid)
 plt.imshow(img)
@@ -281,7 +290,9 @@ class SDE(torch.nn.Module):
 # In[13]:
 
 
-sde = SDE(model, score_model, labels=torch.arange(10, device=device).repeat(10), sigma=0.1)
+sde = SDE(
+    model, score_model, labels=torch.arange(10, device=device).repeat(10), sigma=0.1
+)
 with torch.no_grad():
     sde_traj = torchsde.sdeint(
         sde,
@@ -296,14 +307,13 @@ with torch.no_grad():
 
 
 grid = make_grid(
-    sde_traj[-1, :100].view([-1, 1, 28, 28]).clip(-1, 1), value_range=(-1, 1), padding=0, nrow=10
+    sde_traj[-1, :100].view([-1, 1, 28, 28]).clip(-1, 1),
+    value_range=(-1, 1),
+    padding=0,
+    nrow=10,
 )
 img = ToPILImage()(grid)
 plt.imshow(img)
 
 
 # In[ ]:
-
-
-
-
