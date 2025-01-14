@@ -113,7 +113,7 @@ def main():
         print(f"\nTraining Cycle {cycle + 1}/{n_training_cycles}")
 
         # Train for n epochs
-        # sampler.train(train_loader, n_epochs=n_epochs_per_cycle)
+        sampler.train(train_loader, n_epochs=n_epochs_per_cycle)
 
         # Evaluate
         evaluate_with_viz(sampler, branch_keep_pairs=branch_keep_pairs)
