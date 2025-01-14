@@ -93,7 +93,7 @@ def main():
         "./data", train=True, download=True, transform=transform
     )
 
-    subset_size = 1000
+    subset_size = None
     if subset_size:
         indices = torch.randperm(len(train_dataset))[:subset_size]
         train_dataset = torch.utils.data.Subset(train_dataset, indices)
