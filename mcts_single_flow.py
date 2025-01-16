@@ -80,6 +80,8 @@ class MCTSFlowSampler:
         num_res_blocks=1,
         device="cuda:0",
         num_timesteps=10,
+        num_classes=10,
+        classifier=None,
     ):
         # Check if CUDA is available and set device
         if torch.cuda.is_available():
@@ -91,13 +93,14 @@ class MCTSFlowSampler:
 
         self.num_timesteps = num_timesteps
         self.timesteps = torch.linspace(0, 1, num_timesteps, device=self.device)
+        self.dim = dim
 
         # Initialize models
         self.flow_model = UNetModel(
             dim=dim,
             num_channels=num_channels,
             num_res_blocks=num_res_blocks,
-            num_classes=10,
+            num_classes=num_classes,
             class_cond=True,
         ).to(self.device)
 
@@ -106,13 +109,14 @@ class MCTSFlowSampler:
             dim=dim,
             num_channels=num_channels,
             num_res_blocks=num_res_blocks,
-            num_classes=10,
+            num_classes=num_classes,
             class_cond=True,
         ).to(self.device)
 
         # Initialize MNIST classifier for rewards
-        self.classifier = MNISTClassifier().to(self.device)
-        self.load_classifier()
+        self.classifier = classifier
+        if self.classifier is None:
+            raise ValueError("Classifier must be provided")
         self.classifier.eval()
 
         # Initialize optimizers
@@ -156,7 +160,7 @@ class MCTSFlowSampler:
         with torch.no_grad():
             # Initialize samples
             current_samples = torch.randn(
-                len(y) * num_branches, 1, 28, 28, device=self.device
+                len(y) * num_branches, *self.dim, device=self.device
             )
             current_labels = y.repeat_interleave(num_branches)
 
@@ -305,7 +309,7 @@ class MCTSFlowSampler:
 
         with torch.no_grad():
             # Initialize samples
-            current_samples = torch.randn(num_branches, 1, 28, 28, device=self.device)
+            current_samples = torch.randn(num_branches, *self.dim, device=self.device)
             current_label = torch.full((num_branches,), class_label, device=self.device)
 
             # Generate samples with branching

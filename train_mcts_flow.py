@@ -1,3 +1,4 @@
+import os
 from matplotlib import pyplot as plt
 import torch
 from torchvision import datasets, transforms
@@ -7,15 +8,16 @@ from torch.utils.data import DataLoader
 from mcts_single_flow import MCTSFlowSampler
 import numpy as np
 from tqdm import tqdm
+from train_cifar100_classifier import CIFAR100Classifier
 
 
-def evaluate_with_viz(sampler, num_samples=1, branch_keep_pairs=None):
+def evaluate_with_viz(sampler, num_samples=1, branch_keep_pairs=None, num_classes=10):
     """Evaluate sample quality and visualize results."""
     if branch_keep_pairs is None:
         branch_keep_pairs = [(3, 2), (8, 3), (16, 7)]
 
     # Choose a random class label for this evaluation
-    class_label = torch.randint(0, 10, (1,)).item()
+    class_label = torch.randint(0, num_classes, (1,)).item()
     print(f"\nEvaluation for digit {class_label}:")
 
     for num_branches, num_keep in branch_keep_pairs:
@@ -74,7 +76,6 @@ def visualize_samples(samples, title="Generated Samples"):
 
 
 def main():
-    # Set device
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Using device: {device}")
 
@@ -82,27 +83,51 @@ def main():
     torch.manual_seed(42)
     np.random.seed(42)
 
-    # Load MNIST dataset
+    num_classes = 100
+
+    # Load and initialize classifier
+    classifier = CIFAR100Classifier().to(device)
+    classifier_path = "saved_models/cifar100_classifier.pt"
+    if not os.path.exists(classifier_path):
+        raise FileNotFoundError(
+            f"No pre-trained classifier found at {classifier_path}. "
+            f"Please run train_cifar100_classifier.py first."
+        )
+    classifier.load_state_dict(
+        torch.load(classifier_path, weights_only=True, map_location=device)
+    )
+    print(f"Loaded pre-trained classifier from {classifier_path}")
+
+    # Updated transform for CIFAR-100
     transform = transforms.Compose(
         [
             transforms.ToTensor(),
+            transforms.Normalize((0.5071, 0.4867, 0.4408), (0.2675, 0.2565, 0.2761)),
         ]
     )
 
-    train_dataset = datasets.MNIST(
+    # Load CIFAR-100 dataset
+    train_dataset = datasets.CIFAR100(
         "./data", train=True, download=True, transform=transform
     )
 
-    subset_size = None
+    subset_size = 100
     if subset_size:
         indices = torch.randperm(len(train_dataset))[:subset_size]
         train_dataset = torch.utils.data.Subset(train_dataset, indices)
 
     train_loader = DataLoader(train_dataset, batch_size=64, shuffle=True)
 
-    # Initialize sampler
-    sampler = MCTSFlowSampler(dim=(1, 28, 28), device=device, num_timesteps=10)
-
+    # Initialize sampler with CIFAR-100 dimensions
+    sampler = MCTSFlowSampler(
+        dim=(3, 32, 32),  # CIFAR-100 dimensions
+        device=device,
+        num_timesteps=10,
+        num_classes=100,  # CIFAR-100 has 100 classes
+        num_channels=64,
+        num_res_blocks=2,
+        classifier=classifier,
+    )
     # Training configuration
     n_epochs_per_cycle = 1
     n_training_cycles = 20
@@ -121,7 +146,9 @@ def main():
         )
 
         # Evaluate
-        evaluate_with_viz(sampler, branch_keep_pairs=branch_keep_pairs)
+        evaluate_with_viz(
+            sampler, branch_keep_pairs=branch_keep_pairs, num_classes=num_classes
+        )
 
 
 if __name__ == "__main__":
