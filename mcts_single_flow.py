@@ -290,7 +290,7 @@ class MCTSFlowSampler:
             avg_loss = total_loss / n_batches if n_batches > 0 else 0
             print(f"Average value loss: {avg_loss:.4f}")
 
-    def sample(self, class_label, num_branches=5, num_keep=5):
+    def sample(self, class_label, num_branches=5, num_keep=5, sigma=0.2):
         """
         Sample a single image for a given class label using MCTS-guided selection.
         Args:
@@ -336,7 +336,7 @@ class MCTSFlowSampler:
 
                 # Branch for next iteration (except last step)
                 if step < len(self.timesteps) - 2:
-                    noise_scale = 0.1 * (1 - float(t))  # Decrease noise over time
+                    noise_scale = sigma * (1 - float(t))  # Decrease noise over time
                     current_samples = current_samples.repeat_interleave(
                         num_branches, dim=0
                     )
