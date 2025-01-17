@@ -35,6 +35,7 @@ class CIFAR100Classifier(nn.Module):
 
 def train_classifier():
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    model_path = "saved_models/cifar100_classifier.pt"
 
     transform = transforms.Compose(
         [
@@ -49,6 +50,12 @@ def train_classifier():
     trainloader = DataLoader(trainset, batch_size=128, shuffle=True)
 
     model = CIFAR100Classifier().to(device)
+    try:
+        model.load_state_dict(torch.load(model_path))
+        print(f"Loaded existing model from {model_path}")
+    except FileNotFoundError:
+        print("No existing model found. Starting training from scratch.")
+
     criterion = nn.CrossEntropyLoss()
     optimizer = optim.Adam(model.parameters(), lr=0.001)
 
@@ -72,7 +79,7 @@ def train_classifier():
                 running_loss = 0.0
 
     print("Finished Training")
-    torch.save(model.state_dict(), "saved_models/cifar100_classifier.pt")
+    torch.save(model.state_dict(), model_path)
 
 
 if __name__ == "__main__":
