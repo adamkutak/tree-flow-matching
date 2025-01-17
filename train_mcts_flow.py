@@ -116,7 +116,7 @@ def main():
         indices = torch.randperm(len(train_dataset))[:subset_size]
         train_dataset = torch.utils.data.Subset(train_dataset, indices)
 
-    train_loader = DataLoader(train_dataset, batch_size=64, shuffle=True)
+    train_loader = DataLoader(train_dataset, batch_size=128, shuffle=True)
 
     # Initialize sampler with CIFAR-100 dimensions
     sampler = MCTSFlowSampler(
