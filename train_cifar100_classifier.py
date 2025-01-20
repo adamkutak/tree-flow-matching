@@ -51,7 +51,7 @@ def train_classifier():
 
     model = CIFAR100Classifier().to(device)
     try:
-        model.load_state_dict(torch.load(model_path))
+        model.load_state_dict(torch.load(model_path, weights_only=True))
         print(f"Loaded existing model from {model_path}")
     except FileNotFoundError:
         print("No existing model found. Starting training from scratch.")
