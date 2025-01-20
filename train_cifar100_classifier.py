@@ -64,6 +64,9 @@ def train_classifier():
     for epoch in range(num_epochs):
         model.train()
         running_loss = 0.0
+        running_correct = 0
+        total_samples = 0
+
         for i, (inputs, labels) in enumerate(trainloader):
             inputs, labels = inputs.to(device), labels.to(device)
 
@@ -74,9 +77,20 @@ def train_classifier():
             optimizer.step()
 
             running_loss += loss.item()
+
+            # Calculate accuracy
+            _, predicted = torch.max(outputs.data, 1)
+            total_samples += labels.size(0)
+            running_correct += (predicted == labels).sum().item()
+
             if i % 100 == 99:
-                print(f"[{epoch + 1}, {i + 1:5d}] loss: {running_loss / 100:.3f}")
+                accuracy = 100 * running_correct / total_samples
+                print(
+                    f"[{epoch + 1}, {i + 1:5d}] loss: {running_loss / 100:.3f}, accuracy: {accuracy:.2f}%"
+                )
                 running_loss = 0.0
+                running_correct = 0
+                total_samples = 0
 
     print("Finished Training")
     torch.save(model.state_dict(), model_path)
