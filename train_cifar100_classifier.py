@@ -93,6 +93,27 @@ def train_classifier():
                 total_samples = 0
 
     print("Finished Training")
+
+    # Evaluate on test set
+    testset = datasets.CIFAR100(
+        root="./data", train=False, download=True, transform=transform
+    )
+    testloader = DataLoader(testset, batch_size=128, shuffle=False)
+
+    model.eval()
+    correct = 0
+    total = 0
+    with torch.no_grad():
+        for inputs, labels in testloader:
+            inputs, labels = inputs.to(device), labels.to(device)
+            outputs = model(inputs)
+            _, predicted = torch.max(outputs.data, 1)
+            total += labels.size(0)
+            correct += (predicted == labels).sum().item()
+
+    test_accuracy = 100 * correct / total
+    print(f"Test Accuracy: {test_accuracy:.2f}%")
+
     torch.save(model.state_dict(), model_path)
 
 
