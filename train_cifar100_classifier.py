@@ -60,7 +60,7 @@ def train_classifier():
     optimizer = optim.Adam(model.parameters(), lr=0.001)
 
     # Train the model
-    num_epochs = 100
+    num_epochs = 500
     for epoch in range(num_epochs):
         model.train()
         running_loss = 0.0
