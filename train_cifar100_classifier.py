@@ -93,6 +93,7 @@ def train_classifier():
                 total_samples = 0
 
     print("Finished Training")
+    torch.save(model.state_dict(), model_path)
 
     # Evaluate on test set
     testset = datasets.CIFAR100(
@@ -113,8 +114,6 @@ def train_classifier():
 
     test_accuracy = 100 * correct / total
     print(f"Test Accuracy: {test_accuracy:.2f}%")
-
-    torch.save(model.state_dict(), model_path)
 
 
 if __name__ == "__main__":
