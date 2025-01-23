@@ -15,6 +15,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 import os
 from train_mnist_classifier import MNISTClassifier
+from vector_mlps import MLPValue, MLPFlow
 
 
 class TrajectoryBuffer:
@@ -62,6 +63,52 @@ class TrajectoryBuffer:
         return states, ts, labels, scores
 
 
+class SyntheticRewardNet(nn.Module):
+    """Complex neural network that provides a reward signal for testing"""
+
+    def __init__(self, input_dim, hidden_dims=[128, 256, 128, 64]):
+        super().__init__()
+
+        layers = []
+        prev_dim = input_dim
+
+        # Create a network with different activation functions per layer
+        activations = [
+            nn.ReLU(),
+            nn.Tanh(),
+            nn.SiLU(),  # Also known as Swish
+            nn.GELU(),
+        ]
+
+        for i, dim in enumerate(hidden_dims):
+            layers.extend(
+                [
+                    nn.Linear(prev_dim, dim),
+                    activations[i % len(activations)],
+                    nn.LayerNorm(dim),
+                ]
+            )
+            prev_dim = dim
+
+        # Final layer to scalar output
+        layers.extend(
+            [nn.Linear(prev_dim, 1), nn.Sigmoid()]  # Normalize output to [0,1]
+        )
+
+        self.net = nn.Sequential(*layers)
+
+        # Initialize with random weights
+        for m in self.modules():
+            if isinstance(m, nn.Linear):
+                nn.init.xavier_normal_(m.weight)
+                nn.init.zeros_(m.bias)
+
+    def forward(self, x):
+        # Flatten input if needed
+        x = x.view(x.size(0), -1)
+        return self.net(x).squeeze(-1)
+
+
 class ValueModel(UNetModel):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -75,9 +122,8 @@ class ValueModel(UNetModel):
 class MCTSFlowSampler:
     def __init__(
         self,
-        dim=(1, 28, 28),
-        num_channels=32,
-        num_res_blocks=1,
+        dim=64,  # Now just a single dimension for testing
+        hidden_dims=[256, 512, 256],
         device="cuda:0",
         num_timesteps=10,
         num_classes=10,
@@ -95,29 +141,25 @@ class MCTSFlowSampler:
         self.timesteps = torch.linspace(0, 1, num_timesteps, device=self.device)
         self.dim = dim
 
-        # Initialize models
-        self.flow_model = UNetModel(
-            dim=dim,
-            num_channels=num_channels,
-            num_res_blocks=num_res_blocks,
-            num_classes=num_classes,
-            class_cond=True,
+        self.flow_model = MLPFlow(
+            input_dim=dim, hidden_dims=hidden_dims, num_classes=num_classes
         ).to(self.device)
 
-        # Use the ValueModel directly instead of separate value_head
-        self.value_model = ValueModel(
-            dim=dim,
-            num_channels=num_channels,
-            num_res_blocks=num_res_blocks,
-            num_classes=num_classes,
-            class_cond=True,
+        self.value_model = MLPValue(
+            input_dim=dim, hidden_dims=hidden_dims, num_classes=num_classes
         ).to(self.device)
 
         # Initialize MNIST classifier for rewards
-        self.classifier = classifier
-        if self.classifier is None:
-            raise ValueError("Classifier must be provided")
-        self.classifier.eval()
+        # self.classifier = classifier
+        # if self.classifier is None:
+        #     raise ValueError("Classifier must be provided")
+        # self.classifier.eval()
+
+        # Replace classifier with synthetic reward network
+        self.reward_net = SyntheticRewardNet(dim).to(self.device)
+        # Freeze reward network weights
+        for param in self.reward_net.parameters():
+            param.requires_grad = False
 
         # Initialize optimizers
         self.flow_optimizer = torch.optim.Adam(self.flow_model.parameters())
@@ -145,12 +187,9 @@ class MCTSFlowSampler:
         print(f"Loaded pre-trained classifier from {path}")
 
     def compute_sample_quality(self, samples, target_labels):
-        """Compute quality score using MNIST classifier confidence."""
-        self.classifier.eval()
+        """Compute quality score using synthetic reward network."""
         with torch.no_grad():
-            logits = self.classifier(samples)
-            target_probs = logits[torch.arange(len(samples)), target_labels]
-            return target_probs
+            return self.reward_net(samples)
 
     def generate_training_trajectory(self, y, num_branches=5):
         """Generate a complete trajectory for training the value model."""
@@ -160,7 +199,7 @@ class MCTSFlowSampler:
         with torch.no_grad():
             # Initialize samples
             current_samples = torch.randn(
-                len(y) * num_branches, *self.dim, device=self.device
+                len(y) * num_branches, self.dim, device=self.device
             )
             current_labels = y.repeat_interleave(num_branches)
 
@@ -172,9 +211,14 @@ class MCTSFlowSampler:
                 # Flow model step
                 dt = self.timesteps[step + 1] - t
 
+                # Create proper time tensor for the batch
+                t_batch = torch.full(
+                    (len(current_samples),), t.item(), device=self.device
+                )
+
                 # Euler step
                 velocity = self.flow_model(
-                    torch.full_like(t, t, device=self.device),
+                    t_batch,  # Now passing properly shaped time tensor
                     current_samples,
                     current_labels,
                 )
@@ -219,9 +263,7 @@ class MCTSFlowSampler:
                 TrajectoryBuffer()
             )  # Reset buffer for new trajectories
             with torch.no_grad():
-                for batch_idx, (_, y) in enumerate(
-                    tqdm(train_loader, desc="Generating trajectories")
-                ):
+                for batch_idx, (_, y) in enumerate(train_loader):
                     y = y.to(self.device)
                     trajectories, ts, labels, scores = (
                         self.generate_training_trajectory(y)
@@ -245,8 +287,7 @@ class MCTSFlowSampler:
     def train_flow_matching(self, train_loader, desc="Training flow"):
         """Train flow model for one epoch."""
         self.flow_model.train()
-        pbar = tqdm(train_loader, desc=desc)
-        for batch_idx, (x1, y) in enumerate(pbar):
+        for batch_idx, (x1, y) in enumerate(train_loader):
             x1, y = x1.to(self.device), y.to(self.device)
             x0 = torch.randn_like(x1)
 
@@ -258,7 +299,7 @@ class MCTSFlowSampler:
             flow_loss.backward()
             self.flow_optimizer.step()
 
-            pbar.set_postfix({"flow_loss": f"{flow_loss.item():.4f}"})
+            # pbar.set_postfix({"flow_loss": f"{flow_loss.item():.4f}"})
 
         return flow_loss.item()
 
@@ -268,10 +309,10 @@ class MCTSFlowSampler:
 
         for epoch in range(n_epochs):
             n_batches = len(self.trajectory_buffer.trajectories) // batch_size
-            pbar = tqdm(range(n_batches), desc=desc)
+            # pbar = tqdm(range(n_batches), desc=desc)
 
             total_loss = 0
-            for _ in pbar:
+            for _ in range(n_batches):
                 batch = self.trajectory_buffer.sample_batch(batch_size)
                 if batch is None:
                     continue
@@ -289,14 +330,14 @@ class MCTSFlowSampler:
                 self.value_optimizer.step()
 
                 total_loss += value_loss.item()
-                pbar.set_postfix({"value_loss": f"{value_loss.item():.4f}"})
+                # pbar.set_postfix({"value_loss": f"{value_loss.item():.4f}"})
 
             avg_loss = total_loss / n_batches if n_batches > 0 else 0
             print(f"Average value loss: {avg_loss:.4f}")
 
     def sample(self, class_label, num_branches=5, num_keep=5, sigma=0.2):
         """
-        Sample a single image for a given class label using MCTS-guided selection.
+        Sample a single vector for a given class label using MCTS-guided selection.
         Args:
             class_label: Single integer label (0-9)
             num_branches: Number of branches to create at each step
@@ -309,24 +350,34 @@ class MCTSFlowSampler:
 
         with torch.no_grad():
             # Initialize samples
-            current_samples = torch.randn(num_branches, *self.dim, device=self.device)
+            current_samples = torch.randn(num_branches, self.dim, device=self.device)
             current_label = torch.full((num_branches,), class_label, device=self.device)
 
             # Generate samples with branching
-            for step, t in enumerate(tqdm(self.timesteps[:-1], desc="Generating")):
+            for step, t in enumerate(self.timesteps[:-1]):
                 dt = self.timesteps[step + 1] - t
+
+                # Create proper time tensor for the batch
+                t_batch = torch.full(
+                    (len(current_samples),), t.item(), device=self.device
+                )
 
                 # Flow step
                 velocity = self.flow_model(
-                    torch.full_like(t, t, device=self.device),
+                    t_batch,
                     current_samples,
                     current_label,
                 )
                 generated = current_samples + velocity * dt
 
                 # Get value predictions
+                t_batch_next = torch.full(
+                    (len(generated),),
+                    float(self.timesteps[step + 1]),
+                    device=self.device,
+                )
                 value_scores = self.value_model(
-                    torch.full((len(generated),), float(t), device=self.device),
+                    t_batch_next,
                     generated,
                     current_label,
                 )
@@ -352,8 +403,9 @@ class MCTSFlowSampler:
                     current_samples = current_samples + perturbations
 
             # Select final best sample using value model
+            t_final = torch.ones(len(current_samples), device=self.device)
             final_values = self.value_model(
-                torch.ones(len(current_samples), device=self.device),
+                t_final,
                 current_samples,
                 current_label,
             )
