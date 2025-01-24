@@ -63,52 +63,6 @@ class TrajectoryBuffer:
         return states, ts, labels, scores
 
 
-class SyntheticRewardNet(nn.Module):
-    """Complex neural network that provides a reward signal for testing"""
-
-    def __init__(self, input_dim, hidden_dims=[128, 256, 128, 64]):
-        super().__init__()
-
-        layers = []
-        prev_dim = input_dim
-
-        # Create a network with different activation functions per layer
-        activations = [
-            nn.ReLU(),
-            nn.Tanh(),
-            nn.SiLU(),  # Also known as Swish
-            nn.GELU(),
-        ]
-
-        for i, dim in enumerate(hidden_dims):
-            layers.extend(
-                [
-                    nn.Linear(prev_dim, dim),
-                    activations[i % len(activations)],
-                    nn.LayerNorm(dim),
-                ]
-            )
-            prev_dim = dim
-
-        # Final layer to scalar output
-        layers.extend(
-            [nn.Linear(prev_dim, 1), nn.Sigmoid()]  # Normalize output to [0,1]
-        )
-
-        self.net = nn.Sequential(*layers)
-
-        # Initialize with random weights
-        for m in self.modules():
-            if isinstance(m, nn.Linear):
-                nn.init.xavier_normal_(m.weight)
-                nn.init.zeros_(m.bias)
-
-    def forward(self, x):
-        # Flatten input if needed
-        x = x.view(x.size(0), -1)
-        return self.net(x).squeeze(-1)
-
-
 class ValueModel(UNetModel):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -127,7 +81,7 @@ class MCTSFlowSampler:
         device="cuda:0",
         num_timesteps=10,
         num_classes=10,
-        classifier=None,
+        reward_net=None,
     ):
         # Check if CUDA is available and set device
         if torch.cuda.is_available():
@@ -156,7 +110,7 @@ class MCTSFlowSampler:
         # self.classifier.eval()
 
         # Replace classifier with synthetic reward network
-        self.reward_net = SyntheticRewardNet(dim).to(self.device)
+        self.reward_net = reward_net
         # Freeze reward network weights
         for param in self.reward_net.parameters():
             param.requires_grad = False
@@ -409,7 +363,9 @@ class MCTSFlowSampler:
                 current_samples,
                 current_label,
             )
-            best_idx = final_values.argmax()
+            # best_idx = final_values.argmax()
+            # return current_samples[best_idx]
+            best_idx = torch.randint(0, len(current_samples), (1,)).item()
             return current_samples[best_idx]
 
     def save_models(self, path="saved_models"):
