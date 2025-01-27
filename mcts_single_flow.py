@@ -15,6 +15,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 import os
 from train_mnist_classifier import MNISTClassifier
+from vector_mlps import MLPValue, MLPFlow
 
 
 class TrajectoryBuffer:
@@ -75,11 +76,12 @@ class ValueModel(UNetModel):
 class MCTSFlowSampler:
     def __init__(
         self,
-        dim=(1, 28, 28),
-        num_channels=32,
-        num_res_blocks=1,
+        dim=64,  # Now just a single dimension for testing
+        hidden_dims=[256, 512, 256],
         device="cuda:0",
         num_timesteps=10,
+        num_classes=10,
+        reward_net=None,
     ):
         # Check if CUDA is available and set device
         if torch.cuda.is_available():
@@ -91,29 +93,27 @@ class MCTSFlowSampler:
 
         self.num_timesteps = num_timesteps
         self.timesteps = torch.linspace(0, 1, num_timesteps, device=self.device)
+        self.dim = dim
 
-        # Initialize models
-        self.flow_model = UNetModel(
-            dim=dim,
-            num_channels=num_channels,
-            num_res_blocks=num_res_blocks,
-            num_classes=10,
-            class_cond=True,
+        self.flow_model = MLPFlow(
+            input_dim=dim, hidden_dims=hidden_dims, num_classes=num_classes
         ).to(self.device)
 
-        # Use the ValueModel directly instead of separate value_head
-        self.value_model = ValueModel(
-            dim=dim,
-            num_channels=num_channels,
-            num_res_blocks=num_res_blocks,
-            num_classes=10,
-            class_cond=True,
+        self.value_model = MLPValue(
+            input_dim=dim, hidden_dims=hidden_dims, num_classes=num_classes
         ).to(self.device)
 
         # Initialize MNIST classifier for rewards
-        self.classifier = MNISTClassifier().to(self.device)
-        self.load_classifier()
-        self.classifier.eval()
+        # self.classifier = classifier
+        # if self.classifier is None:
+        #     raise ValueError("Classifier must be provided")
+        # self.classifier.eval()
+
+        # Replace classifier with synthetic reward network
+        self.reward_net = reward_net
+        # Freeze reward network weights
+        for param in self.reward_net.parameters():
+            param.requires_grad = False
 
         # Initialize optimizers
         self.flow_optimizer = torch.optim.Adam(self.flow_model.parameters())
@@ -141,12 +141,9 @@ class MCTSFlowSampler:
         print(f"Loaded pre-trained classifier from {path}")
 
     def compute_sample_quality(self, samples, target_labels):
-        """Compute quality score using MNIST classifier confidence."""
-        self.classifier.eval()
+        """Compute quality score using synthetic reward network."""
         with torch.no_grad():
-            logits = self.classifier(samples)
-            target_probs = logits[torch.arange(len(samples)), target_labels]
-            return target_probs
+            return self.reward_net(samples)
 
     def generate_training_trajectory(self, y, num_branches=5):
         """Generate a complete trajectory for training the value model."""
@@ -156,7 +153,7 @@ class MCTSFlowSampler:
         with torch.no_grad():
             # Initialize samples
             current_samples = torch.randn(
-                len(y) * num_branches, 1, 28, 28, device=self.device
+                len(y) * num_branches, self.dim, device=self.device
             )
             current_labels = y.repeat_interleave(num_branches)
 
@@ -168,9 +165,14 @@ class MCTSFlowSampler:
                 # Flow model step
                 dt = self.timesteps[step + 1] - t
 
+                # Create proper time tensor for the batch
+                t_batch = torch.full(
+                    (len(current_samples),), t.item(), device=self.device
+                )
+
                 # Euler step
                 velocity = self.flow_model(
-                    torch.full_like(t, t, device=self.device),
+                    t_batch,  # Now passing properly shaped time tensor
                     current_samples,
                     current_labels,
                 )
@@ -215,9 +217,7 @@ class MCTSFlowSampler:
                 TrajectoryBuffer()
             )  # Reset buffer for new trajectories
             with torch.no_grad():
-                for batch_idx, (_, y) in enumerate(
-                    tqdm(train_loader, desc="Generating trajectories")
-                ):
+                for batch_idx, (_, y) in enumerate(train_loader):
                     y = y.to(self.device)
                     trajectories, ts, labels, scores = (
                         self.generate_training_trajectory(y)
@@ -231,7 +231,7 @@ class MCTSFlowSampler:
             for value_epoch in range(value_epochs):
                 self.train_value_model(
                     n_epochs=1,
-                    batch_size=64,
+                    batch_size=128,
                     desc=f"Value epoch {value_epoch + 1}/{value_epochs}",
                 )
 
@@ -241,8 +241,7 @@ class MCTSFlowSampler:
     def train_flow_matching(self, train_loader, desc="Training flow"):
         """Train flow model for one epoch."""
         self.flow_model.train()
-        pbar = tqdm(train_loader, desc=desc)
-        for batch_idx, (x1, y) in enumerate(pbar):
+        for batch_idx, (x1, y) in enumerate(train_loader):
             x1, y = x1.to(self.device), y.to(self.device)
             x0 = torch.randn_like(x1)
 
@@ -254,7 +253,7 @@ class MCTSFlowSampler:
             flow_loss.backward()
             self.flow_optimizer.step()
 
-            pbar.set_postfix({"flow_loss": f"{flow_loss.item():.4f}"})
+            # pbar.set_postfix({"flow_loss": f"{flow_loss.item():.4f}"})
 
         return flow_loss.item()
 
@@ -264,10 +263,10 @@ class MCTSFlowSampler:
 
         for epoch in range(n_epochs):
             n_batches = len(self.trajectory_buffer.trajectories) // batch_size
-            pbar = tqdm(range(n_batches), desc=desc)
+            # pbar = tqdm(range(n_batches), desc=desc)
 
             total_loss = 0
-            for _ in pbar:
+            for _ in range(n_batches):
                 batch = self.trajectory_buffer.sample_batch(batch_size)
                 if batch is None:
                     continue
@@ -285,49 +284,34 @@ class MCTSFlowSampler:
                 self.value_optimizer.step()
 
                 total_loss += value_loss.item()
-                pbar.set_postfix({"value_loss": f"{value_loss.item():.4f}"})
+                # pbar.set_postfix({"value_loss": f"{value_loss.item():.4f}"})
 
             avg_loss = total_loss / n_batches if n_batches > 0 else 0
             print(f"Average value loss: {avg_loss:.4f}")
 
-    def sample(self, class_label, num_branches=5, num_keep=5, sigma=0.2):
-        """
-        Sample a single image for a given class label using MCTS-guided selection.
-        Args:
-            class_label: Single integer label (0-9)
-            num_branches: Number of branches to create at each step
-            num_keep: Number of samples to keep at each step
-        Returns:
-            Single best final sample
-        """
+    def simple_sample(self, class_label, num_branches=5, num_keep=5, sigma=0.2):
+        """Original simple sampling method"""
         self.flow_model.eval()
         self.value_model.eval()
 
         with torch.no_grad():
             # Initialize samples
-            current_samples = torch.randn(num_branches, 1, 28, 28, device=self.device)
+            current_samples = torch.randn(num_branches, self.dim, device=self.device)
             current_label = torch.full((num_branches,), class_label, device=self.device)
 
             # Generate samples with branching
-            for step, t in enumerate(tqdm(self.timesteps[:-1], desc="Generating")):
+            for step, t in enumerate(self.timesteps[:-1]):
                 dt = self.timesteps[step + 1] - t
+                t_batch = torch.full(
+                    (len(current_samples),), t.item(), device=self.device
+                )
 
                 # Flow step
-                velocity = self.flow_model(
-                    torch.full_like(t, t, device=self.device),
-                    current_samples,
-                    current_label,
-                )
+                velocity = self.flow_model(t_batch, current_samples, current_label)
                 generated = current_samples + velocity * dt
 
-                # Get value predictions
-                value_scores = self.value_model(
-                    torch.full((len(generated),), float(t), device=self.device),
-                    generated,
-                    current_label,
-                )
-
-                # Select top samples
+                # Get value predictions and select top samples
+                value_scores = self.value_model(t_batch, generated, current_label)
                 top_k_values, top_k_indices = torch.topk(
                     value_scores, k=num_keep, dim=0
                 )
@@ -336,25 +320,142 @@ class MCTSFlowSampler:
 
                 # Branch for next iteration (except last step)
                 if step < len(self.timesteps) - 2:
-                    noise_scale = sigma * (1 - float(t))  # Decrease noise over time
+                    noise_scale = sigma * (1 - float(t))
                     current_samples = current_samples.repeat_interleave(
                         num_branches, dim=0
                     )
-                    current_label = current_label[:num_keep].repeat_interleave(
-                        num_branches
-                    )
-
+                    current_label = current_label.repeat_interleave(num_branches)
                     perturbations = torch.randn_like(current_samples) * noise_scale
                     current_samples = current_samples + perturbations
 
-            # Select final best sample using value model
-            final_values = self.value_model(
-                torch.ones(len(current_samples), device=self.device),
-                current_samples,
-                current_label,
-            )
-            best_idx = final_values.argmax()
+            # Randomly select final sample
+            # NOTE: this is not the optimal way to do this.
+            # we do this to demonstrate the sampling method improves performance not because
+            # it has more selection at the end when num_branches is larger
+            best_idx = torch.randint(0, len(current_samples), (1,)).item()
             return current_samples[best_idx]
+
+    def mcts_sample(
+        self,
+        class_label,
+        num_simulations=5,
+        num_branches=5,
+        num_keep=5,
+        sigma=0.2,
+        exploration_weight=1.0,
+    ):
+        """Sample using MCTS-inspired approach with policy and value networks"""
+        self.flow_model.eval()
+        self.value_model.eval()
+
+        with torch.no_grad():
+            max_samples = num_branches * num_keep  # Maximum possible number of samples
+
+            # Initialize root samples
+            current_samples = torch.randn(num_branches, self.dim, device=self.device)
+            current_label = torch.full((num_branches,), class_label, device=self.device)
+
+            # Track visit counts and Q-values for UCB with maximum possible size
+            visit_counts = torch.zeros(
+                len(self.timesteps) - 1, max_samples, device=self.device
+            )
+            q_values = torch.zeros(
+                len(self.timesteps) - 1, max_samples, device=self.device
+            )
+
+            # Run simulations
+            for sim in range(num_simulations):
+                samples = current_samples.clone()
+                labels = current_label.clone()
+
+                # Store trajectory for backup
+                trajectory = []
+                selected_actions = []
+
+                # Selection and expansion
+                for step, t in enumerate(self.timesteps[:-1]):
+                    dt = self.timesteps[step + 1] - t
+                    t_batch = torch.full((len(samples),), t.item(), device=self.device)
+
+                    # Get policy (flow) predictions
+                    velocity = self.flow_model(t_batch, samples, labels)
+
+                    # Get value predictions
+                    value_scores = self.value_model(t_batch, samples, labels)
+
+                    # Compute UCB scores
+                    sim_tensor = torch.tensor(
+                        sim + 1, device=self.device, dtype=torch.float
+                    )
+                    visit_count = visit_counts[step, : len(samples)]
+                    ucb_term = exploration_weight * torch.sqrt(
+                        torch.log(sim_tensor) / (visit_count + 1)
+                    )
+                    ucb_scores = value_scores + ucb_term
+
+                    # Select actions based on UCB
+                    top_k_values, top_k_indices = torch.topk(
+                        ucb_scores, k=min(num_keep, len(samples)), dim=0
+                    )
+
+                    # Store state before applying actions
+                    trajectory.append(samples.clone())
+                    selected_actions.append(top_k_indices)
+
+                    # Apply selected actions
+                    samples = samples[top_k_indices] + velocity[top_k_indices] * dt
+                    labels = labels[top_k_indices]
+
+                    # Add noise for branching (except last step)
+                    if step < len(self.timesteps) - 2:
+                        noise_scale = sigma * (1 - float(t))
+                        samples = samples.repeat_interleave(num_branches, dim=0)
+                        labels = labels.repeat_interleave(num_branches)
+                        perturbations = torch.randn_like(samples) * noise_scale
+                        samples = samples + perturbations
+
+                # Evaluation: get final value
+                t_final = torch.ones(len(samples), device=self.device)
+                final_value = self.value_model(t_final, samples, labels).mean()
+
+                # Backup: update statistics for the selected actions
+                for step, (state, actions) in enumerate(
+                    zip(trajectory, selected_actions)
+                ):
+                    visit_counts[step, actions] += 1
+                    q_values[step, actions] = (
+                        q_values[step, actions] * (visit_counts[step, actions] - 1)
+                        + final_value
+                    ) / visit_counts[step, actions]
+
+            # Final selection using most visited actions
+            samples = current_samples.clone()
+            labels = current_label.clone()
+
+            for step, t in enumerate(self.timesteps[:-1]):
+                dt = self.timesteps[step + 1] - t
+                t_batch = torch.full((len(samples),), t.item(), device=self.device)
+
+                # Use most visited actions
+                visit_count = visit_counts[step, : len(samples)]
+                top_k_visits, top_k_indices = torch.topk(
+                    visit_count, k=min(num_keep, len(samples)), dim=0
+                )
+                velocity = self.flow_model(t_batch, samples, labels)
+
+                samples = samples[top_k_indices] + velocity[top_k_indices] * dt
+                labels = labels[top_k_indices]
+
+                if step < len(self.timesteps) - 2:
+                    noise_scale = sigma * (1 - float(t))
+                    samples = samples.repeat_interleave(num_branches, dim=0)
+                    labels = labels.repeat_interleave(num_branches)
+                    perturbations = torch.randn_like(samples) * noise_scale
+                    samples = samples + perturbations
+
+            # Randomly select final sample
+            best_idx = torch.randint(0, len(samples), (1,)).item()
+            return samples[best_idx]
 
     def save_models(self, path="saved_models"):
         """Save flow and value models separately."""
