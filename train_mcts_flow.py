@@ -226,7 +226,7 @@ def evaluate_with_viz(sampler, num_samples=1, branch_keep_pairs=None, num_classe
         # Generate multiple samples for the same class
         for _ in range(num_samples):
             # Generate single sample
-            sample = sampler.sample(
+            sample = sampler.simple_sample(
                 class_label=class_label,
                 num_branches=num_branches,
                 num_keep=num_keep,
@@ -293,7 +293,7 @@ def evaluate_synthetic_samples(
 
             # Generate multiple samples for this class
             for _ in range(num_samples):
-                sample = sampler.sample(
+                sample = sampler.simple_sample(
                     class_label=class_label,
                     num_branches=num_branches,
                     num_keep=num_keep,
@@ -429,12 +429,12 @@ def main():
     for cycle in range(n_training_cycles):
         print(f"\nTraining Cycle {cycle + 1}/{n_training_cycles}")
 
-        sampler.train(
-            train_loader,
-            n_epochs=n_epochs_per_cycle,
-            initial_flow_epochs=5,
-            value_epochs=50,
-        )
+        # sampler.train(
+        #     train_loader,
+        #     n_epochs=n_epochs_per_cycle,
+        #     initial_flow_epochs=5,
+        #     value_epochs=50,
+        # )
 
         # Evaluate
         evaluate_synthetic_samples(
