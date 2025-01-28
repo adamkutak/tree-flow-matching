@@ -18,12 +18,12 @@ class CIFAR100Classifier(nn.Module):
         for param in self.resnet.parameters():
             param.requires_grad = False
 
-        # Replace the final layer and make it trainable
-        self.resnet.fc = nn.Linear(self.resnet.fc.in_features, 100)
-        self.resnet.fc.requires_grad_(True)
+        # add a new linear layer to the end of the resnet
+        self.cifar_classifier = nn.Linear(self.resnet.fc.out_features, 100)
+        self.cifar_classifier.requires_grad_(True)
 
     def forward(self, x):
-        return self.resnet(x)
+        return self.cifar_classifier(self.resnet(x))
 
 
 def train_cifar_classifier(
