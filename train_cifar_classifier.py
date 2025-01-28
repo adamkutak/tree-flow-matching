@@ -19,7 +19,7 @@ class CIFAR100Classifier(nn.Module):
 
         # Add our classifier layer
         self.cifar_classifier = nn.Linear(
-            512, 100
+            self.resnet.fc.in_features, 100
         )  # ResNet18's final feature dim is 512
 
     def forward(self, x):
@@ -81,7 +81,7 @@ def train_cifar_classifier(
     if os.path.exists(save_path):
         print(f"Loading existing model from {save_path}")
         try:
-            model.load_state_dict(torch.load(save_path))
+            model.load_state_dict(torch.load(save_path, weights_only=True))
             print("Successfully loaded existing model")
         except Exception as e:
             print(f"Error loading existing model: {e}")
