@@ -70,9 +70,8 @@ def train_cifar_classifier(
     criterion = nn.CrossEntropyLoss()
     optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
 
-    best_acc = 0.0
-
     # Training loop
+    print("Starting training...")
     for epoch in range(num_epochs):
         model.train()
         running_loss = 0.0
@@ -98,28 +97,27 @@ def train_cifar_classifier(
                 {"loss": running_loss / total, "acc": 100.0 * correct / total}
             )
 
-        # Evaluate on test set
-        model.eval()
-        test_correct = 0
-        test_total = 0
-        with torch.no_grad():
-            for inputs, labels in test_loader:
-                inputs, labels = inputs.to(device), labels.to(device)
-                outputs = model(inputs)
-                _, predicted = outputs.max(1)
-                test_total += labels.size(0)
-                test_correct += predicted.eq(labels).sum().item()
+    # Final evaluation on test set
+    print("\nEvaluating on test set...")
+    model.eval()
+    test_correct = 0
+    test_total = 0
+    with torch.no_grad():
+        for inputs, labels in tqdm(test_loader, desc="Testing"):
+            inputs, labels = inputs.to(device), labels.to(device)
+            outputs = model(inputs)
+            _, predicted = outputs.max(1)
+            test_total += labels.size(0)
+            test_correct += predicted.eq(labels).sum().item()
 
-        test_acc = 100.0 * test_correct / test_total
-        print(f"Test Accuracy: {test_acc:.2f}%")
+    test_acc = 100.0 * test_correct / test_total
+    print(f"\nFinal Test Accuracy: {test_acc:.2f}%")
 
-        # Save best model
-        if test_acc > best_acc:
-            best_acc = test_acc
-            torch.save(model.state_dict(), save_path)
-            print(f"Saved new best model with accuracy: {best_acc:.2f}%")
+    # Save the final model
+    torch.save(model.state_dict(), save_path)
+    print(f"Saved model to {save_path}")
 
-    return best_acc
+    return test_acc
 
 
 def main():
@@ -128,8 +126,8 @@ def main():
     torch.cuda.manual_seed(42)
 
     # Train the classifier
-    final_accuracy = train_cifar_classifier(num_epochs=10)
-    print(f"Final best accuracy: {final_accuracy:.2f}%")
+    final_accuracy = train_cifar_classifier(num_epochs=100)
+    print(f"Training completed with final accuracy: {final_accuracy:.2f}%")
 
 
 if __name__ == "__main__":
