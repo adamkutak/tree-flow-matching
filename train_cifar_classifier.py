@@ -72,7 +72,7 @@ def train_cifar_classifier(
     if os.path.exists(save_path):
         print(f"Loading existing model from {save_path}")
         try:
-            model.load_state_dict(torch.load(save_path))
+            model.load_state_dict(torch.load(save_path, weights_only=True))
             # Evaluate existing model
             model.eval()
             test_correct = 0
@@ -151,7 +151,7 @@ def main():
     torch.cuda.manual_seed(42)
 
     # Train the classifier
-    final_accuracy = train_cifar_classifier(num_epochs=10)
+    final_accuracy = train_cifar_classifier(num_epochs=100)
     print(f"Training completed with final accuracy: {final_accuracy:.2f}%")
 
 
