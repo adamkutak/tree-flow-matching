@@ -15,8 +15,8 @@ class CIFAR100Classifier(nn.Module):
         self.resnet = models.resnet18(pretrained=True)
 
         # Freeze all parameters
-        for param in self.resnet.parameters():
-            param.requires_grad = False
+        # for param in self.resnet.parameters():
+        # param.requires_grad = False
 
         # add a new linear layer to the end of the resnet
         self.cifar_classifier = nn.Linear(self.resnet.fc.out_features, 100)
