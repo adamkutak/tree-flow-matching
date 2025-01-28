@@ -2,12 +2,12 @@ import torch
 import torch.nn as nn
 import torchvision.models as models
 import torchvision.transforms as transforms
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, ConcatDataset
 from torchvision.datasets import CIFAR100
 import os
 from tqdm import tqdm
-from torch.optim.lr_scheduler import CosineAnnealingLR, ReduceLROnPlateau
-from torch.cuda.amp import GradScaler, autocast  # For mixed precision training
+from torch.optim.lr_scheduler import CosineAnnealingLR
+from torch.cuda.amp import GradScaler, autocast
 
 
 class CIFAR100Classifier(nn.Module):
@@ -34,9 +34,8 @@ def train_cifar_classifier(
     num_epochs=100,
     initial_lr=0.001,
     weight_decay=1e-4,
-    scheduler_type="cosine",  # or "plateau"
 ):
-    """Train and save a CIFAR100 classifier with advanced training methods."""
+    """Train and save a CIFAR100 classifier using all available data."""
     if not os.path.exists("saved_models"):
         os.makedirs("saved_models")
 
@@ -45,8 +44,9 @@ def train_cifar_classifier(
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Training on {device}")
-    # Advanced data augmentation
-    transform_train = transforms.Compose(
+
+    # Data augmentation for all data
+    transform = transforms.Compose(
         [
             transforms.RandomHorizontalFlip(),
             transforms.RandomCrop(32, padding=4),
@@ -57,26 +57,21 @@ def train_cifar_classifier(
         ]
     )
 
-    transform_test = transforms.Compose(
-        [
-            transforms.ToTensor(),
-            transforms.Normalize((0.5071, 0.4865, 0.4409), (0.2673, 0.2564, 0.2762)),
-        ]
-    )
-
-    # Data loading
+    # Load both training and test datasets with the same transform
     train_dataset = CIFAR100(
-        root="./data", train=True, download=True, transform=transform_train
+        root="./data", train=True, download=True, transform=transform
     )
     test_dataset = CIFAR100(
-        root="./data", train=False, download=True, transform=transform_test
+        root="./data", train=False, download=True, transform=transform
     )
 
-    train_loader = DataLoader(
-        train_dataset, batch_size=128, shuffle=True, num_workers=4, pin_memory=True
-    )
-    test_loader = DataLoader(
-        test_dataset, batch_size=128, shuffle=False, num_workers=4, pin_memory=True
+    # Combine datasets
+    full_dataset = ConcatDataset([train_dataset, test_dataset])
+    print(f"Training on full dataset of {len(full_dataset)} images")
+
+    # Create dataloader for full dataset
+    data_loader = DataLoader(
+        full_dataset, batch_size=128, shuffle=True, num_workers=4, pin_memory=True
     )
 
     # Initialize model
@@ -87,18 +82,7 @@ def train_cifar_classifier(
         print(f"Loading existing model from {save_path}")
         try:
             model.load_state_dict(torch.load(save_path))
-            model.eval()
-            test_correct = 0
-            test_total = 0
-            with torch.no_grad():
-                for inputs, labels in tqdm(test_loader, desc="Testing existing model"):
-                    inputs, labels = inputs.to(device), labels.to(device)
-                    outputs = model(inputs)
-                    _, predicted = outputs.max(1)
-                    test_total += labels.size(0)
-                    test_correct += predicted.eq(labels).sum().item()
-            initial_acc = 100.0 * test_correct / test_total
-            print(f"Loaded model accuracy: {initial_acc:.2f}%")
+            print("Successfully loaded existing model")
         except Exception as e:
             print(f"Error loading existing model: {e}")
             print("Training from scratch instead")
@@ -112,26 +96,20 @@ def train_cifar_classifier(
     )
 
     # Learning rate scheduler
-    if scheduler_type == "cosine":
-        scheduler = CosineAnnealingLR(optimizer, T_max=num_epochs, eta_min=1e-6)
-    else:  # plateau
-        scheduler = ReduceLROnPlateau(
-            optimizer, mode="max", factor=0.1, patience=5, verbose=True
-        )
+    scheduler = CosineAnnealingLR(optimizer, T_max=num_epochs, eta_min=1e-6)
 
     # Mixed precision training
     scaler = GradScaler()
 
     # Training loop
     print("\nStarting training...")
-    best_acc = 0.0
     for epoch in range(num_epochs):
         model.train()
         running_loss = 0.0
         correct = 0
         total = 0
 
-        pbar = tqdm(train_loader, desc=f"Epoch {epoch+1}/{num_epochs}")
+        pbar = tqdm(data_loader, desc=f"Epoch {epoch+1}/{num_epochs}")
         for inputs, labels in pbar:
             inputs, labels = inputs.to(device), labels.to(device)
 
@@ -169,42 +147,21 @@ def train_cifar_classifier(
                     "optimizer_state_dict": optimizer.state_dict(),
                     "scheduler_state_dict": scheduler.state_dict(),
                     "loss": running_loss / total,
-                    "train_acc": 100.0 * correct / total,
+                    "accuracy": 100.0 * correct / total,
                 },
                 checkpoint_path,
             )
             print(f"\nSaved checkpoint to {checkpoint_path}")
 
-        # Evaluate on test set every 5 epochs or at the end
-        if (epoch + 1) % 5 == 0 or epoch == num_epochs - 1:
-            model.eval()
-            test_correct = 0
-            test_total = 0
-            with torch.no_grad():
-                for inputs, labels in tqdm(test_loader, desc="Testing"):
-                    inputs, labels = inputs.to(device), labels.to(device)
-                    outputs = model(inputs)
-                    _, predicted = outputs.max(1)
-                    test_total += labels.size(0)
-                    test_correct += predicted.eq(labels).sum().item()
-
-            test_acc = 100.0 * test_correct / test_total
-            print(f"\nTest Accuracy: {test_acc:.2f}%")
-
-            # Save best model
-            if test_acc > best_acc:
-                best_acc = test_acc
-                torch.save(model.state_dict(), save_path)
-                print(f"New best model saved with accuracy: {best_acc:.2f}%")
-
         # Update learning rate
-        if scheduler_type == "cosine":
-            scheduler.step()
-        else:
-            scheduler.step(test_acc)
+        scheduler.step()
 
-    print(f"\nBest Test Accuracy: {best_acc:.2f}%")
-    return best_acc
+    # Save final model
+    torch.save(model.state_dict(), save_path)
+    print(f"\nSaved final model to {save_path}")
+    print(f"Final Accuracy: {100.0 * correct / total:.2f}%")
+
+    return 100.0 * correct / total
 
 
 def main():
@@ -218,9 +175,8 @@ def main():
         num_epochs=100,
         initial_lr=0.001,
         weight_decay=1e-4,
-        scheduler_type="cosine",
     )
-    print(f"Training completed with best accuracy: {final_accuracy:.2f}%")
+    print(f"Training completed with final accuracy: {final_accuracy:.2f}%")
 
 
 if __name__ == "__main__":

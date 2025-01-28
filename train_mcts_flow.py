@@ -8,7 +8,6 @@ from torch.utils.data import DataLoader, Dataset
 from mcts_single_flow import MCTSFlowSampler
 import numpy as np
 from tqdm import tqdm
-from train_cifar100_classifier import CIFAR100Classifier
 import torch.nn as nn
 import torch.nn.functional as F
 
