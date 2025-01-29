@@ -53,6 +53,7 @@ class FIDISRewardNet(nn.Module):
             feat = self.inception_model(image).cpu().numpy().flatten()
 
         sigma_inv = np.linalg.inv(self.sigma_real)
+        breakpoint()
         fid_score = mahalanobis(feat, self.mu_real, sigma_inv)
         return fid_score
 
