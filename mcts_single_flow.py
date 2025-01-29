@@ -99,7 +99,7 @@ class MCTSFlowSampler:
 
         self.flow_model = UNetModel(
             dim=(channels, image_size, image_size),  # Assuming CIFAR dimensions
-            num_channels=hidden_dims[0],
+            num_channels=128,
             num_res_blocks=2,
             channel_mult=[1, 2, 2, 2],
             num_heads=4,
@@ -112,7 +112,7 @@ class MCTSFlowSampler:
 
         self.value_model = ValueModel(
             dim=(channels, image_size, image_size),  # Assuming CIFAR dimensions
-            num_channels=hidden_dims[0],
+            num_channels=128,
             num_res_blocks=2,
             channel_mult=[1, 2, 2, 2],
             num_heads=4,
