@@ -140,18 +140,8 @@ def train_cifar_classifier(
         # Save checkpoint every 10 epochs
         if (epoch + 1) % 10 == 0:
             checkpoint_path = f"{base_path}_epoch_{epoch+1}.pt"
-            torch.save(
-                {
-                    "epoch": epoch + 1,
-                    "model_state_dict": model.state_dict(),
-                    "optimizer_state_dict": optimizer.state_dict(),
-                    "scheduler_state_dict": scheduler.state_dict(),
-                    "loss": running_loss / total,
-                    "accuracy": 100.0 * correct / total,
-                },
-                checkpoint_path,
-            )
-            print(f"\nSaved checkpoint to {checkpoint_path}")
+            torch.save(model.state_dict(), save_path)
+            print(f"\nSaved checkpoint to {save_path}")
 
         # Update learning rate
         scheduler.step()
