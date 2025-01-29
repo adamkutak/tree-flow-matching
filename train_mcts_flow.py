@@ -428,12 +428,12 @@ def main():
     for cycle in range(n_training_cycles):
         print(f"\nTraining Cycle {cycle + 1}/{n_training_cycles}")
 
-        # sampler.train(
-        #     train_loader,
-        #     n_epochs=n_epochs_per_cycle,
-        #     initial_flow_epochs=5,
-        #     value_epochs=50,
-        # )
+        sampler.train(
+            train_loader,
+            n_epochs=n_epochs_per_cycle,
+            initial_flow_epochs=5,
+            value_epochs=50,
+        )
 
         # Evaluate
         evaluate_synthetic_samples(
