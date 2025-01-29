@@ -53,26 +53,27 @@ class FIDISRewardNet(nn.Module):
             feats = self.inception_model(image).cpu().numpy()
 
         sigma_inv = np.linalg.inv(self.sigma_real)
-        fid_scores = np.array(
-            [mahalanobis(feat, self.mu_real, sigma_inv) for feat in feats]
+        fid_scores = torch.tensor(
+            [mahalanobis(feat, self.mu_real, sigma_inv) for feat in feats],
+            device=image.device,
         )
         return fid_scores
 
     def is_single(self, image):
         # Expect images to be tensor of shape [B, C, H, W]
-        images = self.inception_transform(image)
+        image = self.inception_transform(image)
         device = next(self.classifier.parameters()).device
-        images = images.to(device)
+        image = image.to(device)
 
         with torch.no_grad():
-            logits = self.classifier(images)
+            logits = self.classifier(image)
             probs = (
                 torch.nn.functional.softmax(logits, dim=-1).cpu().numpy()
             )  # [B, num_classes]
 
         # Compute IS score for each image
         entropies = -np.sum(probs * np.log(probs + 1e-9), axis=1)
-        is_scores = np.exp(entropies)
+        is_scores = torch.tensor(np.exp(entropies), device=image.device)
         return is_scores
 
     def forward(self, image):
