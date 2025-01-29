@@ -21,7 +21,7 @@ class FIDISRewardNet(nn.Module):
 
         # Load classifier for IS
         self.classifier = CIFAR100Classifier()
-        self.classifier.load_state_dict(torch.load(classifier_path))
+        self.classifier.load_state_dict(torch.load(classifier_path, weights_only=True))
         self.classifier.eval()
 
         # Load CIFAR-100 statistics for FID
