@@ -56,6 +56,7 @@ class FIDISRewardNet(nn.Module):
         fid_scores = torch.tensor(
             [mahalanobis(feat, self.mu_real, sigma_inv) for feat in feats],
             device=image.device,
+            dtype=torch.float32,
         )
         return fid_scores
 
@@ -73,10 +74,12 @@ class FIDISRewardNet(nn.Module):
 
         # Compute IS score for each image
         entropies = -np.sum(probs * np.log(probs + 1e-9), axis=1)
-        is_scores = torch.tensor(np.exp(entropies), device=image.device)
+        is_scores = torch.tensor(
+            np.exp(entropies), device=image.device, dtype=torch.float32
+        )
         return is_scores
 
     def forward(self, image):
         fid_score = self.fid_single(image)
         is_score = self.is_single(image)
-        return fid_score + is_score
+        return (fid_score + is_score).float()
