@@ -76,11 +76,12 @@ class ValueModel(UNetModel):
 class MCTSFlowSampler:
     def __init__(
         self,
-        dim=64,  # Now just a single dimension for testing
+        image_size=32,
+        channels=3,
         hidden_dims=[256, 512, 256],
         device="cuda:0",
         num_timesteps=10,
-        num_classes=10,
+        num_classes=100,
         reward_net=None,
     ):
         # Check if CUDA is available and set device
@@ -93,14 +94,30 @@ class MCTSFlowSampler:
 
         self.num_timesteps = num_timesteps
         self.timesteps = torch.linspace(0, 1, num_timesteps, device=self.device)
-        self.dim = dim
+        self.image_size = image_size
+        self.channels = channels
+        self.num_classes = num_classes
 
-        self.flow_model = MLPFlow(
-            input_dim=dim, hidden_dims=hidden_dims, num_classes=num_classes
+        self.flow_model = UNetModel(
+            in_channels=channels,
+            model_channels=hidden_dims[0],
+            out_channels=channels,
+            num_res_blocks=2,
+            attention_resolutions=(16, 8),
+            channel_mult=(1, 2, 4, 8),
+            num_heads=8,
+            num_classes=num_classes,
         ).to(self.device)
 
-        self.value_model = MLPValue(
-            input_dim=dim, hidden_dims=hidden_dims, num_classes=num_classes
+        self.value_model = ValueModel(
+            in_channels=channels,
+            model_channels=hidden_dims[0],
+            out_channels=1,
+            num_res_blocks=2,
+            attention_resolutions=(16, 8),
+            channel_mult=(1, 2, 4, 8),
+            num_heads=8,
+            num_classes=num_classes,
         ).to(self.device)
 
         # Initialize MNIST classifier for rewards

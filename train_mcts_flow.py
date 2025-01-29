@@ -10,6 +10,7 @@ import numpy as np
 from tqdm import tqdm
 import torch.nn as nn
 import torch.nn.functional as F
+from fid_is_rewards import FIDISRewardNet
 
 
 class SyntheticRewardNet(nn.Module):
@@ -56,113 +57,6 @@ class SyntheticRewardNet(nn.Module):
         # Flatten input if needed
         x = x.view(x.size(0), -1)
         return self.net(x).squeeze(-1)
-
-
-class HarderSyntheticRewardNet(nn.Module):
-    """
-    A more complex, random network that maps R^input_dim -> [0,1].
-    Designed to be harder for a typical feed-forward net to learn exactly.
-    """
-
-    def __init__(
-        self,
-        input_dim,
-        fourier_dim=256,
-        hidden_dims=[512, 256, 512, 128],
-        num_branches=4,
-    ):
-        super().__init__()
-
-        # 1) Random Fourier Features for high-frequency components
-        #    (We freeze these after random init.)
-        #    Transform x -> [cos(Wx + b); sin(Wx + b)] of dimension 2*fourier_dim.
-        self.fourier_dim = fourier_dim
-        self.W = nn.Parameter(
-            torch.randn(input_dim, fourier_dim) * 2.0, requires_grad=False
-        )
-        self.b = nn.Parameter(torch.randn(fourier_dim) * 3.14, requires_grad=False)
-
-        # 2) Multi-branch sub-networks (each random, then combined)
-        #    We'll store them in a ModuleList for flexible creation.
-        self.branches = nn.ModuleList()
-        for _ in range(num_branches):
-            branch_layers = []
-            prev_dim = 2 * fourier_dim  # after we map input -> Fourier features
-            activations = [nn.ReLU(), nn.Tanh(), nn.SiLU(), nn.GELU()]
-
-            for i, dim in enumerate(hidden_dims):
-                branch_layers.append(nn.Linear(prev_dim, dim))
-                # pick an activation randomly or cycle through
-                branch_layers.append(activations[i % len(activations)])
-                # optional layer norm
-                branch_layers.append(nn.LayerNorm(dim))
-                prev_dim = dim
-
-            # final linear (branch output dimension)
-            branch_layers.append(nn.Linear(prev_dim, 64))  # bigger intermediate feature
-            self.branches.append(nn.Sequential(*branch_layers))
-
-        # 3) Gating / Attention-like aggregator
-        #    We'll produce a gating vector from the combined branch outputs,
-        #    then do a weighted sum -> single scalar -> sigmoid.
-        agg_in_dim = num_branches * 64
-        self.agg_gate = nn.Linear(agg_in_dim, num_branches)  # produce branch-gating
-        self.agg_final = nn.Linear(64, 1)  # final linear to scalar
-        self.sigmoid = nn.Sigmoid()
-
-        # 4) Random initialization
-        for m in self.modules():
-            if isinstance(m, nn.Linear):
-                nn.init.xavier_normal_(m.weight)
-                if m.bias is not None:
-                    nn.init.normal_(m.bias, 0, 0.01)
-
-    def forward(self, x):
-        # x: [batch_size, input_dim]
-        # 1) Fourier features
-        #    phi(x) = [ cos(xW + b), sin(xW + b) ]
-        #    shape = [batch_size, 2 * fourier_dim]
-        with torch.no_grad():
-            # (batch_size, fourier_dim)
-            proj = x @ self.W + self.b
-        # cos_proj, sin_proj each [batch_size, fourier_dim]
-        cos_proj = torch.cos(proj)
-        sin_proj = torch.sin(proj)
-        fourier_feats = torch.cat([cos_proj, sin_proj], dim=-1)
-
-        # 2) Pass through each branch
-        branch_outputs = []
-        for branch in self.branches:
-            out_b = branch(fourier_feats)
-            branch_outputs.append(out_b)
-
-        # Concatenate all branch outputs: shape = [batch_size, num_branches * 64]
-        concat = torch.cat(branch_outputs, dim=-1)
-
-        # 3) Gating
-        # gate_scores: [batch_size, num_branches]
-        gate_scores = self.agg_gate(concat)
-        # softmax over branches dimension
-        gate_weights = F.softmax(gate_scores, dim=-1)  # [batch_size, num_branches]
-
-        # reshape for broadcasting
-        gate_weights = gate_weights.unsqueeze(-1)  # [batch_size, num_branches, 1]
-
-        # chunk the concat again so we can do gating
-        # each chunk is [batch_size, 64]
-        chunked = torch.chunk(concat, len(self.branches), dim=-1)
-
-        # Weighted sum of branch outputs
-        # stack them: shape = [batch_size, num_branches, 64]
-        stacked = torch.stack(chunked, dim=1)
-        # multiply by gate_weights -> sum across branch dimension
-        gated_sum = (stacked * gate_weights).sum(dim=1)  # [batch_size, 64]
-
-        # 4) Final linear -> scalar -> [0,1]
-        out = self.agg_final(gated_sum)  # [batch_size, 1]
-        reward = self.sigmoid(out).squeeze(-1)  # [batch_size]
-
-        return reward
 
 
 class SyntheticDataset(Dataset):
@@ -388,6 +282,53 @@ def analyze_reward_distribution(reward_net, input_dim, num_classes, num_samples=
     return class_stats
 
 
+def evaluate_samples(sampler, num_samples=10, branch_keep_pairs=None, num_classes=100):
+    """Evaluate sample quality for CIFAR-100 data"""
+    if branch_keep_pairs is None:
+        branch_keep_pairs = [(3, 2), (8, 3), (16, 7)]
+
+    print("\nEvaluating samples:")
+
+    for num_branches, num_keep in branch_keep_pairs:
+        print(f"\nTesting with branches={num_branches}, keep={num_keep}")
+
+        # Generate samples for a few random classes
+        test_classes = np.random.choice(num_classes, 5, replace=False)
+        for class_label in test_classes:
+            samples = []
+            scores = []
+
+            # Generate multiple samples for this class
+            for _ in range(num_samples):
+                sample = sampler.simple_sample(
+                    class_label=class_label,
+                    num_branches=num_branches,
+                    num_keep=num_keep,
+                )
+                samples.append(sample)
+
+                with torch.no_grad():
+                    score = sampler.compute_sample_quality(
+                        sample.unsqueeze(0),
+                        torch.tensor([class_label], device=sampler.device),
+                    )
+                scores.append(score.item())
+
+            # Visualize samples
+            samples_grid = torch.stack(samples)
+            visualize_samples(
+                samples_grid,
+                f"Class {class_label} (branches={num_branches}, keep={num_keep})",
+            )
+
+            # Print statistics
+            mean_score = np.mean(scores)
+            std_score = np.std(scores)
+            print(
+                f"Class {class_label} - Mean score: {mean_score:.4f} ± {std_score:.4f}"
+            )
+
+
 def main():
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Using device: {device}")
@@ -396,27 +337,36 @@ def main():
     torch.manual_seed(42)
     np.random.seed(42)
 
-    # Simplified data dimensions for testing
-    input_dim = 1024
+    # CIFAR-100 dimensions and setup
+    image_size = 32
+    channels = 3
     num_classes = 100
 
-    # Create synthetic dataset
-    train_dataset = SyntheticDataset(
-        n_samples=10000, input_dim=input_dim, num_classes=num_classes
+    # Setup CIFAR-100 dataset with appropriate transforms
+    transform = transforms.Compose(
+        [
+            transforms.ToTensor(),
+            transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
+        ]
     )
-    train_loader = DataLoader(train_dataset, batch_size=128, shuffle=True)
 
-    reward_net = SyntheticRewardNet(input_dim).to(device)
+    train_dataset = datasets.CIFAR100(
+        root="./data", train=True, download=True, transform=transform
+    )
+    train_loader = DataLoader(train_dataset, batch_size=64, shuffle=True)
 
-    # analyze_reward_distribution(reward_net, input_dim, num_classes)
+    # Initialize reward network
+    reward_net = FIDISRewardNet().to(device)
 
-    # Initialize sampler with simplified dimensions
+    # Initialize sampler with CIFAR-100 dimensions
     sampler = MCTSFlowSampler(
-        dim=input_dim,
+        image_size=image_size,
+        channels=channels,
         device=device,
         num_timesteps=10,
         num_classes=num_classes,
         reward_net=reward_net,
+        use_unet=True,  # New flag to use UNet models
     )
 
     # Training configuration
@@ -437,7 +387,7 @@ def main():
         )
 
         # Evaluate
-        evaluate_synthetic_samples(
+        evaluate_samples(
             sampler, branch_keep_pairs=branch_keep_pairs, num_classes=num_classes
         )
 
