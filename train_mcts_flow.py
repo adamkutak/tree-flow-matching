@@ -354,7 +354,7 @@ def main():
         root="./data", train=True, download=True, transform=transform
     )
     # Take only 1000 samples for faster training/testing
-    subset_indices = range(1000)  # You can adjust this number
+    subset_indices = range(256)  # You can adjust this number
     train_subset = torch.utils.data.Subset(train_dataset, subset_indices)
     train_loader = DataLoader(train_subset, batch_size=64, shuffle=True)
     # Initialize reward network
