@@ -164,7 +164,7 @@ class MCTSFlowSampler:
         with torch.no_grad():
             return self.reward_net(samples)
 
-    def generate_training_trajectory(self, y, num_branches=5):
+    def generate_training_trajectory(self, y, num_branches=2):
         """Generate a complete trajectory for training the value model."""
         trajectories = []
         ts = []
@@ -184,7 +184,11 @@ class MCTSFlowSampler:
             ts.append(0.0)
 
             # Generate trajectory with branching
-            for step, t in enumerate(self.timesteps[:-1]):
+            for step, t in tqdm(
+                enumerate(self.timesteps[:-1]),
+                desc="Generating trajectory",
+                total=len(self.timesteps) - 1,
+            ):
                 # Flow model step
                 dt = self.timesteps[step + 1] - t
 
