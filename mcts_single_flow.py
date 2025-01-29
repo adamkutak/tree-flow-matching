@@ -192,7 +192,14 @@ class MCTSFlowSampler:
 
         return trajectories, ts, current_labels, final_scores
 
-    def train(self, train_loader, n_epochs=3, initial_flow_epochs=3, value_epochs=20):
+    def train(
+        self,
+        train_loader,
+        n_epochs=3,
+        initial_flow_epochs=3,
+        value_epochs=20,
+        flow_epochs=100,
+    ):
         """Train both flow and value models."""
         # Initial flow model training
         print("\nInitial flow model training...")
@@ -208,7 +215,8 @@ class MCTSFlowSampler:
             print(f"\nEpoch {epoch + 1}/{n_epochs}")
 
             # Train flow model for one epoch
-            flow_loss = self.train_flow_matching(train_loader)
+            for flow_epoch in range(flow_epochs):
+                flow_loss = self.train_flow_matching(train_loader)
 
             # Generate trajectories
             print("Generating trajectories for value training...")
@@ -253,8 +261,7 @@ class MCTSFlowSampler:
             flow_loss.backward()
             self.flow_optimizer.step()
 
-            # pbar.set_postfix({"flow_loss": f"{flow_loss.item():.4f}"})
-
+        print(f"{desc} - Flow Loss: {flow_loss.item():.4f}")
         return flow_loss.item()
 
     def train_value_model(self, n_epochs=1, batch_size=64, desc="Training value"):
