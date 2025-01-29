@@ -14,7 +14,6 @@ import numpy as np
 import torch.nn as nn
 import torch.nn.functional as F
 import os
-from train_mnist_classifier import MNISTClassifier
 from vector_mlps import MLPValue, MLPFlow
 
 
