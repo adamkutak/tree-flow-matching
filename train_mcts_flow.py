@@ -351,9 +351,9 @@ def main():
         root="./data", train=True, download=True, transform=transform
     )
     # Take only 1000 samples for faster training/testing
-    subset_indices = range(256)  # You can adjust this number
-    train_subset = torch.utils.data.Subset(train_dataset, subset_indices)
-    train_loader = DataLoader(train_subset, batch_size=64, shuffle=True)
+    # subset_indices = range(256)  # You can adjust this number
+    # train_subset = torch.utils.data.Subset(train_dataset, subset_indices)
+    train_loader = DataLoader(train_dataset, batch_size=64, shuffle=True)
     # Initialize reward network
     reward_net = FIDISRewardNet().to(device)
 
@@ -379,9 +379,9 @@ def main():
         sampler.train(
             train_loader,
             n_epochs=n_epochs_per_cycle,
-            initial_flow_epochs=1,
-            value_epochs=1,
-            flow_epochs=1,
+            initial_flow_epochs=10,
+            value_epochs=10,
+            flow_epochs=5,
         )
 
         # Evaluate
