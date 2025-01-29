@@ -96,7 +96,6 @@ class MCTSFlowSampler:
         self.image_size = image_size
         self.channels = channels
         self.num_classes = num_classes
-        self.dim = (channels, image_size, image_size)
 
         self.flow_model = UNetModel(
             dim=(channels, image_size, image_size),  # Assuming CIFAR dimensions
@@ -167,7 +166,11 @@ class MCTSFlowSampler:
         with torch.no_grad():
             # Initialize samples
             current_samples = torch.randn(
-                len(y) * num_branches, self.dim, device=self.device
+                len(y) * num_branches,
+                self.channels,
+                self.image_size,
+                self.image_size,
+                device=self.device,
             )
             current_labels = y.repeat_interleave(num_branches)
 
@@ -323,7 +326,13 @@ class MCTSFlowSampler:
 
         with torch.no_grad():
             # Initialize samples
-            current_samples = torch.randn(num_branches, self.dim, device=self.device)
+            current_samples = torch.randn(
+                num_branches,
+                self.channels,
+                self.image_size,
+                self.image_size,
+                device=self.device,
+            )
             current_label = torch.full((num_branches,), class_label, device=self.device)
 
             # Generate samples with branching
@@ -379,7 +388,13 @@ class MCTSFlowSampler:
             max_samples = num_branches * num_keep  # Maximum possible number of samples
 
             # Initialize root samples
-            current_samples = torch.randn(num_branches, self.dim, device=self.device)
+            current_samples = torch.randn(
+                num_branches,
+                self.channels,
+                self.image_size,
+                self.image_size,
+                device=self.device,
+            )
             current_label = torch.full((num_branches,), class_label, device=self.device)
 
             # Track visit counts and Q-values for UCB with maximum possible size
