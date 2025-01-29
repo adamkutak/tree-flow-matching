@@ -101,8 +101,11 @@ class MCTSFlowSampler:
             dim=(channels, image_size, image_size),  # Assuming CIFAR dimensions
             num_channels=hidden_dims[0],
             num_res_blocks=2,
-            channel_mult=(1, 2, 4, 8),
-            num_heads=8,
+            channel_mult=[1, 2, 2, 2],
+            num_heads=4,
+            num_head_channels=64,
+            attention_resolutions="16",
+            dropout=0.1,
             num_classes=num_classes,
             class_cond=True,
         ).to(self.device)
@@ -111,8 +114,11 @@ class MCTSFlowSampler:
             dim=(channels, image_size, image_size),  # Assuming CIFAR dimensions
             num_channels=hidden_dims[0],
             num_res_blocks=2,
-            channel_mult=(1, 2, 4, 8),
-            num_heads=8,
+            channel_mult=[1, 2, 2, 2],
+            num_heads=4,
+            num_head_channels=64,
+            attention_resolutions="16",
+            dropout=0.1,
             num_classes=num_classes,
             class_cond=True,
         ).to(self.device)
