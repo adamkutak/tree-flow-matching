@@ -380,9 +380,9 @@ def main():
         sampler.train(
             train_loader,
             n_epochs=n_epochs_per_cycle,
-            initial_flow_epochs=5,
-            value_epochs=50,
-            flow_epochs=100,
+            initial_flow_epochs=1,
+            value_epochs=1,
+            flow_epochs=1,
         )
 
         # Evaluate

@@ -262,7 +262,10 @@ class MCTSFlowSampler:
     def train_flow_matching(self, train_loader, desc="Training flow"):
         """Train flow model for one epoch."""
         self.flow_model.train()
-        for batch_idx, (x1, y) in enumerate(train_loader):
+        pbar = tqdm(train_loader, desc=desc)
+        final_loss = 0
+
+        for batch_idx, (x1, y) in enumerate(pbar):
             x1, y = x1.to(self.device), y.to(self.device)
             x0 = torch.randn_like(x1)
 
@@ -274,8 +277,11 @@ class MCTSFlowSampler:
             flow_loss.backward()
             self.flow_optimizer.step()
 
-        print(f"{desc} - Flow Loss: {flow_loss.item():.4f}")
-        return flow_loss.item()
+            final_loss = flow_loss.item()
+            pbar.set_postfix({"flow_loss": f"{final_loss:.4f}"})
+
+        print(f"{desc} - Flow Loss: {final_loss:.4f}")
+        return final_loss
 
     def train_value_model(self, n_epochs=1, batch_size=64, desc="Training value"):
         """Train value model on collected trajectories."""
@@ -283,10 +289,10 @@ class MCTSFlowSampler:
 
         for epoch in range(n_epochs):
             n_batches = len(self.trajectory_buffer.trajectories) // batch_size
-            # pbar = tqdm(range(n_batches), desc=desc)
+            pbar = tqdm(range(n_batches), desc=f"{desc} (Epoch {epoch+1}/{n_epochs})")
 
             total_loss = 0
-            for _ in range(n_batches):
+            for batch_idx in pbar:
                 batch = self.trajectory_buffer.sample_batch(batch_size)
                 if batch is None:
                     continue
@@ -304,7 +310,7 @@ class MCTSFlowSampler:
                 self.value_optimizer.step()
 
                 total_loss += value_loss.item()
-                # pbar.set_postfix({"value_loss": f"{value_loss.item():.4f}"})
+                pbar.set_postfix({"value_loss": f"{value_loss.item():.4f}"})
 
             avg_loss = total_loss / n_batches if n_batches > 0 else 0
             print(f"Average value loss: {avg_loss:.4f}")
