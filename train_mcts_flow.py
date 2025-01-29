@@ -287,46 +287,43 @@ def evaluate_samples(sampler, num_samples=10, branch_keep_pairs=None, num_classe
     if branch_keep_pairs is None:
         branch_keep_pairs = [(3, 2), (8, 3), (16, 7)]
 
-    print("\nEvaluating samples:")
+    # Choose a single random class for evaluation
+    class_label = np.random.randint(num_classes)
+    print(f"\nEvaluating samples for class {class_label}:")
 
     for num_branches, num_keep in branch_keep_pairs:
         print(f"\nTesting with branches={num_branches}, keep={num_keep}")
 
-        # Generate samples for a few random classes
-        test_classes = np.random.choice(num_classes, 5, replace=False)
-        for class_label in test_classes:
-            samples = []
-            scores = []
+        samples = []
+        scores = []
 
-            # Generate multiple samples for this class
-            for _ in range(num_samples):
-                sample = sampler.simple_sample(
-                    class_label=class_label,
-                    num_branches=num_branches,
-                    num_keep=num_keep,
+        # Generate multiple samples for this class
+        for _ in range(num_samples):
+            sample = sampler.simple_sample(
+                class_label=class_label,
+                num_branches=num_branches,
+                num_keep=num_keep,
+            )
+            samples.append(sample)
+
+            with torch.no_grad():
+                score = sampler.compute_sample_quality(
+                    sample.unsqueeze(0),
+                    torch.tensor([class_label], device=sampler.device),
                 )
-                samples.append(sample)
+            scores.append(score.item())
 
-                with torch.no_grad():
-                    score = sampler.compute_sample_quality(
-                        sample.unsqueeze(0),
-                        torch.tensor([class_label], device=sampler.device),
-                    )
-                scores.append(score.item())
+        # Visualize samples
+        samples_grid = torch.stack(samples)
+        visualize_samples(
+            samples_grid,
+            f"Class {class_label} (branches={num_branches}, keep={num_keep})",
+        )
 
-            # Visualize samples
-            samples_grid = torch.stack(samples)
-            visualize_samples(
-                samples_grid,
-                f"Class {class_label} (branches={num_branches}, keep={num_keep})",
-            )
-
-            # Print statistics
-            mean_score = np.mean(scores)
-            std_score = np.std(scores)
-            print(
-                f"Class {class_label} - Mean score: {mean_score:.4f} ± {std_score:.4f}"
-            )
+        # Print statistics
+        mean_score = np.mean(scores)
+        std_score = np.std(scores)
+        print(f"Mean score: {mean_score:.4f} ± {std_score:.4f}")
 
 
 def main():
