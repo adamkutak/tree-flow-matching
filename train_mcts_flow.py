@@ -366,7 +366,6 @@ def main():
         num_timesteps=10,
         num_classes=num_classes,
         reward_net=reward_net,
-        use_unet=True,  # New flag to use UNet models
     )
 
     # Training configuration
