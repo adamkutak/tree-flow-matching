@@ -99,26 +99,26 @@ class MCTSFlowSampler:
 
         self.flow_model = UNetModel(
             dim=(channels, image_size, image_size),  # Assuming CIFAR dimensions
-            num_channels=128,
+            num_channels=256,
             num_res_blocks=2,
             channel_mult=[1, 2, 2, 2],
             num_heads=4,
             num_head_channels=64,
             attention_resolutions="16",
-            dropout=0.1,
+            dropout=0.0,
             num_classes=num_classes,
             class_cond=True,
         ).to(self.device)
 
         self.value_model = ValueModel(
             dim=(channels, image_size, image_size),  # Assuming CIFAR dimensions
-            num_channels=128,
+            num_channels=256,
             num_res_blocks=2,
             channel_mult=[1, 2, 2, 2],
             num_heads=4,
             num_head_channels=64,
             attention_resolutions="16",
-            dropout=0.1,
+            dropout=0.0,
             num_classes=num_classes,
             class_cond=True,
         ).to(self.device)
@@ -135,8 +135,17 @@ class MCTSFlowSampler:
             param.requires_grad = False
 
         # Initialize optimizers
-        self.flow_optimizer = torch.optim.Adam(self.flow_model.parameters())
-        self.value_optimizer = torch.optim.Adam(self.value_model.parameters())
+        lr = 5e-4
+        self.flow_optimizer = torch.optim.Adam(self.flow_model.parameters(), lr=lr)
+        self.value_optimizer = torch.optim.Adam(self.value_model.parameters(), lr=lr)
+
+        # Simple step scheduler: reduces learning rate by 0.1 every 100 epochs
+        self.flow_scheduler = torch.optim.lr_scheduler.StepLR(
+            self.flow_optimizer, step_size=100, gamma=0.5
+        )
+        self.value_scheduler = torch.optim.lr_scheduler.StepLR(
+            self.value_optimizer, step_size=100, gamma=0.5
+        )
 
         self.FM = ConditionalFlowMatcher(sigma=0.0)
         self.trajectory_buffer = TrajectoryBuffer()
@@ -236,6 +245,8 @@ class MCTSFlowSampler:
                 train_loader,
                 desc=f"Initial flow training {epoch + 1}/{initial_flow_epochs}",
             )
+            self.save_models()
+            self.flow_scheduler.step()
 
         # Main training loop
         for epoch in range(n_epochs):
