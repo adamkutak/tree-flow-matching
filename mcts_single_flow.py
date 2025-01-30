@@ -99,7 +99,7 @@ class MCTSFlowSampler:
 
         self.flow_model = UNetModel(
             dim=(channels, image_size, image_size),  # Assuming CIFAR dimensions
-            num_channels=256,
+            num_channels=128,
             num_res_blocks=2,
             channel_mult=[1, 2, 2, 2],
             num_heads=4,
@@ -112,7 +112,7 @@ class MCTSFlowSampler:
 
         self.value_model = ValueModel(
             dim=(channels, image_size, image_size),  # Assuming CIFAR dimensions
-            num_channels=256,
+            num_channels=128,
             num_res_blocks=2,
             channel_mult=[1, 2, 2, 2],
             num_heads=4,
@@ -141,10 +141,10 @@ class MCTSFlowSampler:
 
         # Simple step scheduler: reduces learning rate by 0.1 every 100 epochs
         self.flow_scheduler = torch.optim.lr_scheduler.StepLR(
-            self.flow_optimizer, step_size=100, gamma=0.5
+            self.flow_optimizer, step_size=50, gamma=0.5
         )
         self.value_scheduler = torch.optim.lr_scheduler.StepLR(
-            self.value_optimizer, step_size=100, gamma=0.5
+            self.value_optimizer, step_size=50, gamma=0.5
         )
 
         self.FM = ConditionalFlowMatcher(sigma=0.0)
