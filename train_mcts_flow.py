@@ -155,12 +155,44 @@ def evaluate_with_viz(sampler, num_samples=1, branch_keep_pairs=None, num_classe
         plt.show()
 
 
-def visualize_samples(samples, title="Generated Samples"):
-    """Visualize a grid of generated samples."""
-    plt.figure(figsize=(15, 6))
-    grid = make_grid(samples, nrow=10, normalize=True, padding=2)
+def visualize_samples(all_samples_dict, class_label, figsize=(15, 10)):
+    """
+    Visualize samples from different branch/keep configurations in a single grid.
+    Each row represents a different configuration.
+
+    all_samples_dict: Dictionary with (branch, keep) tuples as keys and samples as values
+    """
+    plt.figure(figsize=figsize)
+
+    # Combine all samples into a single grid, with each row being a different configuration
+    all_samples_list = []
+    row_labels = []
+
+    for (branches, keep), samples in all_samples_dict.items():
+        all_samples_list.append(samples)
+        row_labels.append(f"branches={branches}, keep={keep}")
+
+    # Stack all samples into a single tensor
+    all_samples = torch.cat(all_samples_list, dim=0)
+
+    # Create grid with samples from each configuration in separate rows
+    nrow = all_samples_list[0].size(0)  # number of samples per configuration
+    grid = make_grid(all_samples, nrow=nrow, normalize=True, padding=2)
+
     plt.imshow(grid.cpu().permute(1, 2, 0))
-    plt.title(title)
+    plt.title(f"Generated Samples for Class {class_label}")
+
+    # Add row labels on the left side
+    num_configs = len(row_labels)
+    for idx, label in enumerate(row_labels):
+        plt.text(
+            -10,
+            (idx + 0.5) * grid.size(1) / num_configs,
+            label,
+            rotation=0,
+            verticalalignment="center",
+        )
+
     plt.axis("off")
     plt.show()
 
@@ -283,13 +315,35 @@ def analyze_reward_distribution(reward_net, input_dim, num_classes, num_samples=
 
 
 def evaluate_samples(sampler, num_samples=10, branch_keep_pairs=None, num_classes=100):
-    """Evaluate sample quality for CIFAR-100 data"""
+    """Evaluate sample quality for CIFAR-100 data using FID and IS metrics"""
+    import torchmetrics.image.fid as FID
+    import torchmetrics.image.inception as IS
+    from torchvision import datasets, transforms
+
     if branch_keep_pairs is None:
         branch_keep_pairs = [(3, 2), (8, 3), (16, 7)]
+
+    # Initialize FID and IS metrics
+    fid = FID.FrechetInceptionDistance(normalize=True).to(sampler.device)
+    inception_score = IS.InceptionScore(normalize=True).to(sampler.device)
+
+    # Load real CIFAR-100 images for FID comparison
+    transform = transforms.Compose(
+        [transforms.ToTensor(), transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))]
+    )
+    cifar100 = datasets.CIFAR100(
+        root="./data", train=True, download=True, transform=transform
+    )
+    real_images = torch.stack([cifar100[i][0] for i in range(num_samples)]).to(
+        sampler.device
+    )
 
     # Choose a single random class for evaluation
     class_label = np.random.randint(num_classes)
     print(f"\nEvaluating samples for class {class_label}:")
+
+    # Dictionary to store samples for visualization
+    all_samples_dict = {}
 
     for num_branches, num_keep in branch_keep_pairs:
         print(f"\nTesting with branches={num_branches}, keep={num_keep}")
@@ -313,17 +367,32 @@ def evaluate_samples(sampler, num_samples=10, branch_keep_pairs=None, num_classe
                 )
             scores.append(score.item())
 
-        # Visualize samples
+        # Stack samples for evaluation
         samples_grid = torch.stack(samples)
-        visualize_samples(
-            samples_grid,
-            f"Class {class_label} (branches={num_branches}, keep={num_keep})",
-        )
+
+        # Store samples for later visualization
+        all_samples_dict[(num_branches, num_keep)] = samples_grid
+
+        # Calculate FID
+        fid.update(real_images, real=True)
+        fid.update(samples_grid, real=False)
+        fid_score = fid.compute()
+        fid.reset()
+
+        # Calculate Inception Score
+        inception_score.update(samples_grid)
+        is_mean, is_std = inception_score.compute()
+        inception_score.reset()
 
         # Print statistics
         mean_score = np.mean(scores)
         std_score = np.std(scores)
-        print(f"Mean score: {mean_score:.4f} ± {std_score:.4f}")
+        print(f"Quality score: {mean_score:.4f} ± {std_score:.4f}")
+        print(f"FID score: {fid_score:.4f}")
+        print(f"Inception Score: {is_mean:.4f} ± {is_std:.4f}")
+
+    # Visualize all samples in a single plot
+    visualize_samples(all_samples_dict, class_label)
 
 
 def main():
@@ -381,7 +450,7 @@ def main():
             n_epochs=n_epochs_per_cycle,
             initial_flow_epochs=0,
             value_epochs=100,
-            flow_epochs=100,
+            flow_epochs=1,
         )
 
         # Evaluate

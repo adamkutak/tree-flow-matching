@@ -276,7 +276,7 @@ class MCTSFlowSampler:
             print(f"Training value model for {value_epochs} epochs...")
             for value_epoch in range(value_epochs):
                 self.train_value_model(
-                    n_epochs=1,
+                    n_epochs=10,
                     batch_size=128,
                     desc=f"Value epoch {value_epoch + 1}/{value_epochs}",
                 )
