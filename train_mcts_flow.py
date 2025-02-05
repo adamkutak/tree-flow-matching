@@ -358,7 +358,7 @@ def main():
     # CIFAR-100 dimensions and setup
     image_size = 32
     channels = 3
-    num_classes = 100
+    num_classes = 10
 
     # Setup CIFAR-100 dataset with appropriate transforms
     transform = transforms.Compose(
