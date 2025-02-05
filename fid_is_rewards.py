@@ -8,27 +8,31 @@ import pickle
 from train_cifar_classifier import CIFAR100Classifier
 
 
-class FIDISRewardNet(nn.Module):
-    def __init__(self, classifier_path="saved_models/cifar100_classifier.pt"):
+class FIDRewardNet(nn.Module):
+    def __init__(self, dataset="cifar10"):
         super().__init__()
+        print("Initializing FIDRewardNet...")
 
-        # Load inception model for FID
+        # Load inception model for feature extraction
         self.inception_model = models.inception_v3(
             pretrained=True, transform_input=False
         )
         self.inception_model.fc = nn.Identity()
         self.inception_model.eval()
+        print("Inception model loaded")
 
-        # Load classifier for IS
-        self.classifier = CIFAR100Classifier()
-        self.classifier.load_state_dict(torch.load(classifier_path, weights_only=True))
-        self.classifier.eval()
+        # Load reference statistics for CIFAR-10
+        with open("cifar10_fid_stats.pkl", "rb") as f:
+            cifar_stats = pickle.load(f)
+        self.ref_mu = cifar_stats["mu"]  # Reference mean
+        self.ref_sigma = cifar_stats["sigma"]  # Reference covariance
+        print(
+            f"Loaded CIFAR10 reference stats - mu shape: {self.ref_mu.shape}, sigma shape: {self.ref_sigma.shape}"
+        )
 
-        # Load CIFAR-100 statistics for FID
-        with open("cifar100_fid_stats.pkl", "rb") as f:
-            cifar100_stats = pickle.load(f)
-        self.mu_real = cifar100_stats["mu_cifar100"]
-        self.sigma_real = cifar100_stats["sigma_cifar100"]
+        # Initialize running statistics
+        self.running_features = []
+        self.max_running_samples = 1000  # Keep track of last N samples
 
         # Freeze all parameters
         for param in self.parameters():
@@ -44,42 +48,60 @@ class FIDISRewardNet(nn.Module):
             ]
         )
 
-    def fid_single(self, image):
-        image = self.inception_transform(image)
-        device = next(self.inception_model.parameters()).device
-        image = image.to(device)
-
+    def extract_features(self, images):
+        """Extract inception features from images."""
+        images = self.inception_transform(images)
         with torch.no_grad():
-            feats = self.inception_model(image).cpu().numpy()
+            features = self.inception_model(images).cpu().numpy()
+        return features
 
-        sigma_inv = np.linalg.inv(self.sigma_real)
-        fid_scores = torch.tensor(
-            [mahalanobis(feat, self.mu_real, sigma_inv) for feat in feats],
-            device=image.device,
-            dtype=torch.float32,
-        )
-        return fid_scores
+    def compute_fid(self, features):
+        """Compute FID between given features and reference statistics."""
+        mu = np.mean(features, axis=0)
+        sigma = np.cov(features, rowvar=False)
 
-    def is_single(self, image):
-        # Expect images to be tensor of shape [B, C, H, W]
-        image = self.inception_transform(image)
-        device = next(self.classifier.parameters()).device
-        image = image.to(device)
+        # Calculate FID
+        diff = mu - self.ref_mu
+        covmean = sqrtm(sigma.dot(self.ref_sigma))
+        if np.iscomplexobj(covmean):
+            covmean = covmean.real
+        fid = diff.dot(diff) + np.trace(sigma + self.ref_sigma - 2 * covmean)
+        return float(fid)
 
-        with torch.no_grad():
-            logits = self.classifier(image)
-            probs = (
-                torch.nn.functional.softmax(logits, dim=-1).cpu().numpy()
-            )  # [B, num_classes]
+    def compute_marginal_fid(self, image):
+        """Compute how much this image changes the current FID."""
+        # Extract features for new image
+        features = self.extract_features(image)
 
-        # Compute IS score for each image
-        entropies = -np.sum(probs * np.log(probs + 1e-9), axis=1)
-        is_scores = torch.tensor(
-            np.exp(entropies), device=image.device, dtype=torch.float32
-        )
-        return is_scores
+        # Compute baseline FID with current running features
+        if len(self.running_features) > 0:
+            current_features = np.array(self.running_features)
+            baseline_fid = self.compute_fid(current_features)
+        else:
+            baseline_fid = float("inf")
+
+        # Add new features and compute new FID
+        temp_features = self.running_features + [features[0]]
+        if len(temp_features) > self.max_running_samples:
+            temp_features = temp_features[-self.max_running_samples :]
+        new_fid = self.compute_fid(np.array(temp_features))
+
+        # Calculate FID change (negative means improvement)
+        fid_change = new_fid - baseline_fid
+
+        # Update running features
+        self.running_features.append(features[0])
+        if len(self.running_features) > self.max_running_samples:
+            self.running_features = self.running_features[-self.max_running_samples :]
+
+        # Convert to reward (negative FID change means improvement)
+        reward = -fid_change
+        return torch.tensor([reward], device=image.device, dtype=torch.float32)
 
     def forward(self, image):
-        fid_score = self.fid_single(image)
-        is_score = self.is_single(image)
-        return (fid_score + is_score).float()
+        """Compute reward for a single image."""
+        return self.compute_marginal_fid(image)
+
+    def reset_running_stats(self):
+        """Reset running statistics."""
+        self.running_features = []

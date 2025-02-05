@@ -98,7 +98,7 @@ class MCTSFlowSampler:
         self.num_classes = num_classes
 
         self.flow_model = UNetModel(
-            dim=(channels, image_size, image_size),  # Assuming CIFAR dimensions
+            dim=(channels, image_size, image_size),
             num_channels=128,
             num_res_blocks=2,
             channel_mult=[1, 2, 2, 2],
@@ -111,7 +111,7 @@ class MCTSFlowSampler:
         ).to(self.device)
 
         self.value_model = ValueModel(
-            dim=(channels, image_size, image_size),  # Assuming CIFAR dimensions
+            dim=(channels, image_size, image_size),
             num_channels=128,
             num_res_blocks=2,
             channel_mult=[1, 2, 2, 2],
@@ -173,7 +173,7 @@ class MCTSFlowSampler:
         with torch.no_grad():
             return self.reward_net(samples)
 
-    def generate_training_trajectory(self, y, num_branches=2):
+    def generate_training_trajectory(self, y, num_branches=16):
         """Generate a complete trajectory for training the value model."""
         trajectories = []
         ts = []
@@ -193,11 +193,7 @@ class MCTSFlowSampler:
             ts.append(0.0)
 
             # Generate trajectory with branching
-            for step, t in tqdm(
-                enumerate(self.timesteps[:-1]),
-                desc="Generating trajectory",
-                total=len(self.timesteps) - 1,
-            ):
+            for step, t in enumerate(self.timesteps[:-1]):
                 # Flow model step
                 dt = self.timesteps[step + 1] - t
 
@@ -250,6 +246,7 @@ class MCTSFlowSampler:
             self.save_models()
             self.flow_scheduler.step()
 
+        self.trajectory_buffer = TrajectoryBuffer()
         # Main training loop
         for epoch in range(n_epochs):
             print(f"\nEpoch {epoch + 1}/{n_epochs}")
@@ -261,9 +258,6 @@ class MCTSFlowSampler:
             # Generate trajectories
             print("Generating trajectories for value training...")
             self.flow_model.eval()  # Set to eval mode for trajectory generation
-            self.trajectory_buffer = (
-                TrajectoryBuffer()
-            )  # Reset buffer for new trajectories
             with torch.no_grad():
                 for batch_idx, (_, y) in enumerate(train_loader):
                     y = y.to(self.device)
@@ -396,11 +390,12 @@ class MCTSFlowSampler:
                     perturbations = torch.randn_like(current_samples) * noise_scale
                     current_samples = current_samples + perturbations
 
-            # Randomly select final sample
-            # NOTE: this is not the optimal way to do this.
-            # we do this to demonstrate the sampling method improves performance not because
-            # it has more selection at the end when num_branches is larger
-            best_idx = torch.randint(0, len(current_samples), (1,)).item()
+            # Select the sample with highest value score
+            final_t = torch.full(
+                (len(current_samples),), self.timesteps[-1].item(), device=self.device
+            )
+            final_values = self.value_model(final_t, current_samples, current_label)
+            best_idx = torch.argmax(final_values)
             return current_samples[best_idx]
 
     def mcts_sample(

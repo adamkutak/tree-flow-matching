@@ -3,13 +3,13 @@ import torch.nn as nn
 import torchvision.models as models
 import torchvision.transforms as transforms
 from torch.utils.data import DataLoader
-from torchvision.datasets import CIFAR100
+from torchvision.datasets import CIFAR10
 import numpy as np
 import pickle
 from tqdm import tqdm
 
 
-def compute_cifar100_statistics():
+def compute_cifar10_statistics():
     """Compute and save Inception feature statistics for CIFAR-100 dataset."""
 
     # Load inception model
@@ -30,10 +30,10 @@ def compute_cifar100_statistics():
     )
 
     # Load both training and test sets
-    train_dataset = CIFAR100(
+    train_dataset = CIFAR10(
         root="./data", train=True, download=True, transform=transform
     )
-    test_dataset = CIFAR100(
+    test_dataset = CIFAR10(
         root="./data", train=False, download=True, transform=transform
     )
 
@@ -58,16 +58,16 @@ def compute_cifar100_statistics():
     sigma = np.cov(features, rowvar=False)
 
     # Save statistics
-    stats = {"mu_cifar100": mu, "sigma_cifar100": sigma}
+    stats = {"mu_cifar10": mu, "sigma_cifar10": sigma}
 
-    with open("cifar100_fid_stats.pkl", "wb") as f:
+    with open("cifar10_fid_stats.pkl", "wb") as f:
         pickle.dump(stats, f)
 
-    print(f"Statistics saved to cifar100_fid_stats.pkl")
+    print(f"Statistics saved to cifar10_fid_stats.pkl")
     print(f"Feature shape: {features.shape}")
     print(f"Mean shape: {mu.shape}")
     print(f"Covariance shape: {sigma.shape}")
 
 
 if __name__ == "__main__":
-    compute_cifar100_statistics()
+    compute_cifar10_statistics()

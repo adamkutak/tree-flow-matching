@@ -101,102 +101,6 @@ class SyntheticDataset(Dataset):
         return self.targets[idx], self.labels[idx]
 
 
-def evaluate_with_viz(sampler, num_samples=1, branch_keep_pairs=None, num_classes=10):
-    """Evaluate sample quality and visualize results."""
-    if branch_keep_pairs is None:
-        branch_keep_pairs = [(3, 2), (8, 3), (16, 7)]
-
-    # Choose a random class label for this evaluation
-    class_label = torch.randint(0, num_classes, (1,)).item()
-    print(f"\nEvaluation for digit {class_label}:")
-
-    for num_branches, num_keep in branch_keep_pairs:
-        print(f"\nTesting with branches={num_branches}, keep={num_keep}")
-
-        all_samples = []
-        all_scores = []
-
-        # Generate multiple samples for the same class
-        for _ in range(num_samples):
-            # Generate single sample
-            sample = sampler.simple_sample(
-                class_label=class_label,
-                num_branches=num_branches,
-                num_keep=num_keep,
-            )
-
-            # Compute classifier confidence
-            with torch.no_grad():
-                confidence_score = sampler.compute_sample_quality(
-                    sample.unsqueeze(0),
-                    torch.tensor([class_label], device=sampler.device),
-                )
-
-            all_samples.append(sample)
-            all_scores.append(confidence_score.item())
-
-        # Convert to tensors
-        samples = torch.stack(all_samples)
-        scores = torch.tensor(all_scores)
-
-        # Report statistics
-        mean_confidence = scores.mean().item()
-        std_confidence = scores.std().item()
-        print(f"Mean confidence: {mean_confidence:.4f} ± {std_confidence:.4f}")
-
-        # Visualize samples
-        plt.figure(figsize=(15, 6))
-        grid = make_grid(samples, nrow=10, normalize=True, padding=2)
-        plt.imshow(grid.cpu().permute(1, 2, 0))
-        plt.title(
-            f"Digit {class_label} Samples (branches={num_branches}, keep={num_keep})"
-        )
-        plt.axis("off")
-        plt.show()
-
-
-def visualize_samples(all_samples_dict, class_label, figsize=(15, 10)):
-    """
-    Visualize samples from different branch/keep configurations in a single grid.
-    Each row represents a different configuration.
-
-    all_samples_dict: Dictionary with (branch, keep) tuples as keys and samples as values
-    """
-    plt.figure(figsize=figsize)
-
-    # Combine all samples into a single grid, with each row being a different configuration
-    all_samples_list = []
-    row_labels = []
-
-    for (branches, keep), samples in all_samples_dict.items():
-        all_samples_list.append(samples)
-        row_labels.append(f"branches={branches}, keep={keep}")
-
-    # Stack all samples into a single tensor
-    all_samples = torch.cat(all_samples_list, dim=0)
-
-    # Create grid with samples from each configuration in separate rows
-    nrow = all_samples_list[0].size(0)  # number of samples per configuration
-    grid = make_grid(all_samples, nrow=nrow, normalize=True, padding=2)
-
-    plt.imshow(grid.cpu().permute(1, 2, 0))
-    plt.title(f"Generated Samples for Class {class_label}")
-
-    # Add row labels on the left side
-    num_configs = len(row_labels)
-    for idx, label in enumerate(row_labels):
-        plt.text(
-            -10,
-            (idx + 0.5) * grid.size(1) / num_configs,
-            label,
-            rotation=0,
-            verticalalignment="center",
-        )
-
-    plt.axis("off")
-    plt.show()
-
-
 def evaluate_synthetic_samples(
     sampler, num_samples=10, branch_keep_pairs=None, num_classes=10
 ):
@@ -314,6 +218,49 @@ def analyze_reward_distribution(reward_net, input_dim, num_classes, num_samples=
     return class_stats
 
 
+def visualize_samples(all_samples_dict, class_label, real_images, figsize=(15, 12)):
+    """
+    Visualize samples from different branch/keep configurations in a single grid.
+    Each row represents a different configuration, with real images in the first row.
+
+    all_samples_dict: Dictionary with (branch, keep) tuples as keys and samples as values
+    real_images: Tensor of real images to show in the first row
+    """
+    plt.figure(figsize=figsize)
+
+    # Combine all samples into a single grid, with real images as first row
+    all_samples_list = [real_images]  # Start with real images
+    row_labels = ["Real Images"]  # First row label
+
+    for (branches, keep), samples in all_samples_dict.items():
+        all_samples_list.append(samples)
+        row_labels.append(f"branches={branches}, keep={keep}")
+
+    # Stack all samples into a single tensor
+    all_samples = torch.cat(all_samples_list, dim=0)
+
+    # Create grid with samples from each configuration in separate rows
+    nrow = all_samples_list[0].size(0)  # number of samples per configuration
+    grid = make_grid(all_samples, nrow=nrow, normalize=True, padding=2)
+
+    plt.imshow(grid.cpu().permute(1, 2, 0))
+    plt.title(f"Generated Samples for Class {class_label}")
+
+    # Add row labels on the left side
+    num_configs = len(row_labels)
+    for idx, label in enumerate(row_labels):
+        plt.text(
+            -10,
+            (idx + 0.5) * grid.size(1) / num_configs,
+            label,
+            rotation=0,
+            verticalalignment="center",
+        )
+
+    plt.axis("off")
+    plt.show()
+
+
 def evaluate_samples(sampler, num_samples=10, branch_keep_pairs=None, num_classes=100):
     """Evaluate sample quality for CIFAR-100 data using FID and IS metrics"""
     import torchmetrics.image.fid as FID
@@ -327,19 +274,24 @@ def evaluate_samples(sampler, num_samples=10, branch_keep_pairs=None, num_classe
     fid = FID.FrechetInceptionDistance(normalize=True).to(sampler.device)
     inception_score = IS.InceptionScore(normalize=True).to(sampler.device)
 
-    # Load real CIFAR-100 images for FID comparison
+    # Choose a single random class for evaluation
+    class_label = np.random.randint(num_classes)
+
+    # Load real CIFAR-100 images for FID comparison and visualization
     transform = transforms.Compose(
         [transforms.ToTensor(), transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))]
     )
     cifar100 = datasets.CIFAR100(
         root="./data", train=True, download=True, transform=transform
     )
-    real_images = torch.stack([cifar100[i][0] for i in range(num_samples)]).to(
+
+    # Get images only from the selected class
+    class_indices = [i for i, (_, label) in enumerate(cifar100) if label == class_label]
+    selected_indices = np.random.choice(class_indices, num_samples, replace=True)
+    real_images = torch.stack([cifar100[i][0] for i in selected_indices]).to(
         sampler.device
     )
 
-    # Choose a single random class for evaluation
-    class_label = np.random.randint(num_classes)
     print(f"\nEvaluating samples for class {class_label}:")
 
     # Dictionary to store samples for visualization
@@ -391,8 +343,8 @@ def evaluate_samples(sampler, num_samples=10, branch_keep_pairs=None, num_classe
         print(f"FID score: {fid_score:.4f}")
         print(f"Inception Score: {is_mean:.4f} ± {is_std:.4f}")
 
-    # Visualize all samples in a single plot
-    visualize_samples(all_samples_dict, class_label)
+    # Visualize all samples in a single plot, including real images
+    visualize_samples(all_samples_dict, class_label, real_images)
 
 
 def main():
@@ -440,6 +392,7 @@ def main():
     n_epochs_per_cycle = 1
     n_training_cycles = 100
     branch_keep_pairs = [(1, 1), (2, 1), (3, 2), (8, 3), (16, 7)]
+    # branch_keep_pairs = [(1, 1), (2, 1), (3, 2)]
 
     # Training loop with periodic evaluation
     for cycle in range(n_training_cycles):
