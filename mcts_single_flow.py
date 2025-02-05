@@ -258,8 +258,13 @@ class MCTSFlowSampler:
             # Generate trajectories
             print("Generating trajectories for value training...")
             self.flow_model.eval()  # Set to eval mode for trajectory generation
+            iterator = (
+                tqdm(train_loader, desc="Generating trajectories")
+                if use_tqdm
+                else train_loader
+            )
             with torch.no_grad():
-                for batch_idx, (_, y) in enumerate(train_loader):
+                for batch_idx, (_, y) in enumerate(iterator):
                     y = y.to(self.device)
                     trajectories, ts, labels, scores = (
                         self.generate_training_trajectory(y)

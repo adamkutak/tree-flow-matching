@@ -6,6 +6,7 @@ import numpy as np
 from scipy.spatial.distance import mahalanobis
 import pickle
 from train_cifar_classifier import CIFAR100Classifier
+from scipy.linalg import sqrtm
 
 
 class FIDRewardNet(nn.Module):
