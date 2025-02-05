@@ -404,6 +404,7 @@ def main():
             initial_flow_epochs=0,
             value_epochs=100,
             flow_epochs=1,
+            use_tqdm=True,
         )
 
         # Evaluate
