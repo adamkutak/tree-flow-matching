@@ -10,7 +10,7 @@ import numpy as np
 from tqdm import tqdm
 import torch.nn as nn
 import torch.nn.functional as F
-from fid_is_rewards import FIDISRewardNet
+from fid_is_rewards import FIDRewardNet
 
 
 class SyntheticRewardNet(nn.Module):
@@ -376,7 +376,7 @@ def main():
     # train_subset = torch.utils.data.Subset(train_dataset, subset_indices)
     train_loader = DataLoader(train_dataset, batch_size=128, shuffle=True)
     # Initialize reward network
-    reward_net = FIDISRewardNet().to(device)
+    reward_net = FIDRewardNet().to(device)
 
     # Initialize sampler with CIFAR-100 dimensions
     sampler = MCTSFlowSampler(
