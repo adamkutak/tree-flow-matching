@@ -401,9 +401,9 @@ def main():
         sampler.train(
             train_loader,
             n_epochs=n_epochs_per_cycle,
-            initial_flow_epochs=0,
-            value_epochs=100,
-            flow_epochs=1,
+            initial_flow_epochs=1000,
+            value_epochs=0,
+            flow_epochs=0,
             use_tqdm=True,
         )
 

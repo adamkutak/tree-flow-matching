@@ -2,6 +2,7 @@ import torch
 import torch.nn as nn
 import torchvision.models as models
 import torchvision.transforms as transforms
+import torchvision.datasets as datasets
 import numpy as np
 from scipy.spatial.distance import mahalanobis
 import pickle
@@ -10,7 +11,7 @@ from scipy.linalg import sqrtm
 
 
 class FIDRewardNet(nn.Module):
-    def __init__(self, dataset="cifar10"):
+    def __init__(self, dataset="cifar10", initial_batch_size=1000):
         super().__init__()
         print("Initializing FIDRewardNet...")
 
@@ -25,15 +26,39 @@ class FIDRewardNet(nn.Module):
         # Load reference statistics for CIFAR-10
         with open("cifar10_fid_stats.pkl", "rb") as f:
             cifar_stats = pickle.load(f)
-        self.ref_mu = cifar_stats["mu_cifar10"]  # Reference mean
-        self.ref_sigma = cifar_stats["sigma_cifar10"]  # Reference covariance
+        self.ref_mu = cifar_stats["mu"]
+        self.ref_sigma = cifar_stats["sigma"]
         print(
             f"Loaded CIFAR10 reference stats - mu shape: {self.ref_mu.shape}, sigma shape: {self.ref_sigma.shape}"
         )
 
-        # Initialize running statistics
-        self.running_features = []
-        self.max_running_samples = 1000  # Keep track of last N samples
+        # Initialize running statistics with real CIFAR-10 images
+        transform = transforms.Compose(
+            [
+                transforms.ToTensor(),
+                transforms.Normalize(
+                    mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]
+                ),
+            ]
+        )
+        cifar10 = datasets.CIFAR10(
+            root="./data", train=True, download=True, transform=transform
+        )
+
+        # Randomly sample initial_batch_size images
+        indices = np.random.choice(len(cifar10), initial_batch_size, replace=False)
+        initial_images = torch.stack([cifar10[i][0] for i in indices])
+
+        # Extract features for initial images
+        print(
+            f"Initializing running statistics with {initial_batch_size} real images..."
+        )
+        initial_features = self.extract_features(initial_images)
+        self.running_features = list(initial_features)
+        self.max_running_samples = initial_batch_size
+        print(
+            f"Running statistics initialized with {len(self.running_features)} features"
+        )
 
         # Freeze all parameters
         for param in self.parameters():
