@@ -261,8 +261,8 @@ def visualize_samples(all_samples_dict, class_label, real_images, figsize=(15, 1
     plt.show()
 
 
-def evaluate_samples(sampler, num_samples=10, branch_keep_pairs=None, num_classes=100):
-    """Evaluate sample quality for CIFAR-100 data using FID and IS metrics"""
+def evaluate_samples(sampler, num_samples=10, branch_keep_pairs=None, num_classes=10):
+    """Evaluate sample quality for CIFAR-10 data using FID and IS metrics"""
     import torchmetrics.image.fid as FID
     import torchmetrics.image.inception as IS
     from torchvision import datasets, transforms
@@ -281,14 +281,14 @@ def evaluate_samples(sampler, num_samples=10, branch_keep_pairs=None, num_classe
     transform = transforms.Compose(
         [transforms.ToTensor(), transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))]
     )
-    cifar100 = datasets.CIFAR100(
+    cifar10 = datasets.CIFAR10(
         root="./data", train=True, download=True, transform=transform
     )
 
     # Get images only from the selected class
-    class_indices = [i for i, (_, label) in enumerate(cifar100) if label == class_label]
+    class_indices = [i for i, (_, label) in enumerate(cifar10) if label == class_label]
     selected_indices = np.random.choice(class_indices, num_samples, replace=True)
-    real_images = torch.stack([cifar100[i][0] for i in selected_indices]).to(
+    real_images = torch.stack([cifar10[i][0] for i in selected_indices]).to(
         sampler.device
     )
 
@@ -358,7 +358,7 @@ def main():
     # CIFAR-100 dimensions and setup
     image_size = 32
     channels = 3
-    num_classes = 100
+    num_classes = 10
 
     # Setup CIFAR-100 dataset with appropriate transforms
     transform = transforms.Compose(
@@ -368,7 +368,7 @@ def main():
         ]
     )
 
-    train_dataset = datasets.CIFAR100(
+    train_dataset = datasets.CIFAR10(
         root="./data", train=True, download=True, transform=transform
     )
     # Take only 1000 samples for faster training/testing
@@ -378,7 +378,7 @@ def main():
     # Initialize reward network
     reward_net = FIDRewardNet().to(device)
 
-    # Initialize sampler with CIFAR-100 dimensions
+    # Initialize sampler with CIFAR-10 dimensions
     sampler = MCTSFlowSampler(
         image_size=image_size,
         channels=channels,
