@@ -58,45 +58,89 @@ class FIDRewardNet(nn.Module):
 
     def compute_fid(self, features):
         """Compute FID between given features and reference statistics."""
+        print(f"\nComputing FID - Input features shape: {features.shape}")
+        print(f"Features range: [{features.min():.4f}, {features.max():.4f}]")
+
         mu = np.mean(features, axis=0)
+        print(f"Computed mean shape: {mu.shape}")
+        print(f"Mean range: [{mu.min():.4f}, {mu.max():.4f}]")
+
         sigma = np.cov(features, rowvar=False)
+        print(f"Computed covariance shape: {sigma.shape}")
+        print(f"Covariance range: [{sigma.min():.4f}, {sigma.max():.4f}]")
 
         # Calculate FID
         diff = mu - self.ref_mu
-        covmean = sqrtm(sigma.dot(self.ref_sigma))
+        print(f"Mean difference range: [{diff.min():.4f}, {diff.max():.4f}]")
+
+        print(
+            f"Reference sigma range: [{self.ref_sigma.min():.4f}, {self.ref_sigma.max():.4f}]"
+        )
+        dot_product = sigma.dot(self.ref_sigma)
+        print(f"Dot product range: [{dot_product.min():.4f}, {dot_product.max():.4f}]")
+
+        covmean = sqrtm(dot_product)
+        print(f"Covmean before real check - shape: {covmean.shape}")
+        print(f"Covmean is complex: {np.iscomplexobj(covmean)}")
         if np.iscomplexobj(covmean):
+            print(f"Complex component magnitude: {np.abs(covmean.imag).max():.4f}")
             covmean = covmean.real
-        fid = diff.dot(diff) + np.trace(sigma + self.ref_sigma - 2 * covmean)
+        print(f"Covmean range: [{covmean.min():.4f}, {covmean.max():.4f}]")
+
+        term1 = diff.dot(diff)
+        term2 = np.trace(sigma)
+        term3 = np.trace(self.ref_sigma)
+        term4 = -2 * np.trace(covmean)
+
+        print(f"FID components:")
+        print(f"- Mean difference term: {term1:.4f}")
+        print(f"- Sigma trace: {term2:.4f}")
+        print(f"- Ref sigma trace: {term3:.4f}")
+        print(f"- Covmean term: {term4:.4f}")
+
+        fid = term1 + term2 + term3 + term4
+        print(f"Final FID: {fid:.4f}")
+
         return float(fid)
 
     def compute_marginal_fid(self, image):
         """Compute how much this image changes the current FID."""
         # Extract features for new image
+        print(f"\nInput image shape: {image.shape}")
+        print(f"Image range: [{image.min():.4f}, {image.max():.4f}]")
+
         features = self.extract_features(image)
+        print(f"Extracted features shape: {features.shape}")
+        print(f"Features range: [{features.min():.4f}, {features.max():.4f}]")
 
         # Compute baseline FID with current running features
+        print(f"\nCurrent running features count: {len(self.running_features)}")
         if len(self.running_features) > 0:
             current_features = np.array(self.running_features)
+            print(f"Computing baseline FID...")
             baseline_fid = self.compute_fid(current_features)
+            print(f"Baseline FID: {baseline_fid}")
         else:
             baseline_fid = float("inf")
+            print("No baseline FID (empty running features)")
 
         # Add new features and compute new FID
         temp_features = self.running_features + [features[0]]
-        if len(temp_features) > self.max_running_samples:
-            temp_features = temp_features[-self.max_running_samples :]
+        print(f"\nComputing new FID with added feature...")
         new_fid = self.compute_fid(np.array(temp_features))
+        print(f"New FID: {new_fid}")
 
-        # Calculate FID change (negative means improvement)
+        # Calculate FID change
         fid_change = new_fid - baseline_fid
+        print(f"FID change: {fid_change}")
 
         # Update running features
         self.running_features.append(features[0])
         if len(self.running_features) > self.max_running_samples:
             self.running_features = self.running_features[-self.max_running_samples :]
 
-        # Convert to reward (negative FID change means improvement)
         reward = -fid_change
+        print(f"Final reward: {reward}")
         return torch.tensor([reward], device=image.device, dtype=torch.float32)
 
     def forward(self, image):
