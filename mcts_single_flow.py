@@ -152,7 +152,7 @@ class MCTSFlowSampler:
 
         buffer_size = 5
         # Initialize inception model for FID computation
-        self.inception = InceptionV3([2], normalize_input=True).to(device)
+        self.inception = InceptionV3([0], normalize_input=True).to(device)
         self.inception.eval()
 
         # Load reference statistics for CIFAR-10
@@ -262,6 +262,7 @@ class MCTSFlowSampler:
     def calculate_frechet_distance(self, mu1, sigma1, mu2, sigma2):
         """Calculate the Frechet distance between two distributions."""
         diff = mu1 - mu2
+        breakpoint()
         covmean = sqrtm(sigma1.dot(sigma2))
 
         if np.iscomplexobj(covmean):
