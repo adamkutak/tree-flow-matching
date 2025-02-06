@@ -165,13 +165,13 @@ class MCTSFlowSampler:
             for i in range(num_classes)
         }
 
-        # Load reference statistics for each class
         for class_idx in range(num_classes):
             self.fids[class_idx]["mu"] = cifar_stats[f"class_{class_idx}_mu"]
             self.fids[class_idx]["sigma"] = cifar_stats[f"class_{class_idx}_sigma"]
 
         print("Initializing per-class buffers...")
-        self.initialize_class_buffers(buffer_size)
+        self.running_features = []
+        self.initialize_running_features(buffer_size)
 
     def initialize_running_features(self, n_samples):
         """Initialize running features with generated samples."""
