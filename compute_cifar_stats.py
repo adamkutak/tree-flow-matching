@@ -7,25 +7,27 @@ from torchvision.datasets import CIFAR10
 import numpy as np
 import pickle
 from tqdm import tqdm
+from pytorch_fid.inception import InceptionV3
+from collections import defaultdict
 
 
 def compute_cifar10_statistics():
-    """Compute and save Inception feature statistics for CIFAR-100 dataset."""
+    """Compute and save per-class Inception feature statistics for CIFAR-10 dataset."""
 
-    # Load inception model
-    inception_model = models.inception_v3(pretrained=True, transform_input=False)
-    inception_model.fc = nn.Identity()  # Remove final classification layer
-    inception_model.eval()
+    # Load inception model with 64-dim features
+    inception = InceptionV3(
+        [2], normalize_input=True
+    )  # Block index 2 gives 64-dim features
+    inception.eval()
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    inception_model = inception_model.to(device)
+    inception = inception.to(device)
 
-    # Transform for CIFAR-100 (Inception v3 expects 299x299 images)
+    # Transform for CIFAR-10
     transform = transforms.Compose(
         [
             transforms.Resize((299, 299)),
             transforms.ToTensor(),
-            transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
         ]
     )
 
@@ -33,40 +35,54 @@ def compute_cifar10_statistics():
     train_dataset = CIFAR10(
         root="./data", train=True, download=True, transform=transform
     )
-    test_dataset = CIFAR10(
-        root="./data", train=False, download=True, transform=transform
-    )
 
-    # Combine datasets and create dataloader
-    full_dataset = torch.utils.data.ConcatDataset([train_dataset, test_dataset])
-    dataloader = DataLoader(full_dataset, batch_size=64, shuffle=False, num_workers=4)
+    dataloader = DataLoader(train_dataset, batch_size=64, shuffle=False, num_workers=4)
 
-    # Collect features
-    features = []
-    print("Computing Inception features for CIFAR-100...")
+    # Dictionary to store features for each class
+    class_features = defaultdict(list)
+
+    print("Computing 64-dim Inception features for CIFAR-10 by class...")
 
     with torch.no_grad():
-        for images, _ in tqdm(dataloader):
+        for images, labels in tqdm(dataloader):
             images = images.to(device)
-            feat = inception_model(images).cpu().numpy()
-            features.append(feat)
+            # Scale images to [-1, 1] range
+            images = images * 2 - 1
 
-    features = np.concatenate(features, axis=0)
+            # Get features
+            features = inception(images)[0]
+            # Global average pooling if features have spatial dimensions
+            if len(features.shape) > 2:
+                features = features.mean([2, 3])
+            features = features.cpu().numpy()
 
-    # Compute statistics
-    mu = np.mean(features, axis=0)
-    sigma = np.cov(features, rowvar=False)
+            # Store features by class
+            for feat, label in zip(features, labels):
+                class_features[label.item()].append(feat)
+
+    # Compute statistics for each class
+    stats = {}
+    print("\nComputing statistics for each class...")
+
+    for class_idx in range(10):
+        features = np.stack(class_features[class_idx])
+        mu = np.mean(features, axis=0)
+        sigma = np.cov(features, rowvar=False)
+
+        stats[f"class_{class_idx}_mu"] = mu
+        stats[f"class_{class_idx}_sigma"] = sigma
+
+        print(f"Class {class_idx}:")
+        print(f"  Number of samples: {len(features)}")
+        print(f"  Feature dimension: {features.shape[1]}")
+        print(f"  Mean shape: {mu.shape}")
+        print(f"  Covariance shape: {sigma.shape}")
 
     # Save statistics
-    stats = {"mu_cifar10": mu, "sigma_cifar10": sigma}
-
-    with open("cifar10_fid_stats.pkl", "wb") as f:
+    with open("cifar10_fid_stats_64dim.pkl", "wb") as f:
         pickle.dump(stats, f)
 
-    print(f"Statistics saved to cifar10_fid_stats.pkl")
-    print(f"Feature shape: {features.shape}")
-    print(f"Mean shape: {mu.shape}")
-    print(f"Covariance shape: {sigma.shape}")
+    print(f"\nPer-class statistics saved to cifar10_fid_stats_64dim.pkl")
 
 
 if __name__ == "__main__":

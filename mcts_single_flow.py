@@ -1,3 +1,4 @@
+from collections import deque
 import torch
 import torch.utils.data as data
 import torchdiffeq
@@ -149,24 +150,28 @@ class MCTSFlowSampler:
         else:
             print("No pre-trained models found, starting from scratch")
 
-        initial_samples = 20
+        buffer_size = 5
         # Initialize inception model for FID computation
-        self.inception = InceptionV3([3]).to(device)
+        self.inception = InceptionV3([2], normalize_input=True).to(device)
         self.inception.eval()
 
         # Load reference statistics for CIFAR-10
-        with open("cifar10_fid_stats.pkl", "rb") as f:
+        with open("cifar10_fid_stats_64dim.pkl", "rb") as f:
             cifar_stats = pickle.load(f)
-        self.ref_mu = cifar_stats["mu_cifar10"]
-        self.ref_sigma = cifar_stats["sigma_cifar10"]
 
-        # Initialize running features list
-        self.running_features = []
-        self.max_running_samples = initial_samples
+        # Initialize per-class FID metrics and buffers
+        self.fids = {
+            i: {"mu": None, "sigma": None, "features": deque(maxlen=buffer_size)}
+            for i in range(num_classes)
+        }
 
-        # Initialize running features with generated samples
-        print(f"Initializing FID computation with {initial_samples} samples")
-        self.initialize_running_features(initial_samples)
+        # Load reference statistics for each class
+        for class_idx in range(num_classes):
+            self.fids[class_idx]["mu"] = cifar_stats[f"class_{class_idx}_mu"]
+            self.fids[class_idx]["sigma"] = cifar_stats[f"class_{class_idx}_sigma"]
+
+        print("Initializing per-class buffers...")
+        self.initialize_class_buffers(buffer_size)
 
     def initialize_running_features(self, n_samples):
         """Initialize running features with generated samples."""
