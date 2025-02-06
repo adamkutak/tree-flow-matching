@@ -10,6 +10,9 @@ import numpy as np
 from tqdm import tqdm
 import torch.nn as nn
 import torch.nn.functional as F
+import torchmetrics.image.fid as FID
+import torchmetrics.image.inception as IS
+from torchvision import datasets, transforms
 
 
 class SyntheticRewardNet(nn.Module):
@@ -262,10 +265,6 @@ def visualize_samples(all_samples_dict, class_label, real_images, figsize=(15, 1
 
 def evaluate_samples(sampler, num_samples=10, branch_keep_pairs=None, num_classes=10):
     """Evaluate sample quality for CIFAR-10 data using FID and IS metrics"""
-    import torchmetrics.image.fid as FID
-    import torchmetrics.image.inception as IS
-    from torchvision import datasets, transforms
-
     if branch_keep_pairs is None:
         branch_keep_pairs = [(3, 2), (8, 3), (16, 7)]
 
