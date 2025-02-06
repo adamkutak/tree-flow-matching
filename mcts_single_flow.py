@@ -262,7 +262,6 @@ class MCTSFlowSampler:
     def calculate_frechet_distance(self, mu1, sigma1, mu2, sigma2):
         """Calculate the Frechet distance between two distributions."""
         diff = mu1 - mu2
-        breakpoint()
         covmean = sqrtm(sigma1.dot(sigma2))
 
         if np.iscomplexobj(covmean):
