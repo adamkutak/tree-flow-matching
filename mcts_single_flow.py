@@ -259,6 +259,17 @@ class MCTSFlowSampler:
 
         return -(new_fid - baseline_fid)  # Negative change as reward
 
+    def calculate_frechet_distance(self, mu1, sigma1, mu2, sigma2):
+        """Calculate the Frechet distance between two distributions."""
+        diff = mu1 - mu2
+        covmean = sqrtm(sigma1.dot(sigma2))
+
+        if np.iscomplexobj(covmean):
+            covmean = covmean.real
+
+        tr_covmean = np.trace(covmean)
+        return diff.dot(diff) + np.trace(sigma1) + np.trace(sigma2) - 2 * tr_covmean
+
     def compute_sample_quality(self, samples, target_labels):
         """Compute quality score using class-specific FID change."""
         with torch.no_grad():
