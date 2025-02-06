@@ -277,7 +277,7 @@ class MCTSFlowSampler:
             for sample, label in zip(samples, target_labels):
                 reward = self.compute_fid_change(sample.unsqueeze(0), label.item())
                 rewards.append(reward)
-            return torch.tensor(rewards, device=self.device)
+            return torch.tensor(rewards, dtype=torch.float32, device=self.device)
 
     def load_classifier(self, path="saved_models/mnist_classifier.pt"):
         """Load pre-trained MNIST classifier."""
