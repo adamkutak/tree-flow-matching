@@ -16,7 +16,7 @@ def compute_cifar10_statistics():
 
     # Load inception model with 64-dim features
     inception = InceptionV3(
-        [2], normalize_input=True
+        [0], normalize_input=True
     )  # Block index 2 gives 64-dim features
     inception.eval()
 
