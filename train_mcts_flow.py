@@ -372,7 +372,7 @@ def main():
     # Take only 1000 samples for faster training/testing
     subset_indices = range(100)  # You can adjust this number
     train_subset = torch.utils.data.Subset(train_dataset, subset_indices)
-    train_loader = DataLoader(train_subset, batch_size=2, shuffle=True)
+    train_loader = DataLoader(train_dataset, batch_size=128, shuffle=True)
     # Initialize reward network
 
     # Initialize sampler with CIFAR-10 dimensions
@@ -397,8 +397,8 @@ def main():
         sampler.train(
             train_loader,
             n_epochs=n_epochs_per_cycle,
-            initial_flow_epochs=0,
-            value_epochs=1,
+            initial_flow_epochs=100,
+            value_epochs=10,
             flow_epochs=1,
             use_tqdm=True,
         )
