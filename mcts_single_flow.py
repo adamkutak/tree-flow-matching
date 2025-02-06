@@ -170,41 +170,41 @@ class MCTSFlowSampler:
             self.fids[class_idx]["sigma"] = cifar_stats[f"class_{class_idx}_sigma"]
 
         print("Initializing per-class buffers...")
-        self.running_features = []
-        self.initialize_running_features(buffer_size)
+        self.initialize_class_buffers(buffer_size)
 
-    def initialize_running_features(self, n_samples):
-        """Initialize running features with generated samples."""
+    def initialize_class_buffers(self, n_samples):
+        """Initialize buffers for each class with generated samples."""
         self.flow_model.eval()
         with torch.no_grad():
-            batch_size = 100  # Process in batches
-            for i in range(0, n_samples, batch_size):
-                # Generate random labels
-                labels = torch.randint(
-                    0, self.num_classes, (batch_size,), device=self.device
-                )
-
-                # Generate samples using simple flow (no branching)
+            samples_per_class = n_samples
+            for class_idx in range(self.num_classes):
+                # Generate samples for this specific class
+                labels = torch.full((samples_per_class,), class_idx, device=self.device)
                 x = torch.randn(
-                    batch_size,
+                    samples_per_class,
                     self.channels,
                     self.image_size,
                     self.image_size,
                     device=self.device,
                 )
 
+                # Generate samples using simple flow
                 for t_idx in range(len(self.timesteps) - 1):
                     t = self.timesteps[t_idx]
                     dt = self.timesteps[t_idx + 1] - t
-                    t_batch = torch.full((batch_size,), t.item(), device=self.device)
+                    t_batch = torch.full(
+                        (samples_per_class,), t.item(), device=self.device
+                    )
                     velocity = self.flow_model(t_batch, x, labels)
                     x = x + velocity * dt
 
-                # Extract and store features
+                # Extract and store features for this class
                 features = self.extract_inception_features(x)
-                self.running_features.extend(list(features))
+                self.fids[class_idx]["features"].extend(list(features))
 
-        print(f"Initialized with {len(self.running_features)} feature vectors")
+                print(
+                    f"Class {class_idx} initialized with {len(self.fids[class_idx]['features'])} samples"
+                )
 
     def extract_inception_features(self, images):
         """Extract inception features using pytorch-fid."""
@@ -217,47 +217,54 @@ class MCTSFlowSampler:
         images = images * 2 - 1
 
         with torch.no_grad():
-            features = self.inception(images)[0].squeeze(-1).squeeze(-1).cpu().numpy()
-        return features
+            features = self.inception(images)[0]
+            # Global average pooling if features have spatial dimensions
+            if len(features.shape) > 2:
+                features = features.mean([2, 3])
+            return features.cpu().numpy()
 
-    def compute_fid_change(self, image):
-        """Compute how much an image changes the current FID score."""
+    def compute_fid_change(self, image, class_idx):
+        """Compute how much an image changes the current FID score for its class."""
         features = self.extract_inception_features(image)
+        class_fid = self.fids[class_idx]
 
-        # Compute baseline FID
-        current_features = np.array(self.running_features)
-        baseline_fid = fid_score.calculate_frechet_distance(
-            self.ref_mu,
-            self.ref_sigma,
-            np.mean(current_features, axis=0),
-            np.cov(current_features, rowvar=False),
+        # Compute baseline FID with current buffer
+        if len(class_fid["features"]) > 0:
+            current_features = np.array(list(class_fid["features"]))
+            mu1 = np.mean(current_features, axis=0)
+            sigma1 = np.cov(current_features, rowvar=False)
+            baseline_fid = self.calculate_frechet_distance(
+                mu1, sigma1, class_fid["mu"], class_fid["sigma"]
+            )
+        else:
+            baseline_fid = float("inf")
+
+        # Compute new FID with added feature
+        new_features = list(class_fid["features"])
+        if len(new_features) >= class_fid["features"].maxlen:
+            new_features = new_features[1:]
+        new_features.append(features[0])
+        new_features = np.array(new_features)
+
+        mu2 = np.mean(new_features, axis=0)
+        sigma2 = np.cov(new_features, rowvar=False)
+        new_fid = self.calculate_frechet_distance(
+            mu2, sigma2, class_fid["mu"], class_fid["sigma"]
         )
 
-        # Compute new FID with added image
-        temp_features = self.running_features + [features[0]]
-        if len(temp_features) > self.max_running_samples:
-            temp_features = temp_features[-self.max_running_samples :]
-        temp_features = np.array(temp_features)
-        new_fid = fid_score.calculate_frechet_distance(
-            self.ref_mu,
-            self.ref_sigma,
-            np.mean(temp_features, axis=0),
-            np.cov(temp_features, rowvar=False),
-        )
-
-        # Update running features
-        self.running_features.append(features[0])
-        if len(self.running_features) > self.max_running_samples:
-            self.running_features = self.running_features[-self.max_running_samples :]
+        # Update buffer
+        if len(class_fid["features"]) >= class_fid["features"].maxlen:
+            class_fid["features"].popleft()
+        class_fid["features"].append(features[0])
 
         return -(new_fid - baseline_fid)  # Negative change as reward
 
     def compute_sample_quality(self, samples, target_labels):
-        """Compute quality score using FID change."""
+        """Compute quality score using class-specific FID change."""
         with torch.no_grad():
             rewards = []
-            for sample in samples:
-                reward = self.compute_fid_change(sample.unsqueeze(0))
+            for sample, label in zip(samples, target_labels):
+                reward = self.compute_fid_change(sample.unsqueeze(0), label.item())
                 rewards.append(reward)
             return torch.tensor(rewards, device=self.device)
 
