@@ -10,7 +10,6 @@ import numpy as np
 from tqdm import tqdm
 import torch.nn as nn
 import torch.nn.functional as F
-from fid_is_rewards import FIDRewardNet
 
 
 class SyntheticRewardNet(nn.Module):
@@ -376,7 +375,6 @@ def main():
     train_subset = torch.utils.data.Subset(train_dataset, subset_indices)
     train_loader = DataLoader(train_subset, batch_size=2, shuffle=True)
     # Initialize reward network
-    reward_net = FIDRewardNet().to(device)
 
     # Initialize sampler with CIFAR-10 dimensions
     sampler = MCTSFlowSampler(
@@ -385,7 +383,6 @@ def main():
         device=device,
         num_timesteps=10,
         num_classes=num_classes,
-        reward_net=reward_net,
     )
 
     # Training configuration
@@ -401,9 +398,9 @@ def main():
         sampler.train(
             train_loader,
             n_epochs=n_epochs_per_cycle,
-            initial_flow_epochs=1000,
-            value_epochs=0,
-            flow_epochs=0,
+            initial_flow_epochs=0,
+            value_epochs=1,
+            flow_epochs=1,
             use_tqdm=True,
         )
 

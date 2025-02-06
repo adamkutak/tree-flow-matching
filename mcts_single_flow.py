@@ -15,6 +15,11 @@ import torch.nn as nn
 import torch.nn.functional as F
 import os
 from vector_mlps import MLPValue, MLPFlow
+import torchvision.models as models
+import pickle
+from scipy.linalg import sqrtm
+from pytorch_fid import fid_score
+from pytorch_fid.inception import InceptionV3
 
 
 class TrajectoryBuffer:
@@ -81,7 +86,6 @@ class MCTSFlowSampler:
         device="cuda:0",
         num_timesteps=10,
         num_classes=100,
-        reward_net=None,
     ):
         # Check if CUDA is available and set device
         if torch.cuda.is_available():
@@ -122,17 +126,6 @@ class MCTSFlowSampler:
             num_classes=num_classes,
             class_cond=True,
         ).to(self.device)
-        # Initialize MNIST classifier for rewards
-        # self.classifier = classifier
-        # if self.classifier is None:
-        #     raise ValueError("Classifier must be provided")
-        # self.classifier.eval()
-
-        # Replace classifier with synthetic reward network
-        self.reward_net = reward_net
-        # Freeze reward network weights
-        for param in self.reward_net.parameters():
-            param.requires_grad = False
 
         # Initialize optimizers
         lr = 5e-4
@@ -156,6 +149,113 @@ class MCTSFlowSampler:
         else:
             print("No pre-trained models found, starting from scratch")
 
+        initial_samples = 20
+        # Initialize inception model for FID computation
+        self.inception = InceptionV3([3]).to(device)
+        self.inception.eval()
+
+        # Load reference statistics for CIFAR-10
+        with open("cifar10_fid_stats.pkl", "rb") as f:
+            cifar_stats = pickle.load(f)
+        self.ref_mu = cifar_stats["mu_cifar10"]
+        self.ref_sigma = cifar_stats["sigma_cifar10"]
+
+        # Initialize running features list
+        self.running_features = []
+        self.max_running_samples = initial_samples
+
+        # Initialize running features with generated samples
+        print(f"Initializing FID computation with {initial_samples} samples")
+        self.initialize_running_features(initial_samples)
+
+    def initialize_running_features(self, n_samples):
+        """Initialize running features with generated samples."""
+        self.flow_model.eval()
+        with torch.no_grad():
+            batch_size = 100  # Process in batches
+            for i in range(0, n_samples, batch_size):
+                # Generate random labels
+                labels = torch.randint(
+                    0, self.num_classes, (batch_size,), device=self.device
+                )
+
+                # Generate samples using simple flow (no branching)
+                x = torch.randn(
+                    batch_size,
+                    self.channels,
+                    self.image_size,
+                    self.image_size,
+                    device=self.device,
+                )
+
+                for t_idx in range(len(self.timesteps) - 1):
+                    t = self.timesteps[t_idx]
+                    dt = self.timesteps[t_idx + 1] - t
+                    t_batch = torch.full((batch_size,), t.item(), device=self.device)
+                    velocity = self.flow_model(t_batch, x, labels)
+                    x = x + velocity * dt
+
+                # Extract and store features
+                features = self.extract_inception_features(x)
+                self.running_features.extend(list(features))
+
+        print(f"Initialized with {len(self.running_features)} feature vectors")
+
+    def extract_inception_features(self, images):
+        """Extract inception features using pytorch-fid."""
+        # Resize images to inception input size
+        images = F.interpolate(
+            images, size=(299, 299), mode="bilinear", align_corners=False
+        )
+
+        # Move images to [-1, 1] range as expected by inception
+        images = images * 2 - 1
+
+        with torch.no_grad():
+            features = self.inception(images)[0].squeeze(-1).squeeze(-1).cpu().numpy()
+        return features
+
+    def compute_fid_change(self, image):
+        """Compute how much an image changes the current FID score."""
+        features = self.extract_inception_features(image)
+
+        # Compute baseline FID
+        current_features = np.array(self.running_features)
+        baseline_fid = fid_score.calculate_frechet_distance(
+            self.ref_mu,
+            self.ref_sigma,
+            np.mean(current_features, axis=0),
+            np.cov(current_features, rowvar=False),
+        )
+
+        # Compute new FID with added image
+        temp_features = self.running_features + [features[0]]
+        if len(temp_features) > self.max_running_samples:
+            temp_features = temp_features[-self.max_running_samples :]
+        temp_features = np.array(temp_features)
+        new_fid = fid_score.calculate_frechet_distance(
+            self.ref_mu,
+            self.ref_sigma,
+            np.mean(temp_features, axis=0),
+            np.cov(temp_features, rowvar=False),
+        )
+
+        # Update running features
+        self.running_features.append(features[0])
+        if len(self.running_features) > self.max_running_samples:
+            self.running_features = self.running_features[-self.max_running_samples :]
+
+        return -(new_fid - baseline_fid)  # Negative change as reward
+
+    def compute_sample_quality(self, samples, target_labels):
+        """Compute quality score using FID change."""
+        with torch.no_grad():
+            rewards = []
+            for sample in samples:
+                reward = self.compute_fid_change(sample.unsqueeze(0))
+                rewards.append(reward)
+            return torch.tensor(rewards, device=self.device)
+
     def load_classifier(self, path="saved_models/mnist_classifier.pt"):
         """Load pre-trained MNIST classifier."""
         if not os.path.exists(path):
@@ -167,11 +267,6 @@ class MCTSFlowSampler:
             torch.load(path, weights_only=True, map_location=self.device)
         )
         print(f"Loaded pre-trained classifier from {path}")
-
-    def compute_sample_quality(self, samples, target_labels):
-        """Compute quality score using synthetic reward network."""
-        with torch.no_grad():
-            return self.reward_net(samples)
 
     def generate_training_trajectory(self, y, num_branches=16):
         """Generate a complete trajectory for training the value model."""

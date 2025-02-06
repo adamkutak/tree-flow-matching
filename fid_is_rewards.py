@@ -26,8 +26,8 @@ class FIDRewardNet(nn.Module):
         # Load reference statistics for CIFAR-10
         with open("cifar10_fid_stats.pkl", "rb") as f:
             cifar_stats = pickle.load(f)
-        self.ref_mu = cifar_stats["mu"]
-        self.ref_sigma = cifar_stats["sigma"]
+        self.ref_mu = cifar_stats["mu_cifar10"]
+        self.ref_sigma = cifar_stats["sigma_cifar10"]
         print(
             f"Loaded CIFAR10 reference stats - mu shape: {self.ref_mu.shape}, sigma shape: {self.ref_sigma.shape}"
         )
