@@ -310,11 +310,7 @@ def evaluate_samples(sampler, num_samples=10, branch_keep_pairs=None, num_classe
                 ),
             )
 
-        # Stack samples for visualization
-        samples_grid = torch.stack(samples)
-
-        # Store samples for later visualization
-        all_samples_dict[(num_branches, num_keep)] = samples_grid
+        all_samples_dict[(num_branches, num_keep)] = samples
 
         # Print statistics
         mean_score = scores.mean().item()
