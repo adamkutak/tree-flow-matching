@@ -325,18 +325,15 @@ def evaluate_samples(sampler, num_samples=10, branch_keep_pairs=None, num_classe
     visualize_samples(all_samples_dict, class_label, real_images)
 
 
-def calculate_metrics(
-    sampler, num_branches, num_keep, class_label, device, n_samples=500
-):
+def calculate_metrics(sampler, num_branches, num_keep, device, n_samples=500):
     """
-    Calculate FID and IS metrics for a specific branch/keep configuration with batch processing
-    to avoid memory issues.
+    Calculate FID and IS metrics for a specific branch/keep configuration across all classes.
     """
     # Initialize metrics
     fid = FID.FrechetInceptionDistance(normalize=True).to(device)
     inception_score = IS.InceptionScore(normalize=True).to(device)
 
-    # Get all real images for this class from CIFAR-10
+    # Get random real images from CIFAR-10
     transform = transforms.Compose(
         [transforms.ToTensor(), transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))]
     )
@@ -344,35 +341,51 @@ def calculate_metrics(
         root="./data", train=True, download=True, transform=transform
     )
 
-    # Filter real images for the specific class
-    class_indices = [i for i, (_, label) in enumerate(cifar10) if label == class_label]
-    real_images = torch.stack([cifar10[i][0] for i in class_indices]).to(device)
+    # Randomly sample real images
+    indices = np.random.choice(len(cifar10), n_samples, replace=False)
+    real_images = torch.stack([cifar10[i][0] for i in indices]).to(device)
 
+    # Process real images in batches
     real_batch_size = 100
     print("Processing real images...")
     for i in range(0, len(real_images), real_batch_size):
         batch = real_images[i : i + real_batch_size]
         fid.update(batch, real=True)
 
-    # Generate and process fake samples in batches
+    # Generate samples evenly across all classes
+    samples_per_class = n_samples // sampler.num_classes
     generation_batch_size = 64
     metric_batch_size = 64
-    num_batches = n_samples // generation_batch_size
     generated_samples = []
 
     print(
         f"\nGenerating {n_samples} samples for branches={num_branches}, keep={num_keep}"
     )
 
-    # Generate samples
-    for i in tqdm(range(num_batches), desc="Generating samples"):
-        sample = sampler.batch_sample(
-            class_label=class_label,
-            batch_size=generation_batch_size,
-            num_branches=num_branches,
-            num_keep=num_keep,
-        )
-        generated_samples.extend(sample.cpu())  # Move to CPU to save GPU memory
+    # Generate samples for each class
+    for class_label in range(sampler.num_classes):
+        num_batches = samples_per_class // generation_batch_size
+        remaining_samples = samples_per_class % generation_batch_size
+
+        # Generate full batches
+        for _ in tqdm(range(num_batches), desc=f"Generating class {class_label}"):
+            sample = sampler.batch_sample(
+                class_label=class_label,
+                batch_size=generation_batch_size,
+                num_branches=num_branches,
+                num_keep=num_keep,
+            )
+            generated_samples.extend(sample.cpu())
+
+        # Generate remaining samples if any
+        if remaining_samples > 0:
+            sample = sampler.batch_sample(
+                class_label=class_label,
+                batch_size=remaining_samples,
+                num_branches=num_branches,
+                num_keep=num_keep,
+            )
+            generated_samples.extend(sample.cpu())
 
     # Process generated samples in batches for metrics
     generated_tensor = torch.stack(generated_samples)
@@ -383,8 +396,8 @@ def calculate_metrics(
         batch = generated_tensor[i : i + metric_batch_size].to(device)
         fid.update(batch, real=False)
         inception_score.update(batch)
-        batch.cpu()  # Move back to CPU to free GPU memory
-        torch.cuda.empty_cache()  # Clear GPU cache
+        batch.cpu()
+        torch.cuda.empty_cache()
 
     # Compute final scores
     fid_score = fid.compute()
@@ -446,8 +459,8 @@ def main():
             train_loader,
             n_epochs=n_epochs_per_cycle,
             initial_flow_epochs=0,
-            value_epochs=0,
-            flow_epochs=0,
+            value_epochs=1,
+            flow_epochs=1,
             use_tqdm=True,
         )
 
@@ -457,35 +470,27 @@ def main():
         )
 
     results = {}
-    for class_label in range(num_classes):
-        print(f"\nEvaluating class {class_label}")
-        class_results = {}
+    for num_branches, num_keep in branch_keep_pairs:
+        fid_score, is_mean, is_std = calculate_metrics(
+            sampler, num_branches, num_keep, device
+        )
 
-        for num_branches, num_keep in branch_keep_pairs:
-            fid_score, is_mean, is_std = calculate_metrics(
-                sampler, num_branches, num_keep, class_label, device
-            )
+        print(f"\nConfiguration: branches={num_branches}, keep={num_keep}")
+        print(f"FID Score: {fid_score:.4f}")
+        print(f"Inception Score: {is_mean:.4f} ± {is_std:.4f}")
 
-            print(f"\nConfiguration: branches={num_branches}, keep={num_keep}")
-            print(f"FID Score: {fid_score:.4f}")
-            print(f"Inception Score: {is_mean:.4f} ± {is_std:.4f}")
-
-            class_results[(num_branches, num_keep)] = {
-                "fid": fid_score,
-                "is_mean": is_mean,
-                "is_std": is_std,
-            }
-
-        results[class_label] = class_results
+        results[(num_branches, num_keep)] = {
+            "fid": fid_score,
+            "is_mean": is_mean,
+            "is_std": is_std,
+        }
 
     # Print summary of results
     print("\nFinal Results Summary:")
-    for class_label, class_results in results.items():
-        print(f"\nClass {class_label}:")
-        for (branches, keep), metrics in class_results.items():
-            print(f"branches={branches}, keep={keep}:")
-            print(f"  FID: {metrics['fid']:.4f}")
-            print(f"  IS:  {metrics['is_mean']:.4f} ± {metrics['is_std']:.4f}")
+    for (branches, keep), metrics in results.items():
+        print(f"branches={branches}, keep={keep}:")
+        print(f"  FID: {metrics['fid']:.4f}")
+        print(f"  IS:  {metrics['is_mean']:.4f} ± {metrics['is_std']:.4f}")
 
 
 if __name__ == "__main__":
