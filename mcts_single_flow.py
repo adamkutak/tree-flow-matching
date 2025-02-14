@@ -586,31 +586,27 @@ class MCTSFlowSampler:
                     selected_samples, dim=0
                 )  # shape: [batch_size * num_keep, C, H, W]
 
-                if step < len(self.timesteps) - 2:
-                    # Expand each kept sample into expansion_factor new samples
-                    current_samples = current_samples.repeat_interleave(
-                        expansion_factor, dim=0
-                    )
-                    current_label = torch.full(
-                        (batch_size * num_branches,), class_label, device=self.device
-                    )
-                    batch_indices = torch.arange(
-                        batch_size, device=self.device
-                    ).repeat_interleave(num_branches)
-
-                    # Add noise to create branches
-                    noise_scale = sigma * (1 - float(t))
-                    perturbations = torch.randn_like(current_samples) * noise_scale
-                    current_samples = current_samples + perturbations
+                # Expand each kept sample into expansion_factor new samples
+                current_samples = current_samples.repeat_interleave(
+                    expansion_factor, dim=0
+                )
+                current_label = torch.full(
+                    (batch_size * num_branches,), class_label, device=self.device
+                )
+                batch_indices = torch.arange(
+                    batch_size, device=self.device
+                ).repeat_interleave(num_branches)
+                # Add noise to create branches
+                noise_scale = sigma * (1 - float(t))
+                perturbations = torch.randn_like(current_samples) * noise_scale
+                current_samples = current_samples + perturbations
 
             # Final selection - take best sample from each batch element's num_branches samples
             final_samples = []
             for batch_idx in range(batch_size):
                 batch_mask = batch_indices == batch_idx
                 batch_samples = current_samples[batch_mask]
-                batch_scores = value_scores[
-                    batch_mask
-                ]  # Use the last computed value scores
+                batch_scores = value_scores[batch_mask]
                 best_idx = torch.argmax(batch_scores)
                 final_samples.append(batch_samples[best_idx])
 
