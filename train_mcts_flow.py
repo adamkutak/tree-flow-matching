@@ -436,7 +436,7 @@ def main():
     # Training configuration
     n_epochs_per_cycle = 1
     n_training_cycles = 0
-    branch_keep_pairs = [(1, 1), (2, 1), (4, 2), (8, 4)]
+    branch_keep_pairs = [(2, 1), (4, 2), (8, 4)]
 
     # Training loop with periodic evaluation
     for cycle in range(n_training_cycles):
