@@ -329,18 +329,8 @@ def calculate_metrics(
     sampler, num_branches, num_keep, class_label, device, n_samples=5000
 ):
     """
-    Calculate FID and IS metrics for a specific branch/keep configuration
-
-    Args:
-        sampler: The trained MCTSFlowSampler model
-        num_branches: Number of branches for sampling
-        num_keep: Number of samples to keep at each branch
-        class_label: The class to generate samples for
-        device: torch device
-        n_samples: Number of samples to generate (default 5000)
-
-    Returns:
-        tuple: (fid_score, is_mean, is_std)
+    Calculate FID and IS metrics for a specific branch/keep configuration with batch processing
+    to avoid memory issues.
     """
     # Initialize metrics
     fid = FID.FrechetInceptionDistance(normalize=True).to(device)
@@ -358,33 +348,42 @@ def calculate_metrics(
     class_indices = [i for i, (_, label) in enumerate(cifar10) if label == class_label]
     real_images = torch.stack([cifar10[i][0] for i in class_indices]).to(device)
 
-    # Generate samples in batches to avoid memory issues
-    batch_size = 64
-    num_batches = n_samples // batch_size
+    fid.update(real_images, real=True)
+
+    # Generate and process fake samples in batches
+    generation_batch_size = 64
+    metric_batch_size = 100
+    num_batches = n_samples // generation_batch_size
     generated_samples = []
 
     print(
         f"\nGenerating {n_samples} samples for branches={num_branches}, keep={num_keep}"
     )
-    for i in tqdm(range(num_batches)):
+
+    # Generate samples
+    for i in tqdm(range(num_batches), desc="Generating samples"):
         sample = sampler.batch_sample(
             class_label=class_label,
-            batch_size=batch_size,
+            batch_size=generation_batch_size,
             num_branches=num_branches,
             num_keep=num_keep,
         )
-        generated_samples.extend(sample)
+        generated_samples.extend(sample.cpu())  # Move to CPU to save GPU memory
 
-    # Stack all generated samples
+    # Process generated samples in batches for metrics
     generated_tensor = torch.stack(generated_samples)
+    print("Processing generated samples...")
+    for i in tqdm(
+        range(0, len(generated_tensor), metric_batch_size), desc="Computing metrics"
+    ):
+        batch = generated_tensor[i : i + metric_batch_size].to(device)
+        fid.update(batch, real=False)
+        inception_score.update(batch)
+        batch.cpu()  # Move back to CPU to free GPU memory
+        torch.cuda.empty_cache()  # Clear GPU cache
 
-    # Calculate FID
-    fid.update(real_images, real=True)
-    fid.update(generated_tensor, real=False)
+    # Compute final scores
     fid_score = fid.compute()
-
-    # Calculate Inception Score
-    inception_score.update(generated_tensor)
     is_mean, is_std = inception_score.compute()
 
     return fid_score, is_mean, is_std

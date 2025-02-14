@@ -150,7 +150,7 @@ class MCTSFlowSampler:
         else:
             print("No pre-trained models found, starting from scratch")
 
-        buffer_size = 1000
+        buffer_size = 100
         # Initialize inception model for FID computation
         self.inception = InceptionV3([0], normalize_input=True).to(device)
         self.inception.eval()
