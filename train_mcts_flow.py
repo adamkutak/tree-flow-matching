@@ -365,23 +365,12 @@ def calculate_metrics(sampler, num_branches, num_keep, device, n_samples=500):
     # Generate samples for each class
     for class_label in range(sampler.num_classes):
         num_batches = samples_per_class // generation_batch_size
-        remaining_samples = samples_per_class % generation_batch_size
 
         # Generate full batches
-        for _ in tqdm(range(num_batches), desc=f"Generating class {class_label}"):
+        for _ in range(num_batches):
             sample = sampler.batch_sample(
                 class_label=class_label,
                 batch_size=generation_batch_size,
-                num_branches=num_branches,
-                num_keep=num_keep,
-            )
-            generated_samples.extend(sample.cpu())
-
-        # Generate remaining samples if any
-        if remaining_samples > 0:
-            sample = sampler.batch_sample(
-                class_label=class_label,
-                batch_size=remaining_samples,
                 num_branches=num_branches,
                 num_keep=num_keep,
             )
@@ -431,9 +420,9 @@ def main():
         root="./data", train=True, download=True, transform=transform
     )
     # Take only 1000 samples for faster training/testing
-    subset_indices = range(100)  # You can adjust this number
-    train_subset = torch.utils.data.Subset(train_dataset, subset_indices)
-    train_loader = DataLoader(train_subset, batch_size=128, shuffle=True)
+    # subset_indices = range(100)  # You can adjust this number
+    # train_subset = torch.utils.data.Subset(train_dataset, subset_indices)
+    train_loader = DataLoader(train_dataset, batch_size=128, shuffle=True)
     # Initialize reward network
 
     # Initialize sampler with CIFAR-10 dimensions
@@ -443,13 +432,13 @@ def main():
         device=device,
         num_timesteps=10,
         num_classes=num_classes,
-        buffer_size=10,
+        buffer_size=1000,
     )
 
     # Training configuration
     n_epochs_per_cycle = 1
-    n_training_cycles = 0
-    branch_keep_pairs = [(2, 1), (4, 2), (8, 4)]
+    n_training_cycles = 100
+    branch_keep_pairs = [(1, 1), (2, 1), (4, 2), (8, 4)]
 
     # Training loop with periodic evaluation
     for cycle in range(n_training_cycles):
@@ -459,8 +448,8 @@ def main():
             train_loader,
             n_epochs=n_epochs_per_cycle,
             initial_flow_epochs=0,
-            value_epochs=1,
-            flow_epochs=1,
+            value_epochs=0,
+            flow_epochs=0,
             use_tqdm=True,
         )
 
