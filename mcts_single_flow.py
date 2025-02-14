@@ -87,6 +87,7 @@ class MCTSFlowSampler:
         device="cuda:0",
         num_timesteps=10,
         num_classes=100,
+        buffer_size=1000,
     ):
         # Check if CUDA is available and set device
         if torch.cuda.is_available():
@@ -150,7 +151,6 @@ class MCTSFlowSampler:
         else:
             print("No pre-trained models found, starting from scratch")
 
-        buffer_size = 100
         # Initialize inception model for FID computation
         self.inception = InceptionV3([0], normalize_input=True).to(device)
         self.inception.eval()
