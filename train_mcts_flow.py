@@ -436,7 +436,7 @@ def main():
     )
 
     # Training configuration
-    n_epochs_per_cycle = 1
+    n_epochs_per_cycle = 0
     n_training_cycles = 100
     branch_keep_pairs = [(1, 1), (2, 1), (4, 2), (8, 4)]
 
