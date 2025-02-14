@@ -586,7 +586,6 @@ class MCTSFlowSampler:
                     selected_samples, dim=0
                 )  # shape: [batch_size * num_keep, C, H, W]
 
-                # Branch for next iteration (except last step)
                 if step < len(self.timesteps) - 2:
                     # Expand each kept sample into expansion_factor new samples
                     current_samples = current_samples.repeat_interleave(
@@ -604,17 +603,14 @@ class MCTSFlowSampler:
                     perturbations = torch.randn_like(current_samples) * noise_scale
                     current_samples = current_samples + perturbations
 
-            # Final selection - take best sample from each batch element's num_keep samples
+            # Final selection - take best sample from each batch element's num_branches samples
             final_samples = []
-            final_t = torch.full(
-                (len(current_samples),), self.timesteps[-1].item(), device=self.device
-            )
-            final_values = self.value_model(final_t, current_samples, current_label)
-
             for batch_idx in range(batch_size):
                 batch_mask = batch_indices == batch_idx
                 batch_samples = current_samples[batch_mask]
-                batch_scores = final_values[batch_mask]
+                batch_scores = value_scores[
+                    batch_mask
+                ]  # Use the last computed value scores
                 best_idx = torch.argmax(batch_scores)
                 final_samples.append(batch_samples[best_idx])
 

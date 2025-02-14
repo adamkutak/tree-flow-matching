@@ -356,7 +356,7 @@ def calculate_metrics(
 
     # Generate and process fake samples in batches
     generation_batch_size = 64
-    metric_batch_size = 100
+    metric_batch_size = 64
     num_batches = n_samples // generation_batch_size
     generated_samples = []
 
@@ -435,8 +435,7 @@ def main():
     # Training configuration
     n_epochs_per_cycle = 1
     n_training_cycles = 0
-    branch_keep_pairs = [(1, 1), (2, 1), (3, 2), (8, 3), (16, 7)]
-    # branch_keep_pairs = [(1, 1), (2, 1), (3, 2)]
+    branch_keep_pairs = [(1, 1), (2, 1), (4, 2), (8, 4)]
 
     # Training loop with periodic evaluation
     for cycle in range(n_training_cycles):
