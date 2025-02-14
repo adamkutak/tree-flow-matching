@@ -343,13 +343,16 @@ def calculate_metrics(
     cifar10 = datasets.CIFAR10(
         root="./data", train=True, download=True, transform=transform
     )
-    breakpoint()
 
     # Filter real images for the specific class
     class_indices = [i for i, (_, label) in enumerate(cifar10) if label == class_label]
     real_images = torch.stack([cifar10[i][0] for i in class_indices]).to(device)
 
-    fid.update(real_images, real=True)
+    real_batch_size = 100
+    print("Processing real images...")
+    for i in range(0, len(real_images), real_batch_size):
+        batch = real_images[i : i + real_batch_size]
+        fid.update(batch, real=True)
 
     # Generate and process fake samples in batches
     generation_batch_size = 64
