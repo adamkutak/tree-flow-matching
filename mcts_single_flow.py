@@ -291,56 +291,48 @@ class MCTSFlowSampler:
         )
         print(f"Loaded pre-trained classifier from {path}")
 
-    def generate_training_trajectory(self, y, num_branches=16):
-        """Generate a complete trajectory for training the value model."""
+    def generate_training_trajectory(self, y, noise_scale=0.1):
+        """Generate complete trajectories for training the value model using batch processing."""
         trajectories = []
         ts = []
+        batch_size = len(y)
 
         with torch.no_grad():
             # Initialize samples
             current_samples = torch.randn(
-                len(y) * num_branches,
+                batch_size,
                 self.channels,
                 self.image_size,
                 self.image_size,
                 device=self.device,
             )
-            current_labels = y.repeat_interleave(num_branches)
 
             trajectories.append(current_samples.clone())
             ts.append(0.0)
 
-            # Generate trajectory with branching
+            # Generate trajectory for all samples in batch
             for step, t in enumerate(self.timesteps[:-1]):
-                # Flow model step
                 dt = self.timesteps[step + 1] - t
+                t_batch = torch.full((batch_size,), t.item(), device=self.device)
 
-                # Create proper time tensor for the batch
-                t_batch = torch.full(
-                    (len(current_samples),), t.item(), device=self.device
-                )
-
-                # Euler step
-                velocity = self.flow_model(
-                    t_batch,  # Now passing properly shaped time tensor
-                    current_samples,
-                    current_labels,
-                )
+                # Flow model step
+                velocity = self.flow_model(t_batch, current_samples, y)
                 current_samples = current_samples + velocity * dt
+
+                # Add small noise at each step
+                if noise_scale > 0:
+                    noise = (
+                        torch.randn_like(current_samples) * noise_scale * (1 - float(t))
+                    )
+                    current_samples = current_samples + noise
 
                 trajectories.append(current_samples.clone())
                 ts.append(float(self.timesteps[step + 1]))
 
-                # Add noise for branching (except at last step)
-                if step < len(self.timesteps) - 2:
-                    noise_scale = 0.1 * (1 - float(t))  # Decrease noise over time
-                    perturbations = torch.randn_like(current_samples) * noise_scale
-                    current_samples = current_samples + perturbations
-
             # Compute final quality scores
-            final_scores = self.compute_sample_quality(current_samples, current_labels)
+            final_scores = self.compute_sample_quality(current_samples, y)
 
-        return trajectories, ts, current_labels, final_scores
+        return trajectories, ts, y, final_scores
 
     def train(
         self,
@@ -364,7 +356,6 @@ class MCTSFlowSampler:
             self.save_models()
             self.flow_scheduler.step()
 
-        self.trajectory_buffer = TrajectoryBuffer()
         # Main training loop
         for epoch in range(n_epochs):
             print(f"\nEpoch {epoch + 1}/{n_epochs}")
@@ -520,6 +511,114 @@ class MCTSFlowSampler:
             final_values = self.value_model(final_t, current_samples, current_label)
             best_idx = torch.argmax(final_values)
             return current_samples[best_idx]
+
+    def batch_sample(
+        self, class_label, batch_size=16, num_branches=4, num_keep=2, sigma=0.2
+    ):
+        """
+        Efficient batched sampling method that maintains constant number of samples per batch element.
+        Args:
+            class_label: Target class to generate
+            batch_size: Number of final samples to generate
+            num_branches: Number of branches per batch element (constant throughout)
+            num_keep: Number of samples to keep before expansion
+            sigma: Noise scale for branching
+        Returns:
+            Tensor of shape [batch_size, C, H, W]
+        """
+        assert (
+            num_branches % num_keep == 0
+        ), "num_branches must be divisible by num_keep"
+        expansion_factor = num_branches // num_keep
+
+        self.flow_model.eval()
+        self.value_model.eval()
+
+        with torch.no_grad():
+            # Initialize with num_branches samples per batch element
+            current_samples = torch.randn(
+                batch_size * num_branches,
+                self.channels,
+                self.image_size,
+                self.image_size,
+                device=self.device,
+            )
+            current_label = torch.full(
+                (batch_size * num_branches,), class_label, device=self.device
+            )
+
+            # Track which batch element each sample belongs to
+            batch_indices = torch.arange(
+                batch_size, device=self.device
+            ).repeat_interleave(num_branches)
+
+            # Generate samples with branching
+            for step, t in enumerate(self.timesteps[:-1]):
+                dt = self.timesteps[step + 1] - t
+                t_batch = torch.full(
+                    (len(current_samples),), t.item(), device=self.device
+                )
+
+                # Flow step - process all samples in one batch
+                velocity = self.flow_model(t_batch, current_samples, current_label)
+                generated = current_samples + velocity * dt
+
+                # Get value predictions for all samples
+                value_scores = self.value_model(t_batch, generated, current_label)
+
+                # Select top num_keep samples for each batch element
+                selected_samples = []
+
+                for batch_idx in range(batch_size):
+                    # Get samples for this batch element
+                    batch_mask = batch_indices == batch_idx
+                    batch_samples = generated[batch_mask]
+                    batch_scores = value_scores[batch_mask]
+
+                    # Select top num_keep samples
+                    top_k_values, top_k_indices = torch.topk(
+                        batch_scores, k=num_keep, dim=0
+                    )
+                    selected_samples.append(batch_samples[top_k_indices])
+
+                # Stack selected samples
+                current_samples = torch.cat(
+                    selected_samples, dim=0
+                )  # shape: [batch_size * num_keep, C, H, W]
+
+                # Branch for next iteration (except last step)
+                if step < len(self.timesteps) - 2:
+                    # Expand each kept sample into expansion_factor new samples
+                    current_samples = current_samples.repeat_interleave(
+                        expansion_factor, dim=0
+                    )
+                    current_label = torch.full(
+                        (batch_size * num_branches,), class_label, device=self.device
+                    )
+                    batch_indices = torch.arange(
+                        batch_size, device=self.device
+                    ).repeat_interleave(num_branches)
+
+                    # Add noise to create branches
+                    noise_scale = sigma * (1 - float(t))
+                    perturbations = torch.randn_like(current_samples) * noise_scale
+                    current_samples = current_samples + perturbations
+
+            # Final selection - take best sample from each batch element's num_keep samples
+            final_samples = []
+            final_t = torch.full(
+                (len(current_samples),), self.timesteps[-1].item(), device=self.device
+            )
+            final_values = self.value_model(final_t, current_samples, current_label)
+
+            for batch_idx in range(batch_size):
+                batch_mask = batch_indices == batch_idx
+                batch_samples = current_samples[batch_mask]
+                batch_scores = final_values[batch_mask]
+                best_idx = torch.argmax(batch_scores)
+                final_samples.append(batch_samples[best_idx])
+
+            return torch.stack(final_samples)  # shape: [batch_size, C, H, W]
 
     def mcts_sample(
         self,

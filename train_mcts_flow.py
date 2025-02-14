@@ -264,18 +264,14 @@ def visualize_samples(all_samples_dict, class_label, real_images, figsize=(15, 1
 
 
 def evaluate_samples(sampler, num_samples=10, branch_keep_pairs=None, num_classes=10):
-    """Evaluate sample quality for CIFAR-10 data using FID and IS metrics"""
+    """Evaluate sample quality for CIFAR-10 data using the model's quality score"""
     if branch_keep_pairs is None:
         branch_keep_pairs = [(3, 2), (8, 3), (16, 7)]
-
-    # Initialize FID and IS metrics
-    fid = FID.FrechetInceptionDistance(normalize=True).to(sampler.device)
-    inception_score = IS.InceptionScore(normalize=True).to(sampler.device)
 
     # Choose a single random class for evaluation
     class_label = np.random.randint(num_classes)
 
-    # Load real CIFAR-100 images for FID comparison and visualization
+    # Load real CIFAR-10 images for visualization
     transform = transforms.Compose(
         [transforms.ToTensor(), transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))]
     )
@@ -297,52 +293,101 @@ def evaluate_samples(sampler, num_samples=10, branch_keep_pairs=None, num_classe
 
     for num_branches, num_keep in branch_keep_pairs:
         print(f"\nTesting with branches={num_branches}, keep={num_keep}")
+        samples = sampler.batch_sample(
+            class_label=class_label,
+            batch_size=num_samples,
+            num_branches=num_branches,
+            num_keep=num_keep,
+        )
 
-        samples = []
-        scores = []
-
-        # Generate multiple samples for this class
-        for _ in range(num_samples):
-            sample = sampler.simple_sample(
-                class_label=class_label,
-                num_branches=num_branches,
-                num_keep=num_keep,
+        with torch.no_grad():
+            scores = sampler.compute_sample_quality(
+                samples,
+                torch.full(
+                    (num_samples,),
+                    class_label,
+                    device=sampler.device,
+                ),
             )
-            samples.append(sample)
 
-            with torch.no_grad():
-                score = sampler.compute_sample_quality(
-                    sample.unsqueeze(0),
-                    torch.tensor([class_label], device=sampler.device),
-                )
-            scores.append(score.item())
-
-        # Stack samples for evaluation
+        # Stack samples for visualization
         samples_grid = torch.stack(samples)
 
         # Store samples for later visualization
         all_samples_dict[(num_branches, num_keep)] = samples_grid
 
-        # Calculate FID
-        fid.update(real_images, real=True)
-        fid.update(samples_grid, real=False)
-        fid_score = fid.compute()
-        fid.reset()
-
-        # Calculate Inception Score
-        inception_score.update(samples_grid)
-        is_mean, is_std = inception_score.compute()
-        inception_score.reset()
-
         # Print statistics
-        mean_score = np.mean(scores)
-        std_score = np.std(scores)
+        mean_score = scores.mean().item()
+        std_score = scores.std().item()
         print(f"Quality score: {mean_score:.4f} ± {std_score:.4f}")
-        print(f"FID score: {fid_score:.4f}")
-        print(f"Inception Score: {is_mean:.4f} ± {is_std:.4f}")
 
     # Visualize all samples in a single plot, including real images
     visualize_samples(all_samples_dict, class_label, real_images)
+
+
+def calculate_metrics(
+    sampler, num_branches, num_keep, class_label, device, n_samples=5000
+):
+    """
+    Calculate FID and IS metrics for a specific branch/keep configuration
+
+    Args:
+        sampler: The trained MCTSFlowSampler model
+        num_branches: Number of branches for sampling
+        num_keep: Number of samples to keep at each branch
+        class_label: The class to generate samples for
+        device: torch device
+        n_samples: Number of samples to generate (default 5000)
+
+    Returns:
+        tuple: (fid_score, is_mean, is_std)
+    """
+    # Initialize metrics
+    fid = FID.FrechetInceptionDistance(normalize=True).to(device)
+    inception_score = IS.InceptionScore(normalize=True).to(device)
+
+    # Get all real images for this class from CIFAR-10
+    transform = transforms.Compose(
+        [transforms.ToTensor(), transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))]
+    )
+    cifar10 = datasets.CIFAR10(
+        root="./data", train=True, download=True, transform=transform
+    )
+
+    # Filter real images for the specific class
+    class_indices = [i for i, (_, label) in enumerate(cifar10) if label == class_label]
+    real_images = torch.stack([cifar10[i][0] for i in class_indices]).to(device)
+
+    # Generate samples in batches to avoid memory issues
+    batch_size = 64
+    num_batches = n_samples // batch_size
+    generated_samples = []
+
+    print(
+        f"\nGenerating {n_samples} samples for branches={num_branches}, keep={num_keep}"
+    )
+    for i in tqdm(range(num_batches)):
+        sample = sampler.batch_sample(
+            class_label=class_label,
+            batch_size=batch_size,
+            num_branches=num_branches,
+            num_keep=num_keep,
+        )
+        generated_samples.extend(sample)
+
+    # Stack all generated samples
+    generated_tensor = torch.stack(generated_samples)
+
+    # Calculate FID
+    fid.update(real_images, real=True)
+    fid.update(generated_tensor, real=False)
+    fid_score = fid.compute()
+
+    # Calculate Inception Score
+    inception_score.update(generated_tensor)
+    is_mean, is_std = inception_score.compute()
+
+    return fid_score, is_mean, is_std
 
 
 def main():
@@ -372,7 +417,7 @@ def main():
     # Take only 1000 samples for faster training/testing
     subset_indices = range(100)  # You can adjust this number
     train_subset = torch.utils.data.Subset(train_dataset, subset_indices)
-    train_loader = DataLoader(train_dataset, batch_size=128, shuffle=True)
+    train_loader = DataLoader(train_subset, batch_size=128, shuffle=True)
     # Initialize reward network
 
     # Initialize sampler with CIFAR-10 dimensions
@@ -386,7 +431,7 @@ def main():
 
     # Training configuration
     n_epochs_per_cycle = 1
-    n_training_cycles = 100
+    n_training_cycles = 0
     branch_keep_pairs = [(1, 1), (2, 1), (3, 2), (8, 3), (16, 7)]
     # branch_keep_pairs = [(1, 1), (2, 1), (3, 2)]
 
@@ -398,8 +443,8 @@ def main():
             train_loader,
             n_epochs=n_epochs_per_cycle,
             initial_flow_epochs=0,
-            value_epochs=100,
-            flow_epochs=10,
+            value_epochs=0,
+            flow_epochs=0,
             use_tqdm=True,
         )
 
@@ -407,6 +452,37 @@ def main():
         evaluate_samples(
             sampler, branch_keep_pairs=branch_keep_pairs, num_classes=num_classes
         )
+
+    results = {}
+    for class_label in range(num_classes):
+        print(f"\nEvaluating class {class_label}")
+        class_results = {}
+
+        for num_branches, num_keep in branch_keep_pairs:
+            fid_score, is_mean, is_std = calculate_metrics(
+                sampler, num_branches, num_keep, class_label, device
+            )
+
+            print(f"\nConfiguration: branches={num_branches}, keep={num_keep}")
+            print(f"FID Score: {fid_score:.4f}")
+            print(f"Inception Score: {is_mean:.4f} ± {is_std:.4f}")
+
+            class_results[(num_branches, num_keep)] = {
+                "fid": fid_score,
+                "is_mean": is_mean,
+                "is_std": is_std,
+            }
+
+        results[class_label] = class_results
+
+    # Print summary of results
+    print("\nFinal Results Summary:")
+    for class_label, class_results in results.items():
+        print(f"\nClass {class_label}:")
+        for (branches, keep), metrics in class_results.items():
+            print(f"branches={branches}, keep={keep}:")
+            print(f"  FID: {metrics['fid']:.4f}")
+            print(f"  IS:  {metrics['is_mean']:.4f} ± {metrics['is_std']:.4f}")
 
 
 if __name__ == "__main__":
