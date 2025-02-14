@@ -321,7 +321,7 @@ def evaluate_samples(sampler, num_samples=10, branch_keep_pairs=None, num_classe
     visualize_samples(all_samples_dict, class_label, real_images)
 
 
-def calculate_metrics(sampler, num_branches, num_keep, device, n_samples=500):
+def calculate_metrics(sampler, num_branches, num_keep, device, n_samples=5000):
     """
     Calculate FID and IS metrics for a specific branch/keep configuration across all classes.
     """
@@ -428,11 +428,11 @@ def main():
         device=device,
         num_timesteps=10,
         num_classes=num_classes,
-        buffer_size=10,
+        buffer_size=1000,
     )
 
     # Training configuration
-    n_epochs_per_cycle = 0
+    n_epochs_per_cycle = 1
     n_training_cycles = 100
     branch_keep_pairs = [(1, 1), (2, 1), (4, 2), (8, 4)]
 
@@ -443,9 +443,9 @@ def main():
         sampler.train(
             train_loader,
             n_epochs=n_epochs_per_cycle,
-            initial_flow_epochs=0,
-            value_epochs=0,
-            flow_epochs=0,
+            initial_flow_epochs=10,
+            value_epochs=10,
+            flow_epochs=10,
             use_tqdm=True,
         )
 

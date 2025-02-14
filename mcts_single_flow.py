@@ -257,7 +257,7 @@ class MCTSFlowSampler:
             class_fid["features"].popleft()
         class_fid["features"].append(features[0])
 
-        return -(new_fid - baseline_fid)  # Negative change as reward
+        return -(new_fid - baseline_fid) * 100  # Negative change as reward
 
     def calculate_frechet_distance(self, mu1, sigma1, mu2, sigma2):
         """Calculate the Frechet distance between two distributions."""
