@@ -343,6 +343,7 @@ def calculate_metrics(
     cifar10 = datasets.CIFAR10(
         root="./data", train=True, download=True, transform=transform
     )
+    breakpoint()
 
     # Filter real images for the specific class
     class_indices = [i for i, (_, label) in enumerate(cifar10) if label == class_label]
