@@ -438,7 +438,7 @@ def main():
         sampler.train(
             train_loader,
             n_epochs=n_epochs_per_cycle,
-            initial_flow_epochs=10,
+            initial_flow_epochs=0,
             value_epochs=10,
             flow_epochs=10,
             use_tqdm=True,
