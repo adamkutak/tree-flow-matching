@@ -399,27 +399,22 @@ def main():
     torch.manual_seed(42)
     np.random.seed(42)
 
-    # CIFAR-100 dimensions and setup
+    # CIFAR-10 dimensions and setup
     image_size = 32
     channels = 3
     num_classes = 10
 
-    # Setup CIFAR-100 dataset with appropriate transforms
+    # Setup CIFAR-10 dataset with appropriate transforms
     transform = transforms.Compose(
         [
             transforms.ToTensor(),
             transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
         ]
     )
-
     train_dataset = datasets.CIFAR10(
         root="./data", train=True, download=True, transform=transform
     )
-    # Take only 1000 samples for faster training/testing
-    # subset_indices = range(100)  # You can adjust this number
-    # train_subset = torch.utils.data.Subset(train_dataset, subset_indices)
     train_loader = DataLoader(train_dataset, batch_size=128, shuffle=True)
-    # Initialize reward network
 
     # Initialize sampler with CIFAR-10 dimensions
     sampler = MCTSFlowSampler(
@@ -436,7 +431,7 @@ def main():
     n_training_cycles = 100
     branch_keep_pairs = [(1, 1), (2, 1), (4, 2), (8, 4)]
 
-    # Training loop with periodic evaluation
+    # Training loop with periodic evaluation using calculate_metrics
     for cycle in range(n_training_cycles):
         print(f"\nTraining Cycle {cycle + 1}/{n_training_cycles}")
 
@@ -449,33 +444,14 @@ def main():
             use_tqdm=True,
         )
 
-        # Evaluate
-        evaluate_samples(
-            sampler, branch_keep_pairs=branch_keep_pairs, num_classes=num_classes
-        )
-
-    results = {}
-    for num_branches, num_keep in branch_keep_pairs:
-        fid_score, is_mean, is_std = calculate_metrics(
-            sampler, num_branches, num_keep, device
-        )
-
-        print(f"\nConfiguration: branches={num_branches}, keep={num_keep}")
-        print(f"FID Score: {fid_score:.4f}")
-        print(f"Inception Score: {is_mean:.4f} ± {is_std:.4f}")
-
-        results[(num_branches, num_keep)] = {
-            "fid": fid_score,
-            "is_mean": is_mean,
-            "is_std": is_std,
-        }
-
-    # Print summary of results
-    print("\nFinal Results Summary:")
-    for (branches, keep), metrics in results.items():
-        print(f"branches={branches}, keep={keep}:")
-        print(f"  FID: {metrics['fid']:.4f}")
-        print(f"  IS:  {metrics['is_mean']:.4f} ± {metrics['is_std']:.4f}")
+        # Evaluate metrics across classes after each training cycle
+        for num_branches, num_keep in branch_keep_pairs:
+            fid_score, is_mean, is_std = calculate_metrics(
+                sampler, num_branches, num_keep, device
+            )
+            print(f"Cycle {cycle + 1} - (branches={num_branches}, keep={num_keep}):")
+            print(f"   FID Score: {fid_score:.4f}")
+            print(f"   Inception Score: {is_mean:.4f} ± {is_std:.4f}")
 
 
 if __name__ == "__main__":
