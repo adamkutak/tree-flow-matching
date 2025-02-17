@@ -206,6 +206,15 @@ class MCTSFlowSampler:
                     f"Class {class_idx} initialized with {len(self.fids[class_idx]['features'])} samples"
                 )
 
+        for class_idx in range(self.num_classes):
+            feats = np.array(list(self.fids[class_idx]["features"]))
+            mu = np.mean(feats, axis=0)
+            sigma = np.cov(feats, rowvar=False)
+            baseline_fid = self.calculate_frechet_distance(
+                mu, sigma, self.fids[class_idx]["mu"], self.fids[class_idx]["sigma"]
+            )
+            self.fids[class_idx]["baseline_fid"] = baseline_fid
+
     def extract_inception_features(self, images):
         """Extract inception features using pytorch-fid."""
         # Resize images to inception input size
@@ -224,40 +233,38 @@ class MCTSFlowSampler:
             return features.cpu().numpy()
 
     def compute_fid_change(self, image, class_idx):
-        """Compute how much an image changes the current FID score for its class."""
-        features = self.extract_inception_features(image)
+        """
+        Compute how much an image would change the constant FID score for its class.
+
+        This is computed by:
+        1. Extracting the inception features of the new image.
+        2. Forming a candidate set by replacing the last element of the constant buffer
+            (for that class) with the new feature.
+        3. Computing the FID for the candidate set and comparing it to the baseline FID
+            (precomputed after buffer initialization).
+
+        Returns:
+            The negative change in FID times 100 as the reward.
+        """
+        # Extract features from the new image (assumes image is 4D, e.g. [1, C, H, W])
+        features = self.extract_inception_features(image)  # shape: (1, feat_dim)
         class_fid = self.fids[class_idx]
 
-        # Compute baseline FID with current buffer
-        if len(class_fid["features"]) > 0:
-            current_features = np.array(list(class_fid["features"]))
-            mu1 = np.mean(current_features, axis=0)
-            sigma1 = np.cov(current_features, rowvar=False)
-            baseline_fid = self.calculate_frechet_distance(
-                mu1, sigma1, class_fid["mu"], class_fid["sigma"]
-            )
-        else:
-            baseline_fid = float("inf")
-
-        # Compute new FID with added feature
+        # Create a candidate set from the constant buffer (do not modify the actual buffer)
         new_features = list(class_fid["features"])
-        if len(new_features) >= class_fid["features"].maxlen:
-            new_features = new_features[1:]
-        new_features.append(features[0])
+        # Replace the last feature with the new image's feature
+        new_features[-1] = features[0]
         new_features = np.array(new_features)
 
-        mu2 = np.mean(new_features, axis=0)
-        sigma2 = np.cov(new_features, rowvar=False)
+        mu_new = np.mean(new_features, axis=0)
+        sigma_new = np.cov(new_features, rowvar=False)
         new_fid = self.calculate_frechet_distance(
-            mu2, sigma2, class_fid["mu"], class_fid["sigma"]
+            mu_new, sigma_new, class_fid["mu"], class_fid["sigma"]
         )
 
-        # Update buffer
-        if len(class_fid["features"]) >= class_fid["features"].maxlen:
-            class_fid["features"].popleft()
-        class_fid["features"].append(features[0])
-
-        return -(new_fid - baseline_fid) * 100  # Negative change as reward
+        baseline_fid = class_fid["baseline_fid"]
+        # The reward is the negative change in FID multiplied by a factor (here, 100)
+        return -(new_fid - baseline_fid) * 100
 
     def calculate_frechet_distance(self, mu1, sigma1, mu2, sigma2):
         """Calculate the Frechet distance between two distributions."""
