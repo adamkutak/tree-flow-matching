@@ -36,7 +36,6 @@ class TrajectoryBuffer:
         labels: tensor of target labels
         scores: final scores for each branch
         """
-        breakpoint()
         for branch_idx in range(len(scores)):
             branch_states = [step_states[branch_idx] for step_states in states]
             for step, (state, t) in enumerate(zip(branch_states, ts)):
@@ -429,7 +428,7 @@ class MCTSFlowSampler:
                             noise_scale=0.0,
                         )
                     )
-                    breakpoint()
+                    print(f"batch_idx: {batch_idx}")
                     self.trajectory_buffer.add_trajectory(
                         trajectories, ts, labels, scores
                     )
