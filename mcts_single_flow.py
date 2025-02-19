@@ -24,7 +24,7 @@ from pytorch_fid.inception import InceptionV3
 
 
 class TrajectoryBuffer:
-    def __init__(self, max_size=10000):
+    def __init__(self, max_size=500_000):
         self.max_size = max_size
         self.trajectories = []  # List of (state, t, label, final_score) tuples
 
@@ -134,7 +134,7 @@ class MCTSFlowSampler:
         self.flow_optimizer = torch.optim.Adam(self.flow_model.parameters(), lr=lr)
         self.value_optimizer = torch.optim.Adam(self.value_model.parameters(), lr=lr)
 
-        # Simple step scheduler: reduces learning rate by 0.1 every 100 epochs
+        # Simple step scheduler: reduces learning rate by 0.1 every 50 epochs
         self.flow_scheduler = torch.optim.lr_scheduler.StepLR(
             self.flow_optimizer, step_size=50, gamma=0.5
         )
@@ -370,10 +370,10 @@ class MCTSFlowSampler:
         self,
         train_loader,
         n_epochs=3,
-        initial_flow_epochs=3,
-        value_epochs=20,
-        flow_epochs=100,
-        use_tqdm=False,
+        initial_flow_epochs=10,
+        value_epochs=10,
+        flow_epochs=10,
+        use_tqdm=True,
     ):
         """Train both flow and value models."""
         # Initial flow model training
@@ -392,9 +392,10 @@ class MCTSFlowSampler:
         for epoch in range(n_epochs):
             print(f"\nEpoch {epoch + 1}/{n_epochs}")
 
-            # Train flow model for one epoch
+            # Train flow model for flow_epochs epochs
             for flow_epoch in range(flow_epochs):
                 flow_loss = self.train_flow_matching(train_loader, use_tqdm=use_tqdm)
+                self.flow_scheduler.step()
 
             # Generate trajectories
             print("Generating trajectories for value training...")
@@ -405,24 +406,40 @@ class MCTSFlowSampler:
                 else train_loader
             )
             with torch.no_grad():
+                # Calculate how many times we want to call generate_training_trajectory.
+                # Note: len(y) is assumed to be the batch size.
+                first_batch = next(iter(iterator))[1]  # get labels from first batch
+                batch_size = len(first_batch)
+                max_calls = int(10000 // batch_size)
+                call_count = 0
+
+                # Reinitialize the iterator since we already consumed one batch for batch_size.
+                iterator = iter(iterator)
+
                 for batch_idx, (_, y) in enumerate(iterator):
+                    if call_count >= max_calls:
+                        break
+
                     y = y.to(self.device)
                     trajectories, ts, labels, scores = (
-                        self.generate_training_trajectory(y, upscale_factor=10)
+                        self.generate_training_trajectory(
+                            y,
+                            upscale_factor=1.0,
+                            noise_scale=0.0,
+                        )
                     )
                     self.trajectory_buffer.add_trajectory(
                         trajectories, ts, labels, scores
                     )
+                    call_count += 1
 
             # Train value model for multiple epochs
             print(f"Training value model for {value_epochs} epochs...")
-            for value_epoch in range(value_epochs):
-                self.train_value_model(
-                    n_epochs=1,
-                    batch_size=128,
-                    desc=f"Value epoch {value_epoch + 1}/{value_epochs}",
-                    use_tqdm=use_tqdm,
-                )
+            self.train_value_model(
+                n_epochs=value_epochs,
+                batch_size=128,
+                use_tqdm=use_tqdm,
+            )
 
             # Save after each main epoch
             self.save_models()
@@ -452,16 +469,16 @@ class MCTSFlowSampler:
         print(f"{desc} - Flow Loss: {final_loss:.4f}")
         return final_loss
 
-    def train_value_model(
-        self, n_epochs=1, batch_size=64, desc="Training value", use_tqdm=True
-    ):
+    def train_value_model(self, n_epochs=1, batch_size=64, use_tqdm=True):
         """Train value model on collected trajectories."""
         self.value_model.train()
 
         for epoch in range(n_epochs):
             n_batches = len(self.trajectory_buffer.trajectories) // batch_size
             iterator = (
-                tqdm(range(n_batches), desc=f"{desc} (Epoch {epoch+1}/{n_epochs})")
+                tqdm(
+                    range(n_batches), desc=f"Value training(Epoch {epoch+1}/{n_epochs})"
+                )
                 if use_tqdm
                 else range(n_batches)
             )
@@ -492,7 +509,7 @@ class MCTSFlowSampler:
             print(f"Average value loss: {avg_loss:.4f}")
 
     # TODO: remove this method. Batch sampling replaces it
-    def simple_sample(self, class_label, num_branches=5, num_keep=5, sigma=0.2):
+    def simple_sample(self, class_label, num_branches=5, num_keep=5, sigma=0.1):
         """Original simple sampling method"""
         self.flow_model.eval()
         self.value_model.eval()
