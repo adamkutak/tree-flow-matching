@@ -298,14 +298,18 @@ class MCTSFlowSampler:
         )
         print(f"Loaded pre-trained classifier from {path}")
 
-    def generate_training_trajectory(self, y, noise_scale=0.1):
-        """Generate complete trajectories for training the value model using batch processing."""
+    def generate_training_trajectory(self, y, noise_scale=0.1, upscale_factor=1.0):
+        """Generate complete trajectories for training the value model using batch processing.
+
+        An optional upscale_factor allows inserting additional timepoints by linearly interpolating
+        between the computed trajectory points. For example, if upscale_factor is set to 5 and the
+        original trajectory has 10 timepoints, the resulting trajectory will have approximately 50 timepoints.
+        """
         trajectories = []
         ts = []
         batch_size = len(y)
 
         with torch.no_grad():
-            # Initialize samples
             current_samples = torch.randn(
                 batch_size,
                 self.channels,
@@ -336,8 +340,29 @@ class MCTSFlowSampler:
                 trajectories.append(current_samples.clone())
                 ts.append(float(self.timesteps[step + 1]))
 
-            # Compute final quality scores
+            # Compute final quality scores based on the final samples
             final_scores = self.compute_sample_quality(current_samples, y)
+
+        # upscaling
+        if upscale_factor > 1.0:
+            T_orig = len(ts)
+            T_new = int(T_orig * upscale_factor)
+            new_ts = np.linspace(ts[0], ts[-1], T_new).tolist()
+            new_trajectories = []
+            for t_new in new_ts:
+                if t_new >= ts[-1]:
+                    new_trajectories.append(trajectories[-1])
+                else:
+                    for i in range(T_orig - 1):
+                        if ts[i] <= t_new < ts[i + 1]:
+                            alpha = (t_new - ts[i]) / (ts[i + 1] - ts[i])
+                            new_img = torch.lerp(
+                                trajectories[i], trajectories[i + 1], alpha
+                            )
+                            new_trajectories.append(new_img)
+                            break
+            trajectories = new_trajectories
+            ts = new_ts
 
         return trajectories, ts, y, final_scores
 
@@ -383,7 +408,7 @@ class MCTSFlowSampler:
                 for batch_idx, (_, y) in enumerate(iterator):
                     y = y.to(self.device)
                     trajectories, ts, labels, scores = (
-                        self.generate_training_trajectory(y)
+                        self.generate_training_trajectory(y, upscale_factor=10)
                     )
                     self.trajectory_buffer.add_trajectory(
                         trajectories, ts, labels, scores
@@ -466,6 +491,7 @@ class MCTSFlowSampler:
             avg_loss = total_loss / n_batches if n_batches > 0 else 0
             print(f"Average value loss: {avg_loss:.4f}")
 
+    # TODO: remove this method. Batch sampling replaces it
     def simple_sample(self, class_label, num_branches=5, num_keep=5, sigma=0.2):
         """Original simple sampling method"""
         self.flow_model.eval()
@@ -520,7 +546,7 @@ class MCTSFlowSampler:
             return current_samples[best_idx]
 
     def batch_sample(
-        self, class_label, batch_size=16, num_branches=4, num_keep=2, sigma=0.2
+        self, class_label, batch_size=16, num_branches=4, num_keep=2, sigma=0.1
     ):
         """
         Efficient batched sampling method that maintains constant number of samples per batch element.

@@ -358,6 +358,11 @@ def calculate_metrics(sampler, num_branches, num_keep, device, n_samples=5000):
         f"\nGenerating {n_samples} samples for branches={num_branches}, keep={num_keep}"
     )
 
+    # for 1x1, we don't need noise (this is just normal flow matching integration)
+    sigma = 0.1
+    if num_branches == 1 and num_keep == 1:
+        sigma = 0
+
     # Generate samples for each class
     for class_label in range(sampler.num_classes):
         num_batches = samples_per_class // generation_batch_size
@@ -369,6 +374,7 @@ def calculate_metrics(sampler, num_branches, num_keep, device, n_samples=5000):
                 batch_size=generation_batch_size,
                 num_branches=num_branches,
                 num_keep=num_keep,
+                sigma=sigma,
             )
             generated_samples.extend(sample.cpu())
 
@@ -421,7 +427,7 @@ def main():
         image_size=image_size,
         channels=channels,
         device=device,
-        num_timesteps=10,
+        num_timesteps=50,
         num_classes=num_classes,
         buffer_size=1000,
     )
