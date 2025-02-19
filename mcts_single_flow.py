@@ -36,6 +36,7 @@ class TrajectoryBuffer:
         labels: tensor of target labels
         scores: final scores for each branch
         """
+        breakpoint()
         for branch_idx in range(len(scores)):
             branch_states = [step_states[branch_idx] for step_states in states]
             for step, (state, t) in enumerate(zip(branch_states, ts)):
@@ -298,7 +299,7 @@ class MCTSFlowSampler:
         )
         print(f"Loaded pre-trained classifier from {path}")
 
-    def generate_training_trajectory(self, y, noise_scale=0.1, upscale_factor=1.0):
+    def generate_training_trajectory(self, y, noise_scale=0.1, upscale_factor=1):
         """Generate complete trajectories for training the value model using batch processing.
 
         An optional upscale_factor allows inserting additional timepoints by linearly interpolating
@@ -424,10 +425,11 @@ class MCTSFlowSampler:
                     trajectories, ts, labels, scores = (
                         self.generate_training_trajectory(
                             y,
-                            upscale_factor=1.0,
+                            upscale_factor=1,
                             noise_scale=0.0,
                         )
                     )
+                    breakpoint()
                     self.trajectory_buffer.add_trajectory(
                         trajectories, ts, labels, scores
                     )

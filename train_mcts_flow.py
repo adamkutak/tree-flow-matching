@@ -398,7 +398,7 @@ def calculate_metrics(sampler, num_branches, num_keep, device, n_samples=5000):
 
 
 def main():
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    device = torch.device("cuda:1" if torch.cuda.is_available() else "cpu")
     print(f"Using device: {device}")
 
     # Set random seeds for reproducibility
@@ -429,7 +429,7 @@ def main():
         device=device,
         num_timesteps=50,
         num_classes=num_classes,
-        buffer_size=1000,
+        buffer_size=100,
     )
 
     # Training configuration
@@ -446,7 +446,7 @@ def main():
             n_epochs=n_epochs_per_cycle,
             initial_flow_epochs=0,
             value_epochs=10,
-            flow_epochs=10,
+            flow_epochs=0,
             use_tqdm=True,
         )
 
