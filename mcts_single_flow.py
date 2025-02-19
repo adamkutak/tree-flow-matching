@@ -400,22 +400,21 @@ class MCTSFlowSampler:
             # Generate trajectories
             print("Generating trajectories for value training...")
             self.flow_model.eval()  # Set to eval mode for trajectory generation
+
+            # Get the batch size from first batch without wrapping in tqdm yet
+            first_batch = next(iter(train_loader))[1]
+            batch_size = len(first_batch)
+            max_calls = int(10000 // batch_size)
+            call_count = 0
+
+            # Now create the iterator with tqdm
             iterator = (
                 tqdm(train_loader, desc="Generating trajectories")
                 if use_tqdm
                 else train_loader
             )
+
             with torch.no_grad():
-                # Calculate how many times we want to call generate_training_trajectory.
-                # Note: len(y) is assumed to be the batch size.
-                first_batch = next(iter(iterator))[1]  # get labels from first batch
-                batch_size = len(first_batch)
-                max_calls = int(10000 // batch_size)
-                call_count = 0
-
-                # Reinitialize the iterator since we already consumed one batch for batch_size.
-                iterator = iter(iterator)
-
                 for batch_idx, (_, y) in enumerate(iterator):
                     if call_count >= max_calls:
                         break
@@ -424,11 +423,10 @@ class MCTSFlowSampler:
                     trajectories, ts, labels, scores = (
                         self.generate_training_trajectory(
                             y,
-                            upscale_factor=1,
+                            upscale_factor=1.0,
                             noise_scale=0.0,
                         )
                     )
-                    print(f"batch_idx: {batch_idx}")
                     self.trajectory_buffer.add_trajectory(
                         trajectories, ts, labels, scores
                     )
