@@ -721,8 +721,11 @@ class MCTSFlowSampler:
                     size=(len(current_samples),),
                     device=self.device,
                 )
-                # Clamp dts to ensure we don't overshoot t=1
-                dts = torch.clamp(dts, min=0.0, max=1.0 - current_times)
+                dts = torch.clamp(
+                    dts,
+                    min=torch.tensor(0.0, device=self.device),
+                    max=1.0 - current_times,
+                )
 
                 # Apply different step sizes to create branches
                 generated = current_samples + velocity * dts.view(-1, 1, 1, 1)
