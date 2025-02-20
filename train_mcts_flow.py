@@ -382,10 +382,7 @@ def calculate_metrics(
 
     # Process generated samples in batches for metrics
     generated_tensor = torch.stack(generated_samples)
-    print("Processing generated samples...")
-    for i in tqdm(
-        range(0, len(generated_tensor), metric_batch_size), desc="Computing metrics"
-    ):
+    for i in range(0, len(generated_tensor), metric_batch_size):
         batch = generated_tensor[i : i + metric_batch_size].to(device)
         fid.update(batch, real=False)
         inception_score.update(batch)
@@ -438,7 +435,7 @@ def main():
     # Training configuration
     n_epochs_per_cycle = 1
     n_training_cycles = 100
-    branch_keep_pairs = [(1, 1), (2, 1), (4, 2), (8, 4), (16, 8)]
+    branch_keep_pairs = [(1, 1), (2, 1), (4, 2), (8, 4)]
 
     for cycle in range(n_training_cycles):
         print(f"\nTraining Cycle {cycle + 1}/{n_training_cycles}")
@@ -455,7 +452,7 @@ def main():
         # Evaluate metrics across classes after each training cycle
         for num_branches, num_keep in branch_keep_pairs:
             fid_score, is_mean, is_std = calculate_metrics(
-                sampler, num_branches, num_keep, device, sigma=0.05
+                sampler, num_branches, num_keep, device, sigma=0.0
             )
             print(f"Cycle {cycle + 1} - (branches={num_branches}, keep={num_keep}):")
             print(f"   FID Score: {fid_score:.4f}")
