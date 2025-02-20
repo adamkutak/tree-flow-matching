@@ -676,6 +676,9 @@ class MCTSFlowSampler:
         Returns:
             Tensor of shape [batch_size, C, H, W]
         """
+        if num_branches == 1 and num_keep == 1:
+            return self.regular_batch_sample(class_label, batch_size)
+
         assert (
             num_branches % num_keep == 0
         ), "num_branches must be divisible by num_keep"
@@ -786,6 +789,34 @@ class MCTSFlowSampler:
                 final_samples.append(batch_samples[best_idx])
 
             return torch.stack(final_samples)  # shape: [batch_size, C, H, W]
+
+    def regular_batch_sample(self, class_label, batch_size=16):
+        """
+        Regular flow matching sampling without branching.
+        """
+        with torch.no_grad():
+            current_samples = torch.randn(
+                batch_size,
+                self.channels,
+                self.image_size,
+                self.image_size,
+                device=self.device,
+            )
+            current_times = torch.zeros(batch_size, device=self.device)
+            current_label = torch.full((batch_size,), class_label, device=self.device)
+
+            while not torch.all(current_times >= 1.0):
+                velocity = self.flow_model(
+                    current_times, current_samples, current_label
+                )
+                base_dt = torch.clamp(
+                    torch.tensor(1.0, device=self.device) - current_times,
+                    min=torch.tensor(0.0, device=self.device),
+                )
+                current_samples = current_samples + velocity * base_dt.view(-1, 1, 1, 1)
+                current_times = current_times + base_dt
+
+            return current_samples
 
     def mcts_sample(
         self,
