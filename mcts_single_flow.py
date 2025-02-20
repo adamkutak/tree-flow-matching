@@ -661,6 +661,129 @@ class MCTSFlowSampler:
 
             return torch.stack(final_samples)  # shape: [batch_size, C, H, W]
 
+    def batch_sample_wdt(
+        self, class_label, batch_size=16, num_branches=4, num_keep=2, dt_std=0.1
+    ):
+        """
+        Efficient batched sampling method that maintains constant number of samples per batch element.
+        Creates branches by varying dt instead of adding noise.
+        Args:
+            class_label: Target class to generate
+            batch_size: Number of final samples to generate
+            num_branches: Number of branches per batch element (constant throughout)
+            num_keep: Number of samples to keep before expansion
+            dt_std: Standard deviation for sampling different dt values
+        Returns:
+            Tensor of shape [batch_size, C, H, W]
+        """
+        assert (
+            num_branches % num_keep == 0
+        ), "num_branches must be divisible by num_keep"
+        expansion_factor = num_branches // num_keep
+
+        self.flow_model.eval()
+        self.value_model.eval()
+
+        with torch.no_grad():
+            # Initialize with num_branches samples per batch element
+            current_samples = torch.randn(
+                batch_size * num_branches,
+                self.channels,
+                self.image_size,
+                self.image_size,
+                device=self.device,
+            )
+            current_label = torch.full(
+                (batch_size * num_branches,), class_label, device=self.device
+            )
+
+            # Track current time for each sample
+            current_times = torch.zeros(batch_size * num_branches, device=self.device)
+
+            # Track which batch element each sample belongs to
+            batch_indices = torch.arange(
+                batch_size, device=self.device
+            ).repeat_interleave(num_branches)
+
+            # Generate samples with branching
+            for step, t in enumerate(self.timesteps[:-1]):
+                base_dt = self.timesteps[step + 1] - t
+
+                # Flow step - process all samples in one batch
+                velocity = self.flow_model(
+                    current_times, current_samples, current_label
+                )
+
+                # Sample different dt values for each sample
+                dts = torch.normal(
+                    mean=base_dt,
+                    std=dt_std * base_dt,
+                    size=(len(current_samples),),
+                    device=self.device,
+                )
+                # Clamp dts to ensure we don't overshoot t=1
+                dts = torch.clamp(dts, min=0.0, max=1.0 - current_times)
+
+                # Apply different step sizes to create branches
+                generated = current_samples + velocity * dts.view(-1, 1, 1, 1)
+                new_times = current_times + dts
+
+                # Get value predictions for all samples at once
+                value_scores = self.value_model(new_times, generated, current_label)
+
+                # Select top num_keep samples for each batch element
+                selected_samples = []
+                selected_times = []
+
+                for batch_idx in range(batch_size):
+                    # Get samples for this batch element
+                    batch_mask = batch_indices == batch_idx
+                    batch_samples = generated[batch_mask]
+                    batch_scores = value_scores[batch_mask]
+                    batch_times = new_times[batch_mask]
+
+                    # Select top num_keep samples
+                    top_k_values, top_k_indices = torch.topk(
+                        batch_scores, k=num_keep, dim=0
+                    )
+                    selected_samples.append(batch_samples[top_k_indices])
+                    selected_times.append(batch_times[top_k_indices])
+
+                # Stack selected samples and times
+                current_samples = torch.cat(
+                    selected_samples, dim=0
+                )  # shape: [batch_size * num_keep, C, H, W]
+                current_times = torch.cat(
+                    selected_times, dim=0
+                )  # shape: [batch_size * num_keep]
+
+                # Expand each kept sample into expansion_factor new samples
+                current_samples = current_samples.repeat_interleave(
+                    expansion_factor, dim=0
+                )
+                current_times = current_times.repeat_interleave(expansion_factor)
+                current_label = torch.full(
+                    (batch_size * num_branches,), class_label, device=self.device
+                )
+                batch_indices = torch.arange(
+                    batch_size, device=self.device
+                ).repeat_interleave(num_branches)
+
+                # Break if all samples have reached t=1
+                if torch.all(current_times >= 1.0):
+                    break
+
+            # Final selection - take best sample from each batch element's num_branches samples
+            final_samples = []
+            for batch_idx in range(batch_size):
+                batch_mask = batch_indices == batch_idx
+                batch_samples = current_samples[batch_mask]
+                batch_scores = value_scores[batch_mask]
+                best_idx = torch.argmax(batch_scores)
+                final_samples.append(batch_samples[best_idx])
+
+            return torch.stack(final_samples)  # shape: [batch_size, C, H, W]
+
     def mcts_sample(
         self,
         class_label,

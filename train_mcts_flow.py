@@ -371,12 +371,12 @@ def calculate_metrics(
 
         # Generate full batches
         for _ in range(num_batches):
-            sample = sampler.batch_sample(
+            sample = sampler.batch_sample_wdt(
                 class_label=class_label,
                 batch_size=generation_batch_size,
                 num_branches=num_branches,
                 num_keep=num_keep,
-                sigma=noise_scale,
+                # sigma=noise_scale,
             )
             generated_samples.extend(sample.cpu())
 
