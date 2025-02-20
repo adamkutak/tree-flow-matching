@@ -321,7 +321,9 @@ def evaluate_samples(sampler, num_samples=10, branch_keep_pairs=None, num_classe
     visualize_samples(all_samples_dict, class_label, real_images)
 
 
-def calculate_metrics(sampler, num_branches, num_keep, device, n_samples=5000):
+def calculate_metrics(
+    sampler, num_branches, num_keep, device, n_samples=5000, sigma=0.1
+):
     """
     Calculate FID and IS metrics for a specific branch/keep configuration across all classes.
     """
@@ -359,9 +361,9 @@ def calculate_metrics(sampler, num_branches, num_keep, device, n_samples=5000):
     )
 
     # for 1x1, we don't need noise (this is just normal flow matching integration)
-    sigma = 0.1
+    noise_scale = sigma
     if num_branches == 1 and num_keep == 1:
-        sigma = 0
+        noise_scale = 0
 
     # Generate samples for each class
     for class_label in range(sampler.num_classes):
@@ -374,7 +376,7 @@ def calculate_metrics(sampler, num_branches, num_keep, device, n_samples=5000):
                 batch_size=generation_batch_size,
                 num_branches=num_branches,
                 num_keep=num_keep,
-                sigma=sigma,
+                sigma=noise_scale,
             )
             generated_samples.extend(sample.cpu())
 
@@ -427,7 +429,7 @@ def main():
         image_size=image_size,
         channels=channels,
         device=device,
-        num_timesteps=50,
+        num_timesteps=25,
         num_classes=num_classes,
         buffer_size=1000,
     )
@@ -435,25 +437,24 @@ def main():
     # Training configuration
     n_epochs_per_cycle = 1
     n_training_cycles = 100
-    branch_keep_pairs = [(1, 1), (2, 1), (4, 2), (8, 4)]
+    branch_keep_pairs = [(1, 1), (2, 1), (4, 2), (8, 4), (16, 8)]
 
-    # Training loop with periodic evaluation using calculate_metrics
     for cycle in range(n_training_cycles):
         print(f"\nTraining Cycle {cycle + 1}/{n_training_cycles}")
 
-        sampler.train(
-            train_loader,
-            n_epochs=n_epochs_per_cycle,
-            initial_flow_epochs=0,
-            value_epochs=10,
-            flow_epochs=10,
-            use_tqdm=True,
-        )
+        # sampler.train(
+        #     train_loader,
+        #     n_epochs=n_epochs_per_cycle,
+        #     initial_flow_epochs=0,
+        #     value_epochs=10,
+        #     flow_epochs=10,
+        #     use_tqdm=True,
+        # )
 
         # Evaluate metrics across classes after each training cycle
         for num_branches, num_keep in branch_keep_pairs:
             fid_score, is_mean, is_std = calculate_metrics(
-                sampler, num_branches, num_keep, device
+                sampler, num_branches, num_keep, device, sigma=0.01
             )
             print(f"Cycle {cycle + 1} - (branches={num_branches}, keep={num_keep}):")
             print(f"   FID Score: {fid_score:.4f}")
