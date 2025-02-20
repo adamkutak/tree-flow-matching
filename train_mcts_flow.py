@@ -431,7 +431,8 @@ def main():
         device=device,
         num_timesteps=25,
         num_classes=num_classes,
-        buffer_size=1000,
+        # buffer_size=1000,
+        buffer_size=100,
     )
 
     # Training configuration
