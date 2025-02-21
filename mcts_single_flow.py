@@ -794,7 +794,10 @@ class MCTSFlowSampler:
         """
         Regular flow matching sampling without branching.
         """
+        self.flow_model.eval()
+
         with torch.no_grad():
+            # Initialize samples
             current_samples = torch.randn(
                 batch_size,
                 self.channels,
@@ -802,19 +805,16 @@ class MCTSFlowSampler:
                 self.image_size,
                 device=self.device,
             )
-            current_times = torch.zeros(batch_size, device=self.device)
             current_label = torch.full((batch_size,), class_label, device=self.device)
 
-            while not torch.all(current_times >= 1.0):
-                velocity = self.flow_model(
-                    current_times, current_samples, current_label
-                )
-                base_dt = torch.clamp(
-                    torch.tensor(1.0, device=self.device) - current_times,
-                    min=torch.tensor(0.0, device=self.device),
-                )
-                current_samples = current_samples + velocity * base_dt.view(-1, 1, 1, 1)
-                current_times = current_times + base_dt
+            # Generate samples using timesteps
+            for step, t in enumerate(self.timesteps[:-1]):
+                dt = self.timesteps[step + 1] - t
+                t_batch = torch.full((batch_size,), t.item(), device=self.device)
+
+                # Flow step
+                velocity = self.flow_model(t_batch, current_samples, current_label)
+                current_samples = current_samples + velocity * dt
 
             return current_samples
 
