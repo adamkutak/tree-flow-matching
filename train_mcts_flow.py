@@ -322,7 +322,7 @@ def evaluate_samples(sampler, num_samples=10, branch_keep_pairs=None, num_classe
 
 
 def calculate_metrics(
-    sampler, num_branches, num_keep, device, n_samples=600, sigma=0.1
+    sampler, num_branches, num_keep, device, n_samples=1000, sigma=0.1
 ):
     """
     Calculate FID and IS metrics for a specific branch/keep configuration across all classes.
