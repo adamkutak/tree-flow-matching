@@ -662,7 +662,7 @@ class MCTSFlowSampler:
             return torch.stack(final_samples)  # shape: [batch_size, C, H, W]
 
     def batch_sample_wdt(
-        self, class_label, batch_size=16, num_branches=4, num_keep=2, dt_std=0.1
+        self, class_label, batch_size=16, num_branches=4, num_keep=2, dt_std=0.03
     ):
         """
         Efficient batched sampling method that maintains constant number of samples per batch element.

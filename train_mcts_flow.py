@@ -376,6 +376,7 @@ def calculate_metrics(
                 batch_size=generation_batch_size,
                 num_branches=num_branches,
                 num_keep=num_keep,
+                dt_std=0.05,
                 # sigma=noise_scale,
             )
             generated_samples.extend(sample.cpu())
