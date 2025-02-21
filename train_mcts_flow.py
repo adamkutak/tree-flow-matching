@@ -322,7 +322,7 @@ def evaluate_samples(sampler, num_samples=10, branch_keep_pairs=None, num_classe
 
 
 def calculate_metrics(
-    sampler, num_branches, num_keep, device, n_samples=1000, sigma=0.1
+    sampler, num_branches, num_keep, device, n_samples=2000, sigma=0.1
 ):
     """
     Calculate FID and IS metrics for a specific branch/keep configuration across all classes.
@@ -436,7 +436,7 @@ def main():
     # Training configuration
     n_epochs_per_cycle = 1
     n_training_cycles = 100
-    branch_keep_pairs = [(1, 1), (8, 4), (12, 6), (16, 8)]
+    branch_keep_pairs = [(1, 1), (8, 4), (12, 6), (16, 8), (32, 8)]
 
     for cycle in range(n_training_cycles):
         print(f"\nTraining Cycle {cycle + 1}/{n_training_cycles}")
