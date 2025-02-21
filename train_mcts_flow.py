@@ -435,7 +435,7 @@ def main():
     # Training configuration
     n_epochs_per_cycle = 1
     n_training_cycles = 100
-    branch_keep_pairs = [(1, 1), (2, 1), (4, 2), (8, 4)]
+    branch_keep_pairs = [(1, 1), (8, 2), (12, 2)]
 
     for cycle in range(n_training_cycles):
         print(f"\nTraining Cycle {cycle + 1}/{n_training_cycles}")
