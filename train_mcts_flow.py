@@ -103,51 +103,6 @@ class SyntheticDataset(Dataset):
         return self.targets[idx], self.labels[idx]
 
 
-def evaluate_synthetic_samples(
-    sampler, num_samples=10, branch_keep_pairs=None, num_classes=10
-):
-    """Evaluate sample quality for synthetic data across all classes"""
-    if branch_keep_pairs is None:
-        branch_keep_pairs = [(3, 2), (8, 3), (16, 7)]
-
-    print("\nEvaluating samples:")
-
-    for num_branches, num_keep in branch_keep_pairs:
-        print(f"\nTesting with branches={num_branches}, keep={num_keep}")
-
-        # Store scores for each class
-        class_scores = []
-
-        # Sample from each class
-        for class_label in range(num_classes):
-            all_scores = []
-
-            # Generate multiple samples for this class
-            for _ in range(num_samples):
-                sample = sampler.simple_sample(
-                    class_label=class_label,
-                    num_branches=num_branches,
-                    num_keep=num_keep,
-                )
-
-                with torch.no_grad():
-                    score = sampler.compute_sample_quality(
-                        sample.unsqueeze(0),
-                        torch.tensor([class_label], device=sampler.device),
-                    )
-                all_scores.append(score.item())
-
-            # Add average score for this class
-            class_scores.append(torch.tensor(all_scores).mean().item())
-
-        # Compute overall statistics
-        overall_mean = sum(class_scores) / num_classes
-        overall_std = torch.tensor(class_scores).std().item()
-        print(
-            f"Average score across all classes: {overall_mean:.4f} ± {overall_std:.4f}"
-        )
-
-
 def analyze_reward_distribution(reward_net, input_dim, num_classes, num_samples=1000):
     """Analyze the distribution of rewards within each class using SyntheticDataset"""
     print("\nAnalyzing reward distribution across classes:")
@@ -336,7 +291,7 @@ def calculate_metrics(
         [transforms.ToTensor(), transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))]
     )
     cifar10 = datasets.CIFAR10(
-        root="./data", train=True, download=True, transform=transform
+        root="./data", train=False, download=True, transform=transform
     )
 
     # Randomly sample real images
@@ -376,7 +331,7 @@ def calculate_metrics(
                 batch_size=generation_batch_size,
                 num_branches=num_branches,
                 num_keep=num_keep,
-                dt_std=0.05,
+                dt_std=0.1,
                 # sigma=noise_scale,
             )
             generated_samples.extend(sample.cpu())
