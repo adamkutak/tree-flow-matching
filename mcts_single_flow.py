@@ -151,10 +151,10 @@ class MCTSFlowSampler:
         self.trajectory_buffer = TrajectoryBuffer()
 
         # # Try to load pre-trained models
-        # if self.load_models():
-        #     print("Successfully loaded pre-trained flow and value models")
-        # else:
-        #     print("No pre-trained models found, starting from scratch")
+        if self.load_models():
+            print("Successfully loaded pre-trained flow and value models")
+        else:
+            print("No pre-trained models found, starting from scratch")
 
         # Initialize inception model for FID computation
         self.inception = InceptionV3([0], normalize_input=True).to(device)
