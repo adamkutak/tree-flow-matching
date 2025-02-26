@@ -120,7 +120,7 @@ if __name__ == "__main__":
 
     train_large_flow_model(
         num_epochs=1000,
-        batch_size=256,
+        batch_size=192,
         device=device,
         save_interval=50,
         num_channels=256,
