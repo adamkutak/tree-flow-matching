@@ -5,7 +5,6 @@ from tqdm import tqdm
 import torchvision.datasets as datasets
 import torchvision.transforms as transforms
 import torchmetrics.image.fid as FID
-import torchmetrics.image.inception as IS
 from scipy.linalg import sqrtm
 
 from mcts_single_flow import MCTSFlowSampler
@@ -15,12 +14,11 @@ def calculate_metrics_with_components(
     sampler, num_branches, num_keep, device, n_samples=1000, dt_std=0.1
 ):
     """
-    Calculate FID and IS metrics for a specific branch/keep configuration across all classes.
+    Calculate FID metrics for a specific branch/keep configuration across all classes.
     Also returns the components of the FID score.
     """
     # Initialize metrics
     fid = FID.FrechetInceptionDistance(normalize=True, feature=2048).to(device)
-    inception_score = IS.InceptionScore(normalize=True).to(device)
 
     # Get random real images from CIFAR-10
     transform = transforms.Compose(
@@ -73,12 +71,10 @@ def calculate_metrics_with_components(
     for i in range(0, len(generated_tensor), metric_batch_size):
         batch = generated_tensor[i : i + metric_batch_size].to(device)
         fid.update(batch, real=False)
-        inception_score.update(batch)
         torch.cuda.empty_cache()
 
     # Compute final scores
     fid_score = fid.compute()
-    is_mean, is_std = inception_score.compute()
 
     # Extract FID components from the internal state
     # Calculate means
@@ -132,7 +128,7 @@ def calculate_metrics_with_components(
         "covariance_percent": covariance_percent,
     }
 
-    return fid_score, is_mean, is_std, components
+    return fid_score, components
 
 
 def analyze_fid_components(
@@ -158,7 +154,7 @@ def analyze_fid_components(
             print(f"\nTesting branches={num_branches}, keep={num_keep}")
 
             # Calculate metrics with components
-            fid_score, is_mean, is_std, components = calculate_metrics_with_components(
+            fid_score, components = calculate_metrics_with_components(
                 sampler,
                 num_branches=num_branches,
                 num_keep=num_keep,
@@ -168,7 +164,6 @@ def analyze_fid_components(
             )
 
             print(f"   FID Score: {fid_score:.4f}")
-            print(f"   Inception Score: {is_mean:.4f} ± {is_std:.4f}")
 
             # Print component breakdown
             print(f"   FID Components:")
@@ -201,7 +196,11 @@ def main():
 
     # Try to load the large flow model if available
     try:
-        checkpoint = torch.load("saved_models/large_flow_model.pt", map_location=device)
+        checkpoint = torch.load(
+            "saved_models/large_flow_model.pt",
+            map_location=device,
+            weights_only=True,
+        )
         if isinstance(checkpoint, dict) and "model" in checkpoint:
             sampler.flow_model.load_state_dict(checkpoint["model"])
             print(f"Loaded large flow model from checkpoint")
