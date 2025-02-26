@@ -64,6 +64,7 @@ def train_large_flow_model(
         buffer_size=10,
         num_channels=num_channels,  # Use larger channel count
         learning_rate=learning_rate,
+        load_models=False,
     )
 
     # Create directory for saving models
@@ -119,7 +120,7 @@ if __name__ == "__main__":
 
     train_large_flow_model(
         num_epochs=1000,
-        batch_size=128,
+        batch_size=256,
         device=device,
         save_interval=50,
         num_channels=256,

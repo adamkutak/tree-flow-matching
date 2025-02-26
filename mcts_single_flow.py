@@ -90,6 +90,7 @@ class MCTSFlowSampler:
         buffer_size=1000,
         num_channels=128,
         learning_rate=5e-4,
+        load_models=True,
     ):
         # Check if CUDA is available and set device
         if torch.cuda.is_available():
@@ -140,21 +141,24 @@ class MCTSFlowSampler:
         )
 
         # Simple step scheduler: reduces learning rate by 0.1 every 50 epochs
-        self.flow_scheduler = torch.optim.lr_scheduler.StepLR(
-            self.flow_optimizer, step_size=50, gamma=0.5
+        power = 2.0
+        num_epochs = 1000
+        self.flow_scheduler = torch.optim.lr_scheduler.PolynomialLR(
+            self.flow_optimizer, total_iters=num_epochs, power=power
         )
-        self.value_scheduler = torch.optim.lr_scheduler.StepLR(
-            self.value_optimizer, step_size=50, gamma=0.5
+        self.value_scheduler = torch.optim.lr_scheduler.PolynomialLR(
+            self.value_optimizer, total_iters=num_epochs, power=power
         )
 
         self.FM = ConditionalFlowMatcher(sigma=0.0)
         self.trajectory_buffer = TrajectoryBuffer()
 
-        # # Try to load pre-trained models
-        if self.load_models():
-            print("Successfully loaded pre-trained flow and value models")
-        else:
-            print("No pre-trained models found, starting from scratch")
+        # Try to load pre-trained models
+        if load_models:
+            if self.load_models():
+                print("Successfully loaded pre-trained flow and value models")
+            else:
+                print("No pre-trained models found, starting from scratch")
 
         # Initialize inception model for FID computation
         self.inception = InceptionV3([0], normalize_input=True).to(device)
