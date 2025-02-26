@@ -90,11 +90,9 @@ def train_large_flow_model(
             torch.save(sampler.flow_model.state_dict(), save_path)
             print(f"Model saved to {save_path}")
 
-            # Evaluate metrics using the calculate_metrics function
             print("Evaluating metrics...")
-
             # Test with regular flow matching (no branching)
-            fid_score, is_mean, is_std = calculate_metrics(
+            fid_score = calculate_metrics(
                 sampler,
                 num_branches=1,
                 num_keep=1,
@@ -107,14 +105,11 @@ def train_large_flow_model(
                 {
                     "epoch": epoch + 1,
                     "fid_score": fid_score.item(),
-                    "is_mean": is_mean.item(),
-                    "is_std": is_std.item(),
                 }
             )
 
             print(f"Metrics at epoch {epoch + 1}:")
             print(f"   FID Score: {fid_score:.4f}")
-            print(f"   Inception Score: {is_mean:.4f} ± {is_std:.4f}")
 
 
 if __name__ == "__main__":

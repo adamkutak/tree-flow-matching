@@ -280,11 +280,10 @@ def calculate_metrics(
     sampler, num_branches, num_keep, device, n_samples=2000, sigma=0.1
 ):
     """
-    Calculate FID and IS metrics for a specific branch/keep configuration across all classes.
+    Calculate FID metrics for a specific branch/keep configuration across all classes.
     """
     # Initialize metrics
     fid = FID.FrechetInceptionDistance(normalize=True).to(device)
-    inception_score = IS.InceptionScore(normalize=True).to(device)
 
     # Get random real images from CIFAR-10
     transform = transforms.Compose(
@@ -341,15 +340,13 @@ def calculate_metrics(
     for i in range(0, len(generated_tensor), metric_batch_size):
         batch = generated_tensor[i : i + metric_batch_size].to(device)
         fid.update(batch, real=False)
-        inception_score.update(batch)
         batch.cpu()
         torch.cuda.empty_cache()
 
     # Compute final scores
     fid_score = fid.compute()
-    is_mean, is_std = inception_score.compute()
 
-    return fid_score, is_mean, is_std
+    return fid_score
 
 
 def main():
