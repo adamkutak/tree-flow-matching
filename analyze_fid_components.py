@@ -10,7 +10,7 @@ from train_mcts_flow import calculate_metrics
 def analyze_fid_components(
     sampler,
     device,
-    branch_keep_configs=[(1, 1), (4, 2), (8, 2), (16, 4), (32, 8)],
+    branch_keep_configs=[(1, 1), (4, 2), (8, 4), (16, 8), (32, 16)],
     n_samples=1000,
 ):
     """
@@ -90,7 +90,7 @@ def main():
         sampler=sampler,
         device=device,
         branch_keep_configs=[(1, 1), (4, 2), (8, 2), (16, 4), (32, 8)],
-        n_samples=5000,  # Use fewer samples for faster evaluation
+        n_samples=1000,  # Use fewer samples for faster evaluation
     )
 
 
