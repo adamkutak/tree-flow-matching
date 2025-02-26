@@ -194,28 +194,12 @@ def main():
         buffer_size=10,
     )
 
-    # Try to load the large flow model if available
-    try:
-        checkpoint = torch.load(
-            "saved_models/large_flow_model.pt",
-            map_location=device,
-            weights_only=True,
-        )
-        if isinstance(checkpoint, dict) and "model" in checkpoint:
-            sampler.flow_model.load_state_dict(checkpoint["model"])
-            print(f"Loaded large flow model from checkpoint")
-        else:
-            sampler.flow_model.load_state_dict(checkpoint)
-            print(f"Loaded large flow model")
-    except Exception as e:
-        print(f"Could not load large flow model: {e}")
-
     # Run analysis
     analyze_fid_components(
         sampler=sampler,
         device=device,
         branch_keep_configs=[(1, 1), (4, 2), (8, 4), (16, 8), (32, 16)],
-        n_samples=2000,  # Use fewer samples for faster evaluation
+        n_samples=2000,
     )
 
 
