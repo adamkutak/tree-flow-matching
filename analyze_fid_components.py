@@ -74,7 +74,6 @@ def calculate_metrics_with_components(
         batch = generated_tensor[i : i + metric_batch_size].to(device)
         fid.update(batch, real=False)
         inception_score.update(batch)
-        batch = batch.cpu()
         torch.cuda.empty_cache()
 
     # Compute final scores
@@ -83,8 +82,8 @@ def calculate_metrics_with_components(
 
     # Extract FID components from the internal state
     # Calculate means
-    mu_real = (fid.real_features_sum / fid.real_features_num_samples).cpu()
-    mu_fake = (fid.fake_features_sum / fid.fake_features_num_samples).cpu()
+    mu_real = fid.real_features_sum / fid.real_features_num_samples
+    mu_fake = fid.fake_features_sum / fid.fake_features_num_samples
 
     # Calculate covariances
     cov_real_num = (
@@ -108,8 +107,8 @@ def calculate_metrics_with_components(
     trace_term = cov_real.trace().item() + cov_fake.trace().item()
 
     # Calculate sqrt(cov_real @ cov_fake)
-    cov_real_np = cov_real.cpu().numpy()
-    cov_fake_np = cov_fake.cpu().numpy()
+    cov_real_np = cov_real.numpy()
+    cov_fake_np = cov_fake.numpy()
     covmean = sqrtm(cov_real_np @ cov_fake_np)
     if np.iscomplexobj(covmean):
         covmean = covmean.real
