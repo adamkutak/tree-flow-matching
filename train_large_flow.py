@@ -87,16 +87,7 @@ def train_large_flow_model(
         # Save model and evaluate metrics at intervals
         if (epoch + 1) % save_interval == 0 or epoch == num_epochs - 1:
             save_path = f"saved_models/large_flow_model.pt"
-            torch.save(
-                {
-                    "model": sampler.flow_model.state_dict(),
-                    "epoch": epoch + 1,
-                    "loss": flow_loss,
-                    "num_channels": num_channels,
-                    "num_timesteps": num_timesteps,
-                },
-                save_path,
-            )
+            torch.save(sampler.flow_model.state_dict(), save_path)
             print(f"Model saved to {save_path}")
 
             # Evaluate metrics using the calculate_metrics function
