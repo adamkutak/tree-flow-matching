@@ -150,7 +150,7 @@ class MCTSFlowSampler:
             self.value_optimizer, total_iters=num_epochs, power=power
         )
 
-        self.FM = ConditionalFlowMatcher(sigma=0.0)
+        self.FM = ExactOptimalTransportConditionalFlowMatcher(sigma=0.0)
         self.trajectory_buffer = TrajectoryBuffer()
 
         # Try to load pre-trained models
@@ -464,8 +464,10 @@ class MCTSFlowSampler:
 
             # Train flow matching
             self.flow_optimizer.zero_grad()
-            t, xt, ut = self.FM.sample_location_and_conditional_flow(x0, x1)
-            vt = self.flow_model(t, xt, y)
+            t, xt, ut, y0, y1 = self.FM.guided_sample_location_and_conditional_flow(
+                x0, x1, y0=y, y1=y
+            )
+            vt = self.flow_model(t, xt, y1)
             flow_loss = torch.mean((vt - ut) ** 2)
             flow_loss.backward()
             self.flow_optimizer.step()
