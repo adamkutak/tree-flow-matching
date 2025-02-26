@@ -19,7 +19,7 @@ def calculate_metrics_with_components(
     Also returns the components of the FID score.
     """
     # Initialize metrics
-    fid = FID.FrechetInceptionDistance(normalize=True, feature=64).to(device)
+    fid = FID.FrechetInceptionDistance(normalize=True, feature=2048).to(device)
     inception_score = IS.InceptionScore(normalize=True).to(device)
 
     # Get random real images from CIFAR-10
@@ -64,58 +64,70 @@ def calculate_metrics_with_components(
                 num_keep=num_keep,
                 dt_std=dt_std,
             )
-            generated_samples.extend(sample.cpu())
+            generated_samples.append(sample)
+
+    # Stack all generated samples
+    generated_tensor = torch.cat(generated_samples, dim=0)
 
     # Process generated samples in batches for metrics
-    generated_tensor = torch.stack(generated_samples)
     for i in range(0, len(generated_tensor), metric_batch_size):
         batch = generated_tensor[i : i + metric_batch_size].to(device)
         fid.update(batch, real=False)
         inception_score.update(batch)
-        batch.cpu()
+        batch = batch.cpu()
         torch.cuda.empty_cache()
 
     # Compute final scores
     fid_score = fid.compute()
     is_mean, is_std = inception_score.compute()
 
-    # Get the FID components
-    # Access the internal features from the FID metric
-    real_features = fid.real_features.cpu().numpy()
-    fake_features = fid.fake_features.cpu().numpy()
+    # Extract FID components from the internal state
+    # Calculate means
+    mu_real = (fid.real_features_sum / fid.real_features_num_samples).cpu()
+    mu_fake = (fid.fake_features_sum / fid.fake_features_num_samples).cpu()
 
-    # Calculate mean and covariance
-    mu_real = np.mean(real_features, axis=0)
-    sigma_real = np.cov(real_features, rowvar=False)
+    # Calculate covariances
+    cov_real_num = (
+        fid.real_features_cov_sum
+        - fid.real_features_num_samples
+        * mu_real.unsqueeze(0).t()
+        @ mu_real.unsqueeze(0)
+    )
+    cov_real = cov_real_num / (fid.real_features_num_samples - 1)
 
-    mu_fake = np.mean(fake_features, axis=0)
-    sigma_fake = np.cov(fake_features, rowvar=False)
+    cov_fake_num = (
+        fid.fake_features_cov_sum
+        - fid.fake_features_num_samples
+        * mu_fake.unsqueeze(0).t()
+        @ mu_fake.unsqueeze(0)
+    )
+    cov_fake = cov_fake_num / (fid.fake_features_num_samples - 1)
 
     # Calculate FID components
-    mean_distance = np.sum((mu_real - mu_fake) ** 2)
+    mean_distance = torch.sum((mu_real - mu_fake) ** 2).item()
+    trace_term = cov_real.trace().item() + cov_fake.trace().item()
 
-    trace_sigma_real = np.trace(sigma_real)
-    trace_sigma_fake = np.trace(sigma_fake)
-
-    # Calculate sqrt(Σ1*Σ2)
-    covmean = sqrtm(sigma_real.dot(sigma_fake))
+    # Calculate sqrt(cov_real @ cov_fake)
+    cov_real_np = cov_real.cpu().numpy()
+    cov_fake_np = cov_fake.cpu().numpy()
+    covmean = sqrtm(cov_real_np @ cov_fake_np)
     if np.iscomplexobj(covmean):
         covmean = covmean.real
-
     covmean_term = 2 * np.trace(covmean)
-    covariance_distance = trace_sigma_real + trace_sigma_fake
+
+    # Calculate total FID (should match fid_score)
+    total_fid = mean_distance + trace_term - covmean_term
 
     # Calculate percentages
-    total_fid = mean_distance + covariance_distance - covmean_term
     mean_distance_percent = 100 * mean_distance / total_fid if total_fid > 0 else 0
     covariance_percent = (
-        100 * (covariance_distance - covmean_term) / total_fid if total_fid > 0 else 0
+        100 * (trace_term - covmean_term) / total_fid if total_fid > 0 else 0
     )
 
     components = {
         "fid_total": total_fid,
         "mean_distance": mean_distance,
-        "covariance_distance": covariance_distance,
+        "covariance_distance": trace_term,
         "covmean_term": covmean_term,
         "mean_distance_percent": mean_distance_percent,
         "covariance_percent": covariance_percent,
