@@ -107,8 +107,8 @@ def calculate_metrics_with_components(
     trace_term = cov_real.trace().item() + cov_fake.trace().item()
 
     # Calculate sqrt(cov_real @ cov_fake)
-    cov_real_np = cov_real.numpy()
-    cov_fake_np = cov_fake.numpy()
+    cov_real_np = cov_real.cpu().numpy()
+    cov_fake_np = cov_fake.cpu().numpy()
     covmean = sqrtm(cov_real_np @ cov_fake_np)
     if np.iscomplexobj(covmean):
         covmean = covmean.real
