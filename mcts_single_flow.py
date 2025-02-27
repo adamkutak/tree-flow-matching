@@ -762,6 +762,7 @@ class MCTSFlowSampler:
                 best_idx = torch.argmax(batch_scores)
                 final_samples.append(batch_samples[best_idx])
 
+            print(current_times)
             return torch.stack(final_samples)  # shape: [batch_size, C, H, W]
 
     def regular_batch_sample(self, class_label, batch_size=16):
