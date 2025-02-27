@@ -146,7 +146,11 @@ def analyze_value_model_predictions(
                     size=(len(all_branches),),
                     device=device,
                 )
-                dts = torch.clamp(dts, min=0.0, max=1.0 - all_branch_times)
+                dts = torch.clamp(
+                    dts,
+                    min=torch.tensor(0.0, device=device),
+                    max=1.0 - all_branch_times,
+                )
 
                 # Get velocity for all branches at once
                 velocity = sampler.flow_model(
