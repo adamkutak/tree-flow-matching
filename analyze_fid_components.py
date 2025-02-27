@@ -148,11 +148,10 @@ def analyze_fid_components(
         batch = real_images[i : i + real_batch_size]
         fid_metric.update(batch, real=True)
 
-    dt_std_values = np.linspace(0.01, 0.2, 10)  # From 0.01 to 0.1
-    for loop in range(10):
+    dt_std_values = [0.02, 0.05, 0.1, 0.2, 0.3, 0.5]
+    for loop in range(len(dt_std_values)):
         dt_std = dt_std_values[loop]
-        print(f"\n----- Loop {loop+1}/10 (dt_std={dt_std:.3f}) -----")
-
+        print(f"\n----- Loop {loop+1}/{len(dt_std_values)} (dt_std={dt_std:.3f}) -----")
         # Test each branch/keep configuration
         for num_branches, num_keep in branch_keep_configs:
             print(f"\nTesting branches={num_branches}, keep={num_keep}")
