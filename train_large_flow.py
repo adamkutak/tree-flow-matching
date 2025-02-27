@@ -37,10 +37,6 @@ def train_large_flow_model(
     )
     print(f"Using {num_timesteps} timesteps for flow matching")
 
-    # Set random seeds for reproducibility
-    torch.manual_seed(42)
-    np.random.seed(42)
-
     # Setup CIFAR-10 dataset with appropriate transforms
     transform = transforms.Compose(
         [
@@ -98,7 +94,7 @@ def train_large_flow_model(
                 num_branches=1,
                 num_keep=1,
                 device=device,
-                n_samples=10000,  # Use fewer samples for faster evaluation during training
+                n_samples=5000,
                 sigma=0.0,
             )
 

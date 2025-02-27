@@ -140,16 +140,51 @@ class MCTSFlowSampler:
             self.value_model.parameters(), lr=learning_rate
         )
 
-        # Simple step scheduler: reduces learning rate by 0.1 every 50 epochs
-        power = 2.0
+        warmup_epochs = 100
         num_epochs = 1000
-        self.flow_scheduler = torch.optim.lr_scheduler.PolynomialLR(
-            self.flow_optimizer, total_iters=num_epochs, power=power
-        )
-        self.value_scheduler = torch.optim.lr_scheduler.PolynomialLR(
-            self.value_optimizer, total_iters=num_epochs, power=power
+        initial_lr = 1e-8
+        # Warmup scheduler - linear increase from initial_lr to learning_rate
+        warmup_scheduler_flow = torch.optim.lr_scheduler.LinearLR(
+            self.flow_optimizer,
+            start_factor=1.0,  # Start at initial_lr
+            end_factor=learning_rate / initial_lr,  # End at learning_rate
+            total_iters=warmup_epochs,
         )
 
+        warmup_scheduler_value = torch.optim.lr_scheduler.LinearLR(
+            self.value_optimizer,
+            start_factor=1.0,
+            end_factor=learning_rate / initial_lr,
+            total_iters=warmup_epochs,
+        )
+
+        # Decay scheduler - linear decrease from learning_rate to initial_lr
+        decay_scheduler_flow = torch.optim.lr_scheduler.LinearLR(
+            self.flow_optimizer,
+            start_factor=1.0,  # Start at current lr (which will be learning_rate)
+            end_factor=initial_lr / learning_rate,  # End at initial_lr
+            total_iters=num_epochs - warmup_epochs,
+        )
+
+        decay_scheduler_value = torch.optim.lr_scheduler.LinearLR(
+            self.value_optimizer,
+            start_factor=1.0,
+            end_factor=initial_lr / learning_rate,
+            total_iters=num_epochs - warmup_epochs,
+        )
+
+        # Combine schedulers using SequentialLR
+        self.flow_scheduler = torch.optim.lr_scheduler.SequentialLR(
+            self.flow_optimizer,
+            schedulers=[warmup_scheduler_flow, decay_scheduler_flow],
+            milestones=[warmup_epochs],
+        )
+
+        self.value_scheduler = torch.optim.lr_scheduler.SequentialLR(
+            self.value_optimizer,
+            schedulers=[warmup_scheduler_value, decay_scheduler_value],
+            milestones=[warmup_epochs],
+        )
         self.FM = ExactOptimalTransportConditionalFlowMatcher(sigma=0.0)
         self.trajectory_buffer = TrajectoryBuffer()
 
