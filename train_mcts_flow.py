@@ -277,32 +277,13 @@ def evaluate_samples(sampler, num_samples=10, branch_keep_pairs=None, num_classe
 
 
 def calculate_metrics(
-    sampler, num_branches, num_keep, device, n_samples=2000, sigma=0.1
+    sampler, num_branches, num_keep, device, n_samples=2000, sigma=0.1, fid=None
 ):
     """
     Calculate FID metrics for a specific branch/keep configuration across all classes.
     """
-    # Initialize metrics
-    fid = FID.FrechetInceptionDistance(normalize=True).to(device)
 
-    # Get random real images from CIFAR-10
-    transform = transforms.Compose(
-        [transforms.ToTensor(), transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))]
-    )
-    cifar10 = datasets.CIFAR10(
-        root="./data", train=True, download=True, transform=transform
-    )
-
-    # Randomly sample real images
-    indices = np.random.choice(len(cifar10), n_samples, replace=False)
-    real_images = torch.stack([cifar10[i][0] for i in indices]).to(device)
-
-    # Process real images in batches
-    real_batch_size = 100
-    print("Processing real images...")
-    for i in range(0, len(real_images), real_batch_size):
-        batch = real_images[i : i + real_batch_size]
-        fid.update(batch, real=True)
+    fid.reset()
 
     # Generate samples evenly across all classes
     samples_per_class = n_samples // sampler.num_classes
@@ -390,6 +371,29 @@ def main():
     n_training_cycles = 100
     branch_keep_pairs = [(1, 1), (8, 4), (12, 6), (16, 8)]
 
+    # Initialize metrics
+    fid = FID.FrechetInceptionDistance(normalize=True, reset_real_features=False).to(
+        device
+    )
+    # Get random real images from CIFAR-10
+    transform = transforms.Compose(
+        [transforms.ToTensor(), transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))]
+    )
+    cifar10 = datasets.CIFAR10(
+        root="./data", train=True, download=True, transform=transform
+    )
+
+    # Randomly sample real images
+    indices = np.random.choice(len(cifar10), 5000, replace=False)
+    real_images = torch.stack([cifar10[i][0] for i in indices]).to(device)
+
+    # Process real images in batches
+    real_batch_size = 100
+    print("Processing real images...")
+    for i in range(0, len(real_images), real_batch_size):
+        batch = real_images[i : i + real_batch_size]
+        fid.update(batch, real=True)
+
     for cycle in range(n_training_cycles):
         print(f"\nTraining Cycle {cycle + 1}/{n_training_cycles}")
 
@@ -405,7 +409,13 @@ def main():
         # Evaluate metrics across classes after each training cycle
         for num_branches, num_keep in branch_keep_pairs:
             fid_score = calculate_metrics(
-                sampler, num_branches, num_keep, device, sigma=0.05, n_samples=1000
+                sampler,
+                num_branches,
+                num_keep,
+                device,
+                sigma=0.05,
+                n_samples=5000,
+                fid=fid,
             )
             print(f"Cycle {cycle + 1} - (branches={num_branches}, keep={num_keep}):")
             print(f"   FID Score: {fid_score:.4f}")
