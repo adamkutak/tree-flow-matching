@@ -17,13 +17,7 @@ def calculate_metrics_with_components(
     Calculate FID metrics for a specific branch/keep configuration across all classes.
     Also returns the components of the FID score.
     """
-    # Reset only fake features
-    fid_metric.fake_features_sum = torch.zeros_like(fid_metric.fake_features_sum)
-    fid_metric.fake_features_cov_sum = torch.zeros_like(
-        fid_metric.fake_features_cov_sum
-    )
-    fid_metric.fake_features_num_samples = 0
-
+    fid_metric.reset()
     # Generate samples evenly across all classes
     samples_per_class = n_samples // sampler.num_classes
     generation_batch_size = 64
@@ -154,9 +148,10 @@ def analyze_fid_components(
         batch = real_images[i : i + real_batch_size]
         fid_metric.update(batch, real=True)
 
-    # Run 10 loops to get more stable results
+    dt_std_values = np.linspace(0.01, 0.2, 10)  # From 0.01 to 0.1
     for loop in range(10):
-        print(f"\n----- Loop {loop+1}/10 -----")
+        dt_std = dt_std_values[loop]
+        print(f"\n----- Loop {loop+1}/10 (dt_std={dt_std:.3f}) -----")
 
         # Test each branch/keep configuration
         for num_branches, num_keep in branch_keep_configs:
@@ -170,7 +165,7 @@ def analyze_fid_components(
                 device=device,
                 fid_metric=fid_metric,
                 n_samples=n_samples,
-                dt_std=0.05,
+                dt_std=dt_std,
             )
 
             print(f"   FID Score: {fid_score:.4f}")
