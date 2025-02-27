@@ -11,33 +11,18 @@ from mcts_single_flow import MCTSFlowSampler
 
 
 def calculate_metrics_with_components(
-    sampler, num_branches, num_keep, device, n_samples=1000, dt_std=0.1
+    sampler, num_branches, num_keep, device, fid_metric, n_samples=1000, dt_std=0.1
 ):
     """
     Calculate FID metrics for a specific branch/keep configuration across all classes.
     Also returns the components of the FID score.
     """
-    # Initialize metrics
-    fid = FID.FrechetInceptionDistance(normalize=True, feature=2048).to(device)
-
-    # Get random real images from CIFAR-10
-    transform = transforms.Compose(
-        [transforms.ToTensor(), transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))]
+    # Reset only fake features
+    fid_metric.fake_features_sum = torch.zeros_like(fid_metric.fake_features_sum)
+    fid_metric.fake_features_cov_sum = torch.zeros_like(
+        fid_metric.fake_features_cov_sum
     )
-    cifar10 = datasets.CIFAR10(
-        root="./data", train=False, download=True, transform=transform
-    )
-
-    # Randomly sample real images
-    indices = np.random.choice(len(cifar10), n_samples, replace=False)
-    real_images = torch.stack([cifar10[i][0] for i in indices]).to(device)
-
-    # Process real images in batches
-    real_batch_size = 100
-    print("Processing real images...")
-    for i in range(0, len(real_images), real_batch_size):
-        batch = real_images[i : i + real_batch_size]
-        fid.update(batch, real=True)
+    fid_metric.fake_features_num_samples = 0
 
     # Generate samples evenly across all classes
     samples_per_class = n_samples // sampler.num_classes
@@ -70,33 +55,33 @@ def calculate_metrics_with_components(
     # Process generated samples in batches for metrics
     for i in range(0, len(generated_tensor), metric_batch_size):
         batch = generated_tensor[i : i + metric_batch_size].to(device)
-        fid.update(batch, real=False)
+        fid_metric.update(batch, real=False)
         torch.cuda.empty_cache()
 
     # Compute final scores
-    fid_score = fid.compute()
+    fid_score = fid_metric.compute()
 
     # Extract FID components from the internal state
     # Calculate means
-    mu_real = fid.real_features_sum / fid.real_features_num_samples
-    mu_fake = fid.fake_features_sum / fid.fake_features_num_samples
+    mu_real = fid_metric.real_features_sum / fid_metric.real_features_num_samples
+    mu_fake = fid_metric.fake_features_sum / fid_metric.fake_features_num_samples
 
     # Calculate covariances
     cov_real_num = (
-        fid.real_features_cov_sum
-        - fid.real_features_num_samples
+        fid_metric.real_features_cov_sum
+        - fid_metric.real_features_num_samples
         * mu_real.unsqueeze(0).t()
         @ mu_real.unsqueeze(0)
     )
-    cov_real = cov_real_num / (fid.real_features_num_samples - 1)
+    cov_real = cov_real_num / (fid_metric.real_features_num_samples - 1)
 
     cov_fake_num = (
-        fid.fake_features_cov_sum
-        - fid.fake_features_num_samples
+        fid_metric.fake_features_cov_sum
+        - fid_metric.fake_features_num_samples
         * mu_fake.unsqueeze(0).t()
         @ mu_fake.unsqueeze(0)
     )
-    cov_fake = cov_fake_num / (fid.fake_features_num_samples - 1)
+    cov_fake = cov_fake_num / (fid_metric.fake_features_num_samples - 1)
 
     # Calculate FID components
     mean_distance = torch.sum((mu_real - mu_fake) ** 2).item()
@@ -145,6 +130,30 @@ def analyze_fid_components(
     print(f"Testing {len(branch_keep_configs)} branch/keep configurations")
     print(f"Using {n_samples} samples per configuration")
 
+    # Initialize FID metric once with reset_real_features=False
+    fid_metric = FID.FrechetInceptionDistance(
+        normalize=True, feature=2048, reset_real_features=False
+    ).to(device)
+
+    # Process real images only once
+    transform = transforms.Compose(
+        [transforms.ToTensor(), transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))]
+    )
+    cifar10 = datasets.CIFAR10(
+        root="./data", train=False, download=True, transform=transform
+    )
+
+    # Randomly sample real images
+    indices = np.random.choice(len(cifar10), n_samples, replace=False)
+    real_images = torch.stack([cifar10[i][0] for i in indices]).to(device)
+
+    # Process real images in batches
+    real_batch_size = 100
+    print("Processing real images...")
+    for i in range(0, len(real_images), real_batch_size):
+        batch = real_images[i : i + real_batch_size]
+        fid_metric.update(batch, real=True)
+
     # Run 10 loops to get more stable results
     for loop in range(10):
         print(f"\n----- Loop {loop+1}/10 -----")
@@ -153,12 +162,13 @@ def analyze_fid_components(
         for num_branches, num_keep in branch_keep_configs:
             print(f"\nTesting branches={num_branches}, keep={num_keep}")
 
-            # Calculate metrics with components
+            # Calculate metrics with components, reusing the FID metric
             fid_score, components = calculate_metrics_with_components(
                 sampler,
                 num_branches=num_branches,
                 num_keep=num_keep,
                 device=device,
+                fid_metric=fid_metric,
                 n_samples=n_samples,
                 dt_std=0.05,
             )
@@ -194,7 +204,7 @@ def main():
     analyze_fid_components(
         sampler=sampler,
         device=device,
-        branch_keep_configs=[(1, 1), (4, 2), (8, 4), (16, 8), (32, 16)],
+        branch_keep_configs=[(1, 1), (4, 2), (8, 4), (16, 8), (16, 2)],
         n_samples=2000,
     )
 
