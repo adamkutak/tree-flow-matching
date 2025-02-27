@@ -290,7 +290,7 @@ def calculate_metrics(
         [transforms.ToTensor(), transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))]
     )
     cifar10 = datasets.CIFAR10(
-        root="./data", train=False, download=True, transform=transform
+        root="./data", train=True, download=True, transform=transform
     )
 
     # Randomly sample real images
