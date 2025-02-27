@@ -168,7 +168,7 @@ class MCTSFlowSampler:
             self.value_optimizer, lr_lambda=lambda epoch: lr_lambda(epoch) / initial_lr
         )
 
-        self.FM = ExactOptimalTransportConditionalFlowMatcher(sigma=0.0)
+        self.FM = ExactOptimalTransportConditionalFlowMatcher(sigma=0.05)
         self.trajectory_buffer = TrajectoryBuffer()
 
         # Try to load pre-trained models
