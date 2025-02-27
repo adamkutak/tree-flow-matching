@@ -405,7 +405,7 @@ def main():
         # Evaluate metrics across classes after each training cycle
         for num_branches, num_keep in branch_keep_pairs:
             fid_score = calculate_metrics(
-                sampler, num_branches, num_keep, device, sigma=0.02, n_samples=1000
+                sampler, num_branches, num_keep, device, sigma=0.05, n_samples=1000
             )
             print(f"Cycle {cycle + 1} - (branches={num_branches}, keep={num_keep}):")
             print(f"   FID Score: {fid_score:.4f}")
