@@ -138,7 +138,7 @@ def analyze_fid_components(
     )
 
     # Randomly sample real images
-    indices = np.random.choice(len(cifar10), n_samples, replace=False)
+    indices = np.random.choice(len(cifar10), 5000, replace=False)
     real_images = torch.stack([cifar10[i][0] for i in indices]).to(device)
 
     # Process real images in batches
@@ -148,7 +148,7 @@ def analyze_fid_components(
         batch = real_images[i : i + real_batch_size]
         fid_metric.update(batch, real=True)
 
-    dt_std_values = [0.02, 0.05, 0.1, 0.2, 0.3, 0.5]
+    dt_std_values = [0.05, 0.1, 0.2, 0.3, 0.5]
     for loop in range(len(dt_std_values)):
         dt_std = dt_std_values[loop]
         print(f"\n----- Loop {loop+1}/{len(dt_std_values)} (dt_std={dt_std:.3f}) -----")
@@ -198,8 +198,8 @@ def main():
     analyze_fid_components(
         sampler=sampler,
         device=device,
-        branch_keep_configs=[(1, 1), (4, 2), (8, 4), (16, 8), (16, 2)],
-        n_samples=2000,
+        branch_keep_configs=[(1, 1), (4, 2), (8, 4), (8, 1)],
+        n_samples=1000,
     )
 
 
