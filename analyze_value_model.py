@@ -132,7 +132,7 @@ def analyze_value_model_predictions(
 
                     # Store data
                     value_predictions.append(value_preds[i].item())
-                    actual_fid_changes.append(actual_fid_change)
+                    actual_fid_changes.append(-actual_fid_change / 100)
                     timestep_indices.append(branch_step)
 
     # Convert to numpy arrays for analysis
