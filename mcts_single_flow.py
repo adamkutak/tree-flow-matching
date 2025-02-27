@@ -686,6 +686,7 @@ class MCTSFlowSampler:
             # Generate samples with branching
             for step, t in enumerate(self.timesteps[:-1]):
                 base_dt = self.timesteps[step + 1] - t
+                print(base_dt)
 
                 # Flow step - process all samples in one batch
                 velocity = self.flow_model(
@@ -763,7 +764,6 @@ class MCTSFlowSampler:
                 best_idx = torch.argmax(batch_scores)
                 final_samples.append(batch_samples[best_idx])
 
-            print(current_times)
             return torch.stack(final_samples)  # shape: [batch_size, C, H, W]
 
     def regular_batch_sample(self, class_label, batch_size=16):
@@ -792,8 +792,6 @@ class MCTSFlowSampler:
                 velocity = self.flow_model(t_batch, current_samples, current_label)
                 current_samples = current_samples + velocity * dt
 
-            print(t_batch)
-            print(dt)
             return current_samples
 
     def save_models(self, path="saved_models"):
