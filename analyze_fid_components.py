@@ -189,7 +189,7 @@ def main():
         image_size=32,
         channels=3,
         device=device,
-        num_timesteps=25,
+        num_timesteps=10,
         num_classes=10,
         buffer_size=10,
     )
