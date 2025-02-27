@@ -683,6 +683,7 @@ class MCTSFlowSampler:
                 batch_size, device=self.device
             ).repeat_interleave(num_branches)
 
+            print(self.timesteps)
             # Generate samples with branching
             for step, t in enumerate(self.timesteps[:-1]):
                 base_dt = self.timesteps[step + 1] - t
