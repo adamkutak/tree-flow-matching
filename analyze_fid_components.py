@@ -148,7 +148,7 @@ def analyze_fid_components(
         batch = real_images[i : i + real_batch_size]
         fid_metric.update(batch, real=True)
 
-    dt_std_values = [0.05, 0.1, 0.2, 0.3, 0.5]
+    dt_std_values = [0.1, 0.2, 0.3, 0.5]
     for loop in range(len(dt_std_values)):
         dt_std = dt_std_values[loop]
         print(f"\n----- Loop {loop+1}/{len(dt_std_values)} (dt_std={dt_std:.3f}) -----")
