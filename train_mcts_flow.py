@@ -360,7 +360,7 @@ def main():
         image_size=image_size,
         channels=channels,
         device=device,
-        num_timesteps=5,
+        num_timesteps=10,
         num_classes=num_classes,
         # buffer_size=1000,
         buffer_size=10,
@@ -414,7 +414,7 @@ def main():
                 num_keep,
                 device,
                 sigma=0.05,
-                n_samples=5000,
+                n_samples=2000,
                 fid=fid,
             )
             print(f"Cycle {cycle + 1} - (branches={num_branches}, keep={num_keep}):")
