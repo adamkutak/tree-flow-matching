@@ -354,8 +354,8 @@ def main():
     print(f"Using device: {device}")
 
     # Set random seeds for reproducibility
-    torch.manual_seed(42)
-    np.random.seed(42)
+    # torch.manual_seed(42)
+    # np.random.seed(42)
 
     # CIFAR-10 dimensions and setup
     image_size = 32
@@ -388,7 +388,7 @@ def main():
     # Training configuration
     n_epochs_per_cycle = 1
     n_training_cycles = 100
-    branch_keep_pairs = [(1, 1), (8, 8), (12, 12), (16, 16), (32, 32)]
+    branch_keep_pairs = [(1, 1), (8, 4), (12, 6), (16, 8), (32, 16)]
 
     for cycle in range(n_training_cycles):
         print(f"\nTraining Cycle {cycle + 1}/{n_training_cycles}")
@@ -404,12 +404,11 @@ def main():
 
         # Evaluate metrics across classes after each training cycle
         for num_branches, num_keep in branch_keep_pairs:
-            fid_score, is_mean, is_std = calculate_metrics(
+            fid_score = calculate_metrics(
                 sampler, num_branches, num_keep, device, sigma=0.02
             )
             print(f"Cycle {cycle + 1} - (branches={num_branches}, keep={num_keep}):")
             print(f"   FID Score: {fid_score:.4f}")
-            print(f"   Inception Score: {is_mean:.4f} ± {is_std:.4f}")
 
 
 if __name__ == "__main__":
