@@ -683,12 +683,9 @@ class MCTSFlowSampler:
                 batch_size, device=self.device
             ).repeat_interleave(num_branches)
 
-            print(self.timesteps)
+            base_dt = 1 / self.num_timesteps
             # Generate samples with branching
-            for step, t in enumerate(self.timesteps[:-1]):
-                base_dt = self.timesteps[step + 1] - t
-                print(base_dt)
-
+            while torch.any(current_times < 1.0):
                 # Flow step - process all samples in one batch
                 velocity = self.flow_model(
                     current_times, current_samples, current_label
