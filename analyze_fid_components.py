@@ -134,7 +134,7 @@ def calculate_metrics_with_components(
 def analyze_fid_components(
     sampler,
     device,
-    branch_keep_configs=[(1, 1), (4, 2), (8, 2), (16, 4), (32, 8)],
+    branch_keep_configs=[(1, 1), (4, 2), (8, 2), (16, 4)],
     n_samples=1000,
 ):
     """
@@ -179,10 +179,6 @@ def main():
     # Use the specified GPU device
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
     print(f"Using device: {device}")
-
-    # Set random seeds for reproducibility
-    torch.manual_seed(42)
-    np.random.seed(42)
 
     # Initialize sampler
     sampler = MCTSFlowSampler(
