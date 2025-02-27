@@ -20,8 +20,8 @@ def calculate_metrics_with_components(
     fid_metric.reset()
     # Generate samples evenly across all classes
     samples_per_class = n_samples // sampler.num_classes
-    generation_batch_size = 64
-    metric_batch_size = 64
+    generation_batch_size = 20
+    metric_batch_size = 20
     generated_samples = []
 
     print(
