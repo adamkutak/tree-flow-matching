@@ -160,7 +160,7 @@ def analyze_fid_components(
                 num_keep=num_keep,
                 device=device,
                 n_samples=n_samples,
-                dt_std=0.1,
+                dt_std=0.05,
             )
 
             print(f"   FID Score: {fid_score:.4f}")
