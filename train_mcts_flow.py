@@ -388,7 +388,7 @@ def main():
     # Training configuration
     n_epochs_per_cycle = 1
     n_training_cycles = 100
-    branch_keep_pairs = [(1, 1), (8, 4), (12, 6), (16, 8), (32, 16)]
+    branch_keep_pairs = [(1, 1), (8, 4), (12, 6), (16, 8)]
 
     for cycle in range(n_training_cycles):
         print(f"\nTraining Cycle {cycle + 1}/{n_training_cycles}")
@@ -405,7 +405,7 @@ def main():
         # Evaluate metrics across classes after each training cycle
         for num_branches, num_keep in branch_keep_pairs:
             fid_score = calculate_metrics(
-                sampler, num_branches, num_keep, device, sigma=0.02
+                sampler, num_branches, num_keep, device, sigma=0.02, n_samples=1000
             )
             print(f"Cycle {cycle + 1} - (branches={num_branches}, keep={num_keep}):")
             print(f"   FID Score: {fid_score:.4f}")
