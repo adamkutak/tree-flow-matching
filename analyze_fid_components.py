@@ -199,7 +199,7 @@ def main():
         sampler=sampler,
         device=device,
         branch_keep_configs=[(1, 1), (4, 2), (8, 4), (8, 1)],
-        n_samples=1000,
+        n_samples=200,
     )
 
 
