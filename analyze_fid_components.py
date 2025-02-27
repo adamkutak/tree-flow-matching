@@ -204,7 +204,7 @@ def main():
     analyze_fid_components(
         sampler=sampler,
         device=device,
-        branch_keep_configs=[(1, 1), (4, 2), (8, 4), (16, 8), (16, 2)],
+        branch_keep_configs=[(4, 2), (8, 4), (16, 8), (16, 2)],
         n_samples=2000,
     )
 
