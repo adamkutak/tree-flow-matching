@@ -360,7 +360,7 @@ def main():
         image_size=image_size,
         channels=channels,
         device=device,
-        num_timesteps=50,
+        num_timesteps=20,
         num_classes=num_classes,
         # buffer_size=1000,
         buffer_size=10,
