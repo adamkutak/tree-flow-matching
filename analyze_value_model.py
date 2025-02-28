@@ -210,7 +210,7 @@ def analyze_value_model_predictions(
                     # Calculate FID for look-ahead samples
                     lookahead_fid_changes = []
                     for j in range(num_branches):
-                        lookahead_fid = sampler.compute_fid_change(
+                        lookahead_fid = -1 * sampler.compute_fid_change(
                             lookahead_samples[j : j + 1], class_idx
                         )
                         lookahead_fid_changes.append(lookahead_fid)
