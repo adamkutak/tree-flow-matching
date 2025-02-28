@@ -260,7 +260,7 @@ def main():
         sampler=sampler,
         device=device,
         num_samples=5000,
-        num_branches=2,
+        num_branches=8,
         dt_std=0.1,
     )
 
