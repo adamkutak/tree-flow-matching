@@ -146,7 +146,7 @@ def analyze_value_model_predictions(
                         max=1.0 - branch_times,
                     )
 
-                    # Get velocity for all branches
+                    # Get velocity for all branches in a single batched calculation
                     velocity = sampler.flow_model(branch_times, branches, branch_labels)
 
                     # Apply different step sizes to create branches
@@ -156,25 +156,19 @@ def analyze_value_model_predictions(
                     # Now simulate all branches forward one more step to a common time point
                     # Use the next timestep in the schedule after the branch point
                     next_timestep = sampler.timesteps[branch_step + 1].item()
-                    aligned_samples = []
 
-                    for j in range(num_branches):
-                        current_sample = branched_samples[j : j + 1].clone()
-                        current_time = new_times[j].item()
+                    # Calculate dt to reach the next common timestep for each branch
+                    dt_to_next = next_timestep - new_times
 
-                        # Calculate dt to reach the next common timestep
-                        dt_to_next = next_timestep - current_time
+                    # Get velocity for all branches in a single batched calculation
+                    velocity = sampler.flow_model(
+                        new_times, branched_samples, branch_labels
+                    )
 
-                        # Get velocity and step forward
-                        t_batch = torch.full((1,), current_time, device=device)
-                        velocity = sampler.flow_model(
-                            t_batch, current_sample, branch_labels[j : j + 1]
-                        )
-                        aligned_sample = current_sample + velocity * dt_to_next
-                        aligned_samples.append(aligned_sample)
-
-                    # Concatenate all aligned samples
-                    aligned_samples = torch.cat(aligned_samples, dim=0)
+                    # Apply the step to all branches at once
+                    aligned_samples = branched_samples + velocity * dt_to_next.view(
+                        -1, 1, 1, 1
+                    )
                     aligned_times = torch.full(
                         (num_branches,), next_timestep, device=device
                     )
@@ -192,60 +186,33 @@ def analyze_value_model_predictions(
                         )
                         intermediate_fid_changes.append(intermediate_fid)
 
-                    # Simulate each branch to completion
-                    final_samples = []
-                    final_times = []
-                    timestep_issues = False
+                    # Simulate all branches to completion with batched operations
+                    current_samples = aligned_samples
+                    current_time = next_timestep  # All samples are at the same time now
+                    next_step = branch_step + 1  # We know this is the correct index
 
-                    for j in range(num_branches):
-                        # Start with the aligned sample
-                        current_sample = aligned_samples[j : j + 1].clone()
-                        current_time = (
-                            next_timestep  # All samples are at the same time now
+                    # Simulate until completion with batched operations
+                    for step in range(next_step + 1, sampler.num_timesteps - 1):
+                        t = sampler.timesteps[step]
+                        dt = sampler.timesteps[step + 1] - t
+                        t_batch = torch.full((num_branches,), t.item(), device=device)
+
+                        velocity = sampler.flow_model(
+                            t_batch, current_samples, branch_labels
                         )
+                        current_samples = current_samples + velocity * dt
 
-                        # Find the next timestep index in the schedule
-                        next_step = branch_step + 1  # We know this is the correct index
-
-                        # Simulate until completion
-                        for step in range(next_step + 1, sampler.num_timesteps - 1):
-                            t = sampler.timesteps[step]
-                            dt = sampler.timesteps[step + 1] - t
-                            t_batch = torch.full((1,), t.item(), device=device)
-
-                            velocity = sampler.flow_model(
-                                t_batch, current_sample, branch_labels[j : j + 1]
-                            )
-                            current_sample = current_sample + velocity * dt
-
-                            # Track the final time for verification
-                            if step == sampler.num_timesteps - 2:
-                                final_times.append(sampler.timesteps[step + 1].item())
-
-                        final_samples.append(current_sample)
+                    # Final samples are now all in current_samples
+                    final_samples = current_samples
 
                     # Verify all branches reached t=1
-                    for j, time in enumerate(final_times):
-                        if (
-                            abs(time - 1.0) > 1e-5
-                        ):  # Check if time is not approximately 1.0
-                            print(
-                                f"WARNING: Branch {j} ended at time {time:.4f}, not t=1.0"
-                            )
-                            timestep_issues = True
-
-                    # Print detailed debug info only if there were issues
-                    if timestep_issues:
-                        print(f"Detailed branch info for problematic branch point:")
+                    final_time = sampler.timesteps[-1].item()
+                    if (
+                        abs(final_time - 1.0) > 1e-5
+                    ):  # Check if time is not approximately 1.0
                         print(
-                            f"  Branch point at timestep {branch_step}, time {branch_times[0].item():.4f}"
+                            f"WARNING: Branches ended at time {final_time:.4f}, not t=1.0"
                         )
-                        print(f"  Common aligned time: {next_timestep:.4f}")
-                        for j in range(num_branches):
-                            print(f"  Branch {j}: final_time={final_times[j]:.4f}")
-
-                    # Concatenate all final samples for this branch point
-                    final_samples = torch.cat(final_samples, dim=0)
 
                     # Calculate actual FID change for each final sample
                     actual_fid_changes = []
