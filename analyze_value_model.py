@@ -176,7 +176,7 @@ def analyze_value_model_predictions(
 
                     # Verify all branches are at the same time
                     time_diff = torch.max(torch.abs(aligned_times - next_timestep))
-                    if time_diff > 1e-6:
+                    if time_diff > 1e-8:
                         print(
                             f"WARNING: Branches not at same time. Max difference: {time_diff.item():.8f}"
                         )
@@ -199,6 +199,13 @@ def analyze_value_model_predictions(
                             aligned_samples[j : j + 1], class_idx
                         )
                         intermediate_fid_changes.append(intermediate_fid)
+
+                    lookahead_times = torch.full((num_branches,), 1.0, device=device)
+                    time_diffs = torch.abs(lookahead_times - 1.0)
+                    if torch.any(time_diffs > 1e-8):
+                        print(
+                            f"WARNING: Look-ahead samples not all at t=1. Max difference: {torch.max(time_diffs).item():.6f}"
+                        )
 
                     # Calculate FID for look-ahead samples
                     lookahead_fid_changes = []
