@@ -43,6 +43,9 @@ def analyze_value_model_predictions(
     branch_point_data = []
     timestep_data = [[] for _ in range(sampler.num_timesteps)]
 
+    # Import at the top level
+    from scipy.stats import spearmanr
+
     # Sample across all classes or specific class
     if class_label is None:
         # Distribute samples across classes
@@ -51,6 +54,9 @@ def analyze_value_model_predictions(
     else:
         samples_per_class = num_samples
         class_range = [class_label]
+
+    # Debug: Print timestep schedule
+    print(f"Timestep schedule: {sampler.timesteps.cpu().numpy()}")
 
     with torch.no_grad():
         for class_idx in class_range:
@@ -146,19 +152,49 @@ def analyze_value_model_predictions(
                         new_times, branched_samples, branch_labels
                     )
 
+                    # Calculate FID for intermediate branched samples
+                    intermediate_fid_changes = []
+                    for j in range(num_branches):
+                        intermediate_fid = sampler.compute_fid_change(
+                            branched_samples[j : j + 1], class_idx
+                        )
+                        intermediate_fid_changes.append(intermediate_fid)
+
+                    # Debug: Print branch times
+                    print(
+                        f"\nBranch point at timestep {branch_step}, time {branch_times[0].item():.4f}"
+                    )
+                    for j in range(num_branches):
+                        print(
+                            f"  Branch {j}: time after step = {new_times[j].item():.4f}"
+                        )
+
                     # Simulate each branch to completion
                     final_samples = []
+                    final_times = []
                     for j in range(num_branches):
                         # Start with the branched sample
                         current_sample = branched_samples[j : j + 1].clone()
                         current_time = new_times[j].item()
 
                         # Find the next timestep index
-                        next_step = 0
+                        next_step = None
                         for s in range(len(sampler.timesteps)):
                             if sampler.timesteps[s] >= current_time:
                                 next_step = s
                                 break
+
+                        # Debug: Check if next_step was found
+                        if next_step is None:
+                            print(
+                                f"WARNING: Could not find next timestep for time {current_time:.4f}"
+                            )
+                            # Default to the last timestep
+                            next_step = len(sampler.timesteps) - 1
+
+                        print(
+                            f"  Branch {j}: current_time={current_time:.4f}, next_step={next_step}, next_time={sampler.timesteps[next_step].item():.4f}"
+                        )
 
                         # Simulate until completion
                         for step in range(next_step, sampler.num_timesteps - 1):
@@ -171,7 +207,16 @@ def analyze_value_model_predictions(
                             )
                             current_sample = current_sample + velocity * dt
 
+                            # Track the final time for verification
+                            if step == sampler.num_timesteps - 2:
+                                final_times.append(sampler.timesteps[step + 1].item())
+
                         final_samples.append(current_sample)
+
+                    # Debug: Verify all branches reached t=1
+                    print("  Final times for all branches:")
+                    for j, time in enumerate(final_times):
+                        print(f"    Branch {j}: final time = {time:.4f}")
 
                     # Concatenate all final samples for this branch point
                     final_samples = torch.cat(final_samples, dim=0)
@@ -184,57 +229,118 @@ def analyze_value_model_predictions(
                         )
                         actual_fid_changes.append(fid_change)
 
+                    # Calculate correlation between intermediate FID and final FID
+                    if len(intermediate_fid_changes) > 1:
+                        intermediate_final_corr, _ = spearmanr(
+                            intermediate_fid_changes, actual_fid_changes
+                        )
+                        print(
+                            f"  Correlation between intermediate FID and final FID: {intermediate_final_corr:.4f}"
+                        )
+                    else:
+                        intermediate_final_corr = float("nan")
+                        print(
+                            "  Insufficient data for intermediate-final FID correlation"
+                        )
+
                     # Store data for this branch point
                     branch_data = {
                         "value_predictions": value_preds.cpu().numpy(),
+                        "intermediate_fid_changes": np.array(intermediate_fid_changes),
                         "actual_fid_changes": np.array(actual_fid_changes),
                         "timestep": branch_step,
+                        "intermediate_final_corr": intermediate_final_corr,
                     }
                     branch_point_data.append(branch_data)
                     timestep_data[branch_step].append(branch_data)
 
     # Calculate rank correlations for each branch point
     branch_correlations = []
+    intermediate_final_correlations = []
     for branch_data in branch_point_data:
-        # Calculate Spearman's rank correlation
-        from scipy.stats import spearmanr
-
         # Only calculate if we have enough branches
         if len(branch_data["value_predictions"]) > 1:
+            # Value model vs final FID correlation
             corr, _ = spearmanr(
                 branch_data["value_predictions"], branch_data["actual_fid_changes"]
             )
             branch_correlations.append(corr)
 
-    # Calculate average correlation across all branch points
-    avg_correlation = np.mean(branch_correlations)
+            # Intermediate FID vs final FID correlation
+            if not np.isnan(branch_data["intermediate_final_corr"]):
+                intermediate_final_correlations.append(
+                    branch_data["intermediate_final_corr"]
+                )
+
+    # Calculate average correlations
+    avg_correlation = (
+        np.mean(branch_correlations) if branch_correlations else float("nan")
+    )
+    avg_intermediate_final_corr = (
+        np.mean(intermediate_final_correlations)
+        if intermediate_final_correlations
+        else float("nan")
+    )
+
     print(f"Average rank correlation across all branch points: {avg_correlation:.4f}")
+    print(
+        f"Average correlation between intermediate FID and final FID: {avg_intermediate_final_corr:.4f}"
+    )
 
     # Calculate per-timestep average correlations
     timestep_correlations = []
+    timestep_intermediate_final_correlations = []
+
     for step in range(sampler.num_timesteps):
         step_correlations = []
+        step_intermediate_final_correlations = []
+
         for branch_data in timestep_data[step]:
             if len(branch_data["value_predictions"]) > 1:
+                # Value model vs final FID correlation
                 corr, _ = spearmanr(
                     branch_data["value_predictions"], branch_data["actual_fid_changes"]
                 )
                 step_correlations.append(corr)
 
+                # Intermediate FID vs final FID correlation
+                if not np.isnan(branch_data["intermediate_final_corr"]):
+                    step_intermediate_final_correlations.append(
+                        branch_data["intermediate_final_corr"]
+                    )
+
         if step_correlations:
             avg_step_corr = np.mean(step_correlations)
             timestep_correlations.append(avg_step_corr)
             print(
-                f"  Timestep {step}: {avg_step_corr:.4f} (from {len(step_correlations)} branch points)"
+                f"  Timestep {step}: Value-Final correlation: {avg_step_corr:.4f} (from {len(step_correlations)} branch points)"
             )
         else:
             timestep_correlations.append(np.nan)
-            print(f"  Timestep {step}: insufficient data")
+            print(f"  Timestep {step}: insufficient data for Value-Final correlation")
+
+        if step_intermediate_final_correlations:
+            avg_step_intermediate_final_corr = np.mean(
+                step_intermediate_final_correlations
+            )
+            timestep_intermediate_final_correlations.append(
+                avg_step_intermediate_final_corr
+            )
+            print(
+                f"  Timestep {step}: Intermediate-Final correlation: {avg_step_intermediate_final_corr:.4f} (from {len(step_intermediate_final_correlations)} branch points)"
+            )
+        else:
+            timestep_intermediate_final_correlations.append(np.nan)
+            print(
+                f"  Timestep {step}: insufficient data for Intermediate-Final correlation"
+            )
 
     # Return data for potential plotting
     return {
         "overall_correlation": avg_correlation,
+        "overall_intermediate_final_correlation": avg_intermediate_final_corr,
         "timestep_correlations": timestep_correlations,
+        "timestep_intermediate_final_correlations": timestep_intermediate_final_correlations,
         "branch_point_data": branch_point_data,
     }
 
