@@ -39,10 +39,9 @@ def analyze_value_model_predictions(
     sampler.flow_model.eval()
     sampler.value_model.eval()
 
-    # Data collection
-    value_predictions = []
-    actual_fid_changes = []
-    timestep_indices = []
+    # Data collection for per-branch-point analysis
+    branch_point_data = []
+    timestep_data = [[] for _ in range(sampler.num_timesteps)]
 
     # Sample across all classes or specific class
     if class_label is None:
@@ -110,172 +109,135 @@ def analyze_value_model_predictions(
                     x[active_mask] = active_x
                     current_times[active_mask] = sampler.timesteps[step + 1].item()
 
-                # Create branches for all samples
-                all_branches = []
-                all_branch_labels = []
-                all_branch_times = []
-                all_branch_indices = (
-                    []
-                )  # To track which original sample each branch belongs to
-
+                # Process each sample's branches separately to maintain branch point grouping
                 for i in range(actual_batch_size):
+                    branch_step = branch_steps[i].item()
+
+                    # Create branches for this sample
                     branches = x[i : i + 1].repeat(num_branches, 1, 1, 1)
                     branch_labels = label[i : i + 1].repeat(num_branches)
                     branch_times = torch.full(
                         (num_branches,), current_times[i].item(), device=device
                     )
 
-                    all_branches.append(branches)
-                    all_branch_labels.append(branch_labels)
-                    all_branch_times.append(branch_times)
-                    all_branch_indices.append(
-                        torch.full((num_branches,), i, device=device)
+                    # Sample different dt values for each branch
+                    base_dt = 1.0 / sampler.num_timesteps
+                    dts = torch.normal(
+                        mean=base_dt,
+                        std=dt_std * base_dt,
+                        size=(num_branches,),
+                        device=device,
+                    )
+                    dts = torch.clamp(
+                        dts,
+                        min=torch.tensor(0.0, device=device),
+                        max=1.0 - branch_times,
                     )
 
-                # Concatenate all branches
-                all_branches = torch.cat(all_branches, dim=0)
-                all_branch_labels = torch.cat(all_branch_labels, dim=0)
-                all_branch_times = torch.cat(all_branch_times, dim=0)
-                all_branch_indices = torch.cat(all_branch_indices, dim=0)
+                    # Get velocity for all branches
+                    velocity = sampler.flow_model(branch_times, branches, branch_labels)
 
-                # Sample different dt values for each branch
-                base_dt = 1.0 / sampler.num_timesteps
-                dts = torch.normal(
-                    mean=base_dt,
-                    std=dt_std * base_dt,
-                    size=(len(all_branches),),
-                    device=device,
-                )
-                dts = torch.clamp(
-                    dts,
-                    min=torch.tensor(0.0, device=device),
-                    max=1.0 - all_branch_times,
-                )
+                    # Apply different step sizes to create branches
+                    branched_samples = branches + velocity * dts.view(-1, 1, 1, 1)
+                    new_times = branch_times + dts
 
-                # Get velocity for all branches at once
-                velocity = sampler.flow_model(
-                    all_branch_times, all_branches, all_branch_labels
-                )
-
-                # Apply different step sizes to create branches
-                branched_samples = all_branches + velocity * dts.view(-1, 1, 1, 1)
-                new_times = all_branch_times + dts
-
-                # Get value model predictions for all branches at once
-                value_preds = sampler.value_model(
-                    new_times, branched_samples, all_branch_labels
-                )
-
-                # Now simulate each branch to completion without further branching
-                # We'll process this in sub-batches to avoid memory issues
-                sub_batch_size = 50  # Adjust based on your GPU memory
-                num_sub_batches = (
-                    len(branched_samples) + sub_batch_size - 1
-                ) // sub_batch_size
-
-                all_final_samples = []
-
-                for sub_idx in range(num_sub_batches):
-                    start_idx = sub_idx * sub_batch_size
-                    end_idx = min((sub_idx + 1) * sub_batch_size, len(branched_samples))
-
-                    sub_samples = branched_samples[start_idx:end_idx]
-                    sub_times = new_times[start_idx:end_idx]
-                    sub_labels = all_branch_labels[start_idx:end_idx]
-
-                    # Continue simulation to the end for each sample in the sub-batch
-                    current_sub_samples = sub_samples.clone()
-                    current_sub_times = sub_times.clone()
-
-                    # Find the next timestep index for each sample
-                    next_steps = torch.zeros(
-                        len(current_sub_times), dtype=torch.long, device=device
+                    # Get value model predictions for all branches
+                    value_preds = sampler.value_model(
+                        new_times, branched_samples, branch_labels
                     )
-                    for i, time in enumerate(current_sub_times):
-                        for j in range(len(sampler.timesteps)):
-                            if sampler.timesteps[j] >= time:
-                                next_steps[i] = j
+
+                    # Simulate each branch to completion
+                    final_samples = []
+                    for j in range(num_branches):
+                        # Start with the branched sample
+                        current_sample = branched_samples[j : j + 1].clone()
+                        current_time = new_times[j].item()
+
+                        # Find the next timestep index
+                        next_step = 0
+                        for s in range(len(sampler.timesteps)):
+                            if sampler.timesteps[s] >= current_time:
+                                next_step = s
                                 break
 
-                    # Simulate until all samples reach the end
-                    for step in range(sampler.num_timesteps - 1):
-                        # Find which samples need to be updated at this step
-                        active_mask = next_steps <= step
-                        if not active_mask.any():
-                            continue
+                        # Simulate until completion
+                        for step in range(next_step, sampler.num_timesteps - 1):
+                            t = sampler.timesteps[step]
+                            dt = sampler.timesteps[step + 1] - t
+                            t_batch = torch.full((1,), t.item(), device=device)
 
-                        active_samples = current_sub_samples[active_mask]
-                        active_labels = sub_labels[active_mask]
+                            velocity = sampler.flow_model(
+                                t_batch, current_sample, branch_labels[j : j + 1]
+                            )
+                            current_sample = current_sample + velocity * dt
 
-                        t = sampler.timesteps[step]
-                        dt = sampler.timesteps[step + 1] - t
-                        t_batch = torch.full(
-                            (active_mask.sum(),), t.item(), device=device
+                        final_samples.append(current_sample)
+
+                    # Concatenate all final samples for this branch point
+                    final_samples = torch.cat(final_samples, dim=0)
+
+                    # Calculate actual FID change for each final sample
+                    actual_fid_changes = []
+                    for j in range(num_branches):
+                        fid_change = sampler.compute_fid_change(
+                            final_samples[j : j + 1], class_idx
                         )
+                        actual_fid_changes.append(
+                            fid_change / 100
+                        )  # Scale as in original code
 
-                        velocity = sampler.flow_model(
-                            t_batch, active_samples, active_labels
-                        )
-                        active_samples = active_samples + velocity * dt
+                    # Store data for this branch point
+                    branch_data = {
+                        "value_predictions": value_preds.cpu().numpy(),
+                        "actual_fid_changes": np.array(actual_fid_changes),
+                        "timestep": branch_step,
+                    }
+                    branch_point_data.append(branch_data)
+                    timestep_data[branch_step].append(branch_data)
 
-                        # Update the samples
-                        current_sub_samples[active_mask] = active_samples
+    # Calculate rank correlations for each branch point
+    branch_correlations = []
+    for branch_data in branch_point_data:
+        # Calculate Spearman's rank correlation
+        from scipy.stats import spearmanr
 
-                    all_final_samples.append(current_sub_samples)
+        # Only calculate if we have enough branches
+        if len(branch_data["value_predictions"]) > 1:
+            corr, _ = spearmanr(
+                branch_data["value_predictions"], branch_data["actual_fid_changes"]
+            )
+            branch_correlations.append(corr)
 
-                # Concatenate all final samples
-                all_final_samples = torch.cat(all_final_samples, dim=0)
+    # Calculate average correlation across all branch points
+    avg_correlation = np.mean(branch_correlations)
+    print(f"Average rank correlation across all branch points: {avg_correlation:.4f}")
 
-                # Calculate actual FID change for each final sample
-                for i in range(len(all_final_samples)):
-                    sample_idx = all_branch_indices[i].item()
-                    branch_step = branch_steps[sample_idx].item()
-
-                    actual_fid_change = sampler.compute_fid_change(
-                        all_final_samples[i : i + 1], class_idx
-                    )
-
-                    # Store data
-                    value_predictions.append(value_preds[i].item())
-                    actual_fid_changes.append(actual_fid_change / 100)
-                    timestep_indices.append(branch_step)
-
-    # Convert to numpy arrays for analysis
-    value_predictions = np.array(value_predictions)
-    actual_fid_changes = np.array(actual_fid_changes)
-    timestep_indices = np.array(timestep_indices)
-
-    # Calculate overall correlation
-    overall_corr = np.corrcoef(value_predictions, actual_fid_changes)[0, 1]
-    print(f"Overall correlation: {overall_corr:.4f}")
-
-    # Calculate per-timestep correlations
+    # Calculate per-timestep average correlations
     timestep_correlations = []
     for step in range(sampler.num_timesteps):
-        mask = timestep_indices == step
-        if np.sum(mask) > 1:  # Need at least 2 points for correlation
-            step_corr = np.corrcoef(value_predictions[mask], actual_fid_changes[mask])[
-                0, 1
-            ]
-            timestep_correlations.append(step_corr)
+        step_correlations = []
+        for branch_data in timestep_data[step]:
+            if len(branch_data["value_predictions"]) > 1:
+                corr, _ = spearmanr(
+                    branch_data["value_predictions"], branch_data["actual_fid_changes"]
+                )
+                step_correlations.append(corr)
+
+        if step_correlations:
+            avg_step_corr = np.mean(step_correlations)
+            timestep_correlations.append(avg_step_corr)
+            print(
+                f"  Timestep {step}: {avg_step_corr:.4f} (from {len(step_correlations)} branch points)"
+            )
         else:
             timestep_correlations.append(np.nan)
-
-    # Print per-timestep correlations
-    print("\nPer-timestep correlations:")
-    for step, corr in enumerate(timestep_correlations):
-        if not np.isnan(corr):
-            print(f"  Timestep {step}: {corr:.4f}")
-        else:
             print(f"  Timestep {step}: insufficient data")
 
     # Return data for potential plotting
     return {
-        "overall_correlation": overall_corr,
+        "overall_correlation": avg_correlation,
         "timestep_correlations": timestep_correlations,
-        "value_predictions": value_predictions,
-        "actual_fid_changes": actual_fid_changes,
-        "timestep_indices": timestep_indices,
+        "branch_point_data": branch_point_data,
     }
 
 
