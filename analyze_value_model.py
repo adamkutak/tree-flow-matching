@@ -58,6 +58,11 @@ def analyze_value_model_predictions(
     # Print timestep schedule only once
     print(f"Timestep schedule: {sampler.timesteps.cpu().numpy()}")
 
+    # Counters for top branch matching
+    value_top_match_count = 0
+    intermediate_top_match_count = 0
+    total_branch_points = 0
+
     with torch.no_grad():
         for class_idx in class_range:
             print(f"Processing class {class_idx}...")
@@ -258,6 +263,21 @@ def analyze_value_model_predictions(
                     else:
                         intermediate_final_corr = float("nan")
 
+                    # Check if top branch matches
+                    if len(value_preds) > 1 and len(actual_fid_changes) > 1:
+                        total_branch_points += 1
+
+                        # For value model predictions (lower is better for FID)
+                        value_best_idx = torch.argmin(value_preds).item()
+                        final_best_idx = np.argmin(actual_fid_changes)
+                        if value_best_idx == final_best_idx:
+                            value_top_match_count += 1
+
+                        # For intermediate FID (lower is better for FID)
+                        intermediate_best_idx = np.argmin(intermediate_fid_changes)
+                        if intermediate_best_idx == final_best_idx:
+                            intermediate_top_match_count += 1
+
                     # Store data for this branch point
                     branch_data = {
                         "value_predictions": value_preds.cpu().numpy(),
@@ -297,14 +317,44 @@ def analyze_value_model_predictions(
         else float("nan")
     )
 
-    print(f"Average rank correlation across all branch points: {avg_correlation:.4f}")
+    # Calculate top branch match percentages
+    value_top_match_pct = (
+        (value_top_match_count / total_branch_points * 100)
+        if total_branch_points > 0
+        else 0
+    )
+    intermediate_top_match_pct = (
+        (intermediate_top_match_count / total_branch_points * 100)
+        if total_branch_points > 0
+        else 0
+    )
+
+    # Print Value Model correlation results
+    print("\n===== Value Model Correlation Results =====")
     print(
-        f"Average correlation between intermediate FID and final FID: {avg_intermediate_final_corr:.4f}"
+        f"Average value-final correlation across all branch points: {avg_correlation:.4f}"
+    )
+    print(
+        f"Value model top branch match percentage: {value_top_match_pct:.2f}% ({value_top_match_count}/{total_branch_points})"
+    )
+
+    # Print Intermediate FID correlation results
+    print("\n===== Intermediate FID Correlation Results =====")
+    print(
+        f"Average intermediate-final correlation across all branch points: {avg_intermediate_final_corr:.4f}"
+    )
+    print(
+        f"Intermediate FID top branch match percentage: {intermediate_top_match_pct:.2f}% ({intermediate_top_match_count}/{total_branch_points})"
     )
 
     # Calculate per-timestep average correlations
+    print("\n===== Per-Timestep Correlation Analysis =====")
+    print("\nValue Model correlations by timestep:")
     timestep_correlations = []
     timestep_intermediate_final_correlations = []
+    timestep_value_match_counts = [0] * sampler.num_timesteps
+    timestep_intermediate_match_counts = [0] * sampler.num_timesteps
+    timestep_branch_counts = [0] * sampler.num_timesteps
 
     for step in range(sampler.num_timesteps):
         step_correlations = []
@@ -324,15 +374,49 @@ def analyze_value_model_predictions(
                         branch_data["intermediate_final_corr"]
                     )
 
+                # Count top matches for this timestep
+                timestep_branch_counts[step] += 1
+
+                # Check top branch matches
+                value_best_idx = np.argmin(branch_data["value_predictions"])
+                final_best_idx = np.argmin(branch_data["actual_fid_changes"])
+                intermediate_best_idx = np.argmin(
+                    branch_data["intermediate_fid_changes"]
+                )
+
+                if value_best_idx == final_best_idx:
+                    timestep_value_match_counts[step] += 1
+
+                if intermediate_best_idx == final_best_idx:
+                    timestep_intermediate_match_counts[step] += 1
+
         if step_correlations:
             avg_step_corr = np.mean(step_correlations)
             timestep_correlations.append(avg_step_corr)
+
+            # Calculate match percentage for this timestep
+            match_pct = (
+                (timestep_value_match_counts[step] / timestep_branch_counts[step] * 100)
+                if timestep_branch_counts[step] > 0
+                else 0
+            )
+
             print(
-                f"  Timestep {step}: Value-Final correlation: {avg_step_corr:.4f} (from {len(step_correlations)} branch points)"
+                f"  Timestep {step}: correlation={avg_step_corr:.4f}, top match={match_pct:.1f}% ({timestep_value_match_counts[step]}/{timestep_branch_counts[step]})"
             )
         else:
             timestep_correlations.append(np.nan)
-            print(f"  Timestep {step}: insufficient data for Value-Final correlation")
+            print(f"  Timestep {step}: insufficient data")
+
+    print("\nIntermediate FID correlations by timestep:")
+    for step in range(sampler.num_timesteps):
+        step_intermediate_final_correlations = []
+
+        for branch_data in timestep_data[step]:
+            if not np.isnan(branch_data["intermediate_final_corr"]):
+                step_intermediate_final_correlations.append(
+                    branch_data["intermediate_final_corr"]
+                )
 
         if step_intermediate_final_correlations:
             avg_step_intermediate_final_corr = np.mean(
@@ -341,14 +425,24 @@ def analyze_value_model_predictions(
             timestep_intermediate_final_correlations.append(
                 avg_step_intermediate_final_corr
             )
+
+            # Calculate match percentage for this timestep
+            match_pct = (
+                (
+                    timestep_intermediate_match_counts[step]
+                    / timestep_branch_counts[step]
+                    * 100
+                )
+                if timestep_branch_counts[step] > 0
+                else 0
+            )
+
             print(
-                f"  Timestep {step}: Intermediate-Final correlation: {avg_step_intermediate_final_corr:.4f} (from {len(step_intermediate_final_correlations)} branch points)"
+                f"  Timestep {step}: correlation={avg_step_intermediate_final_corr:.4f}, top match={match_pct:.1f}% ({timestep_intermediate_match_counts[step]}/{timestep_branch_counts[step]})"
             )
         else:
             timestep_intermediate_final_correlations.append(np.nan)
-            print(
-                f"  Timestep {step}: insufficient data for Intermediate-Final correlation"
-            )
+            print(f"  Timestep {step}: insufficient data")
 
     # Return data for potential plotting
     return {
@@ -356,6 +450,8 @@ def analyze_value_model_predictions(
         "overall_intermediate_final_correlation": avg_intermediate_final_corr,
         "timestep_correlations": timestep_correlations,
         "timestep_intermediate_final_correlations": timestep_intermediate_final_correlations,
+        "value_top_match_percentage": value_top_match_pct,
+        "intermediate_top_match_percentage": intermediate_top_match_pct,
         "branch_point_data": branch_point_data,
     }
 
