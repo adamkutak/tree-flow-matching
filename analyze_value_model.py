@@ -91,9 +91,10 @@ def analyze_value_model_predictions(
                 )
                 label = torch.full((actual_batch_size,), class_idx, device=device)
 
-                # Choose random timesteps to branch at (between 0 and num_timesteps-2)
+                # Choose random timesteps to branch at (between 0 and num_timesteps-3)
+                # We need at least 2 more steps after branching
                 branch_steps = torch.randint(
-                    0, sampler.num_timesteps - 1, (actual_batch_size,)
+                    0, sampler.num_timesteps - 2, (actual_batch_size,)
                 ).to(device)
 
                 # Track current time for each sample
@@ -152,16 +153,42 @@ def analyze_value_model_predictions(
                     branched_samples = branches + velocity * dts.view(-1, 1, 1, 1)
                     new_times = branch_times + dts
 
-                    # Get value model predictions for all branches
-                    value_preds = sampler.value_model(
-                        new_times, branched_samples, branch_labels
+                    # Now simulate all branches forward one more step to a common time point
+                    # Use the next timestep in the schedule after the branch point
+                    next_timestep = sampler.timesteps[branch_step + 1].item()
+                    aligned_samples = []
+
+                    for j in range(num_branches):
+                        current_sample = branched_samples[j : j + 1].clone()
+                        current_time = new_times[j].item()
+
+                        # Calculate dt to reach the next common timestep
+                        dt_to_next = next_timestep - current_time
+
+                        # Get velocity and step forward
+                        t_batch = torch.full((1,), current_time, device=device)
+                        velocity = sampler.flow_model(
+                            t_batch, current_sample, branch_labels[j : j + 1]
+                        )
+                        aligned_sample = current_sample + velocity * dt_to_next
+                        aligned_samples.append(aligned_sample)
+
+                    # Concatenate all aligned samples
+                    aligned_samples = torch.cat(aligned_samples, dim=0)
+                    aligned_times = torch.full(
+                        (num_branches,), next_timestep, device=device
                     )
 
-                    # Calculate FID for intermediate branched samples
+                    # Get value model predictions for all aligned branches
+                    value_preds = sampler.value_model(
+                        aligned_times, aligned_samples, branch_labels
+                    )
+
+                    # Calculate FID for intermediate aligned samples
                     intermediate_fid_changes = []
                     for j in range(num_branches):
                         intermediate_fid = sampler.compute_fid_change(
-                            branched_samples[j : j + 1], class_idx
+                            aligned_samples[j : j + 1], class_idx
                         )
                         intermediate_fid_changes.append(intermediate_fid)
 
@@ -171,34 +198,17 @@ def analyze_value_model_predictions(
                     timestep_issues = False
 
                     for j in range(num_branches):
-                        # Start with the branched sample
-                        current_sample = branched_samples[j : j + 1].clone()
-                        current_time = new_times[j].item()
+                        # Start with the aligned sample
+                        current_sample = aligned_samples[j : j + 1].clone()
+                        current_time = (
+                            next_timestep  # All samples are at the same time now
+                        )
 
-                        # Find the next timestep index
-                        next_step = None
-                        for s in range(len(sampler.timesteps)):
-                            if sampler.timesteps[s] >= current_time:
-                                next_step = s
-                                break
-
-                        # Check if next_step was found
-                        if next_step is None:
-                            print(
-                                f"WARNING: Could not find next timestep for time {current_time:.4f}"
-                            )
-                            print(
-                                f"Branch point at timestep {branch_step}, time {branch_times[0].item():.4f}"
-                            )
-                            print(
-                                f"Branch {j}: time after step = {new_times[j].item():.4f}"
-                            )
-                            # Default to the last timestep
-                            next_step = len(sampler.timesteps) - 1
-                            timestep_issues = True
+                        # Find the next timestep index in the schedule
+                        next_step = branch_step + 1  # We know this is the correct index
 
                         # Simulate until completion
-                        for step in range(next_step, sampler.num_timesteps - 1):
+                        for step in range(next_step + 1, sampler.num_timesteps - 1):
                             t = sampler.timesteps[step]
                             dt = sampler.timesteps[step + 1] - t
                             t_batch = torch.full((1,), t.item(), device=device)
@@ -230,19 +240,9 @@ def analyze_value_model_predictions(
                         print(
                             f"  Branch point at timestep {branch_step}, time {branch_times[0].item():.4f}"
                         )
+                        print(f"  Common aligned time: {next_timestep:.4f}")
                         for j in range(num_branches):
-                            print(
-                                f"  Branch {j}: time after step = {new_times[j].item():.4f}"
-                            )
-                            # Find the next timestep index again for debugging
-                            next_step = None
-                            for s in range(len(sampler.timesteps)):
-                                if sampler.timesteps[s] >= new_times[j].item():
-                                    next_step = s
-                                    break
-                            print(
-                                f"  Branch {j}: next_step={next_step}, final_time={final_times[j]:.4f}"
-                            )
+                            print(f"  Branch {j}: final_time={final_times[j]:.4f}")
 
                     # Concatenate all final samples for this branch point
                     final_samples = torch.cat(final_samples, dim=0)
