@@ -66,6 +66,14 @@ def train_large_flow_model(
     # Create directory for saving models
     os.makedirs("saved_models", exist_ok=True)
 
+    # Check if a saved model exists and load it
+    save_path = f"saved_models/large_flow_model.pt"
+    if os.path.exists(save_path):
+        print(f"Loading existing model from {save_path}")
+        sampler.flow_model.load_state_dict(torch.load(save_path, map_location=device))
+    else:
+        print("No existing model found. Starting training from scratch.")
+
     # Track metrics over training
     metrics_history = []
 
@@ -116,9 +124,9 @@ if __name__ == "__main__":
 
     train_large_flow_model(
         num_epochs=1000,
-        batch_size=192,
+        batch_size=128,
         device=device,
         save_interval=50,
         num_channels=256,
-        num_timesteps=50,
+        num_timesteps=10,
     )
