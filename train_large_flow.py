@@ -9,6 +9,7 @@ import numpy as np
 
 from mcts_single_flow import MCTSFlowSampler
 from train_mcts_flow import calculate_metrics
+import torchmetrics.image.fid as FID
 
 
 def train_large_flow_model(
@@ -49,6 +50,21 @@ def train_large_flow_model(
         root="./data", train=True, download=True, transform=transform
     )
     train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
+
+    # Initialize metrics
+    fid = FID.FrechetInceptionDistance(normalize=True, reset_real_features=False).to(
+        device
+    )
+    # Randomly sample real images
+    indices = np.random.choice(len(train_dataset), 5000, replace=False)
+    real_images = torch.stack([train_dataset[i][0] for i in indices]).to(device)
+
+    # Process real images in batches
+    real_batch_size = 100
+    print("Processing real images...")
+    for i in range(0, len(real_images), real_batch_size):
+        batch = real_images[i : i + real_batch_size]
+        fid.update(batch, real=True)
 
     # Initialize sampler with larger UNet model
     sampler = MCTSFlowSampler(
@@ -104,6 +120,7 @@ def train_large_flow_model(
                 device=device,
                 n_samples=5000,
                 sigma=0.0,
+                fid=fid,
             )
 
             metrics_history.append(

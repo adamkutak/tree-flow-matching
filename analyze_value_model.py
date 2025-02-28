@@ -182,9 +182,7 @@ def analyze_value_model_predictions(
                         fid_change = sampler.compute_fid_change(
                             final_samples[j : j + 1], class_idx
                         )
-                        actual_fid_changes.append(
-                            fid_change / 100
-                        )  # Scale as in original code
+                        actual_fid_changes.append(fid_change)
 
                     # Store data for this branch point
                     branch_data = {
