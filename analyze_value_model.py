@@ -55,7 +55,7 @@ def analyze_value_model_predictions(
         samples_per_class = num_samples
         class_range = [class_label]
 
-    # Debug: Print timestep schedule
+    # Print timestep schedule only once
     print(f"Timestep schedule: {sampler.timesteps.cpu().numpy()}")
 
     with torch.no_grad():
@@ -160,18 +160,11 @@ def analyze_value_model_predictions(
                         )
                         intermediate_fid_changes.append(intermediate_fid)
 
-                    # Debug: Print branch times
-                    print(
-                        f"\nBranch point at timestep {branch_step}, time {branch_times[0].item():.4f}"
-                    )
-                    for j in range(num_branches):
-                        print(
-                            f"  Branch {j}: time after step = {new_times[j].item():.4f}"
-                        )
-
                     # Simulate each branch to completion
                     final_samples = []
                     final_times = []
+                    timestep_issues = False
+
                     for j in range(num_branches):
                         # Start with the branched sample
                         current_sample = branched_samples[j : j + 1].clone()
@@ -184,17 +177,20 @@ def analyze_value_model_predictions(
                                 next_step = s
                                 break
 
-                        # Debug: Check if next_step was found
+                        # Check if next_step was found
                         if next_step is None:
                             print(
                                 f"WARNING: Could not find next timestep for time {current_time:.4f}"
                             )
+                            print(
+                                f"Branch point at timestep {branch_step}, time {branch_times[0].item():.4f}"
+                            )
+                            print(
+                                f"Branch {j}: time after step = {new_times[j].item():.4f}"
+                            )
                             # Default to the last timestep
                             next_step = len(sampler.timesteps) - 1
-
-                        print(
-                            f"  Branch {j}: current_time={current_time:.4f}, next_step={next_step}, next_time={sampler.timesteps[next_step].item():.4f}"
-                        )
+                            timestep_issues = True
 
                         # Simulate until completion
                         for step in range(next_step, sampler.num_timesteps - 1):
@@ -213,10 +209,35 @@ def analyze_value_model_predictions(
 
                         final_samples.append(current_sample)
 
-                    # Debug: Verify all branches reached t=1
-                    print("  Final times for all branches:")
+                    # Verify all branches reached t=1
                     for j, time in enumerate(final_times):
-                        print(f"    Branch {j}: final time = {time:.4f}")
+                        if (
+                            abs(time - 1.0) > 1e-5
+                        ):  # Check if time is not approximately 1.0
+                            print(
+                                f"WARNING: Branch {j} ended at time {time:.4f}, not t=1.0"
+                            )
+                            timestep_issues = True
+
+                    # Print detailed debug info only if there were issues
+                    if timestep_issues:
+                        print(f"Detailed branch info for problematic branch point:")
+                        print(
+                            f"  Branch point at timestep {branch_step}, time {branch_times[0].item():.4f}"
+                        )
+                        for j in range(num_branches):
+                            print(
+                                f"  Branch {j}: time after step = {new_times[j].item():.4f}"
+                            )
+                            # Find the next timestep index again for debugging
+                            next_step = None
+                            for s in range(len(sampler.timesteps)):
+                                if sampler.timesteps[s] >= new_times[j].item():
+                                    next_step = s
+                                    break
+                            print(
+                                f"  Branch {j}: next_step={next_step}, final_time={final_times[j]:.4f}"
+                            )
 
                     # Concatenate all final samples for this branch point
                     final_samples = torch.cat(final_samples, dim=0)
@@ -234,14 +255,8 @@ def analyze_value_model_predictions(
                         intermediate_final_corr, _ = spearmanr(
                             intermediate_fid_changes, actual_fid_changes
                         )
-                        print(
-                            f"  Correlation between intermediate FID and final FID: {intermediate_final_corr:.4f}"
-                        )
                     else:
                         intermediate_final_corr = float("nan")
-                        print(
-                            "  Insufficient data for intermediate-final FID correlation"
-                        )
 
                     # Store data for this branch point
                     branch_data = {
