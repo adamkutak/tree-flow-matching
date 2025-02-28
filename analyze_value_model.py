@@ -61,6 +61,7 @@ def analyze_value_model_predictions(
     # Counters for top branch matching
     value_top_match_count = 0
     intermediate_top_match_count = 0
+    lookahead_top_match_count = 0
     total_branch_points = 0
 
     with torch.no_grad():
@@ -173,6 +174,19 @@ def analyze_value_model_predictions(
                         (num_branches,), next_timestep, device=device
                     )
 
+                    # Verify all branches are at the same time
+                    time_diff = torch.max(torch.abs(aligned_times - next_timestep))
+                    if time_diff > 1e-6:
+                        print(
+                            f"WARNING: Branches not at same time. Max difference: {time_diff.item():.8f}"
+                        )
+
+                    # Create look-ahead samples by extrapolating linearly to t=1
+                    dt_to_end = 1.0 - aligned_times
+                    lookahead_samples = aligned_samples + velocity * dt_to_end.view(
+                        -1, 1, 1, 1
+                    )
+
                     # Get value model predictions for all aligned branches
                     value_preds = sampler.value_model(
                         aligned_times, aligned_samples, branch_labels
@@ -185,6 +199,14 @@ def analyze_value_model_predictions(
                             aligned_samples[j : j + 1], class_idx
                         )
                         intermediate_fid_changes.append(intermediate_fid)
+
+                    # Calculate FID for look-ahead samples
+                    lookahead_fid_changes = []
+                    for j in range(num_branches):
+                        lookahead_fid = sampler.compute_fid_change(
+                            lookahead_samples[j : j + 1], class_idx
+                        )
+                        lookahead_fid_changes.append(lookahead_fid)
 
                     # Simulate all branches to completion with batched operations
                     current_samples = aligned_samples
@@ -230,6 +252,14 @@ def analyze_value_model_predictions(
                     else:
                         intermediate_final_corr = float("nan")
 
+                    # Calculate correlation between look-ahead FID and final FID
+                    if len(lookahead_fid_changes) > 1:
+                        lookahead_final_corr, _ = spearmanr(
+                            lookahead_fid_changes, actual_fid_changes
+                        )
+                    else:
+                        lookahead_final_corr = float("nan")
+
                     # Check if top branch matches
                     if len(value_preds) > 1 and len(actual_fid_changes) > 1:
                         total_branch_points += 1
@@ -245,13 +275,20 @@ def analyze_value_model_predictions(
                         if intermediate_best_idx == final_best_idx:
                             intermediate_top_match_count += 1
 
+                        # For look-ahead FID (lower is better for FID)
+                        lookahead_best_idx = np.argmin(lookahead_fid_changes)
+                        if lookahead_best_idx == final_best_idx:
+                            lookahead_top_match_count += 1
+
                     # Store data for this branch point
                     branch_data = {
                         "value_predictions": value_preds.cpu().numpy(),
                         "intermediate_fid_changes": np.array(intermediate_fid_changes),
+                        "lookahead_fid_changes": np.array(lookahead_fid_changes),
                         "actual_fid_changes": np.array(actual_fid_changes),
                         "timestep": branch_step,
                         "intermediate_final_corr": intermediate_final_corr,
+                        "lookahead_final_corr": lookahead_final_corr,
                     }
                     branch_point_data.append(branch_data)
                     timestep_data[branch_step].append(branch_data)
@@ -259,6 +296,8 @@ def analyze_value_model_predictions(
     # Calculate rank correlations for each branch point
     branch_correlations = []
     intermediate_final_correlations = []
+    lookahead_final_correlations = []
+
     for branch_data in branch_point_data:
         # Only calculate if we have enough branches
         if len(branch_data["value_predictions"]) > 1:
@@ -274,6 +313,10 @@ def analyze_value_model_predictions(
                     branch_data["intermediate_final_corr"]
                 )
 
+            # Look-ahead FID vs final FID correlation
+            if not np.isnan(branch_data["lookahead_final_corr"]):
+                lookahead_final_correlations.append(branch_data["lookahead_final_corr"])
+
     # Calculate average correlations
     avg_correlation = (
         np.mean(branch_correlations) if branch_correlations else float("nan")
@@ -281,6 +324,11 @@ def analyze_value_model_predictions(
     avg_intermediate_final_corr = (
         np.mean(intermediate_final_correlations)
         if intermediate_final_correlations
+        else float("nan")
+    )
+    avg_lookahead_final_corr = (
+        np.mean(lookahead_final_correlations)
+        if lookahead_final_correlations
         else float("nan")
     )
 
@@ -292,6 +340,11 @@ def analyze_value_model_predictions(
     )
     intermediate_top_match_pct = (
         (intermediate_top_match_count / total_branch_points * 100)
+        if total_branch_points > 0
+        else 0
+    )
+    lookahead_top_match_pct = (
+        (lookahead_top_match_count / total_branch_points * 100)
         if total_branch_points > 0
         else 0
     )
@@ -314,18 +367,30 @@ def analyze_value_model_predictions(
         f"Intermediate FID top branch match percentage: {intermediate_top_match_pct:.2f}% ({intermediate_top_match_count}/{total_branch_points})"
     )
 
+    # Print Look-ahead FID correlation results
+    print("\n===== Look-ahead FID Correlation Results =====")
+    print(
+        f"Average look-ahead-final correlation across all branch points: {avg_lookahead_final_corr:.4f}"
+    )
+    print(
+        f"Look-ahead FID top branch match percentage: {lookahead_top_match_pct:.2f}% ({lookahead_top_match_count}/{total_branch_points})"
+    )
+
     # Calculate per-timestep average correlations
     print("\n===== Per-Timestep Correlation Analysis =====")
     print("\nValue Model correlations by timestep:")
     timestep_correlations = []
     timestep_intermediate_final_correlations = []
+    timestep_lookahead_final_correlations = []
     timestep_value_match_counts = [0] * sampler.num_timesteps
     timestep_intermediate_match_counts = [0] * sampler.num_timesteps
+    timestep_lookahead_match_counts = [0] * sampler.num_timesteps
     timestep_branch_counts = [0] * sampler.num_timesteps
 
     for step in range(sampler.num_timesteps):
         step_correlations = []
         step_intermediate_final_correlations = []
+        step_lookahead_final_correlations = []
 
         for branch_data in timestep_data[step]:
             if len(branch_data["value_predictions"]) > 1:
@@ -341,6 +406,12 @@ def analyze_value_model_predictions(
                         branch_data["intermediate_final_corr"]
                     )
 
+                # Look-ahead FID vs final FID correlation
+                if not np.isnan(branch_data["lookahead_final_corr"]):
+                    step_lookahead_final_correlations.append(
+                        branch_data["lookahead_final_corr"]
+                    )
+
                 # Count top matches for this timestep
                 timestep_branch_counts[step] += 1
 
@@ -350,12 +421,16 @@ def analyze_value_model_predictions(
                 intermediate_best_idx = np.argmin(
                     branch_data["intermediate_fid_changes"]
                 )
+                lookahead_best_idx = np.argmin(branch_data["lookahead_fid_changes"])
 
                 if value_best_idx == final_best_idx:
                     timestep_value_match_counts[step] += 1
 
                 if intermediate_best_idx == final_best_idx:
                     timestep_intermediate_match_counts[step] += 1
+
+                if lookahead_best_idx == final_best_idx:
+                    timestep_lookahead_match_counts[step] += 1
 
         if step_correlations:
             avg_step_corr = np.mean(step_correlations)
@@ -411,14 +486,49 @@ def analyze_value_model_predictions(
             timestep_intermediate_final_correlations.append(np.nan)
             print(f"  Timestep {step}: insufficient data")
 
+    print("\nLook-ahead FID correlations by timestep:")
+    for step in range(sampler.num_timesteps):
+        step_lookahead_final_correlations = []
+
+        for branch_data in timestep_data[step]:
+            if not np.isnan(branch_data["lookahead_final_corr"]):
+                step_lookahead_final_correlations.append(
+                    branch_data["lookahead_final_corr"]
+                )
+
+        if step_lookahead_final_correlations:
+            avg_step_lookahead_final_corr = np.mean(step_lookahead_final_correlations)
+            timestep_lookahead_final_correlations.append(avg_step_lookahead_final_corr)
+
+            # Calculate match percentage for this timestep
+            match_pct = (
+                (
+                    timestep_lookahead_match_counts[step]
+                    / timestep_branch_counts[step]
+                    * 100
+                )
+                if timestep_branch_counts[step] > 0
+                else 0
+            )
+
+            print(
+                f"  Timestep {step}: correlation={avg_step_lookahead_final_corr:.4f}, top match={match_pct:.1f}% ({timestep_lookahead_match_counts[step]}/{timestep_branch_counts[step]})"
+            )
+        else:
+            timestep_lookahead_final_correlations.append(np.nan)
+            print(f"  Timestep {step}: insufficient data")
+
     # Return data for potential plotting
     return {
         "overall_correlation": avg_correlation,
         "overall_intermediate_final_correlation": avg_intermediate_final_corr,
+        "overall_lookahead_final_correlation": avg_lookahead_final_corr,
         "timestep_correlations": timestep_correlations,
         "timestep_intermediate_final_correlations": timestep_intermediate_final_correlations,
+        "timestep_lookahead_final_correlations": timestep_lookahead_final_correlations,
         "value_top_match_percentage": value_top_match_pct,
         "intermediate_top_match_percentage": intermediate_top_match_pct,
+        "lookahead_top_match_percentage": lookahead_top_match_pct,
         "branch_point_data": branch_point_data,
     }
 
