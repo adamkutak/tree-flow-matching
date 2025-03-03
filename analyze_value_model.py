@@ -561,7 +561,7 @@ def main():
     analysis_results = analyze_value_model_predictions(
         sampler=sampler,
         device=device,
-        num_samples=2000,
+        num_samples=1000,
         num_branches=8,
         dt_std=0.1,
     )
