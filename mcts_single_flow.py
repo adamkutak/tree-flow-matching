@@ -837,7 +837,9 @@ class MCTSFlowSampler:
         if flow_exists:
             try:
                 # First try loading as a checkpoint dictionary
-                checkpoint = torch.load(flow_path, map_location=self.device)
+                checkpoint = torch.load(
+                    flow_path, map_location=self.device, weights_only=True
+                )
                 if isinstance(checkpoint, dict) and "model" in checkpoint:
                     self.flow_model.load_state_dict(checkpoint["model"])
                 else:
@@ -851,7 +853,9 @@ class MCTSFlowSampler:
         if value_exists:
             try:
                 # First try loading as a checkpoint dictionary
-                checkpoint = torch.load(value_path, map_location=self.device)
+                checkpoint = torch.load(
+                    value_path, map_location=self.device, weights_only=True
+                )
                 if isinstance(checkpoint, dict) and "model" in checkpoint:
                     self.value_model.load_state_dict(checkpoint["model"])
                 else:
