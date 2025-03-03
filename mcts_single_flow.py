@@ -818,7 +818,8 @@ class MCTSFlowSampler:
     ):
         """
         Efficient batched sampling method that uses intermediate FID scores to rank branches.
-        Creates branches by varying dt instead of adding noise.
+        Takes two steps per iteration: one random step to create branches, then a second step
+        to align all branches to the same timepoint before evaluation.
 
         Args:
             class_label: Target class to generate
@@ -863,6 +864,7 @@ class MCTSFlowSampler:
             base_dt = 1 / self.num_timesteps
             # Generate samples with branching
             while torch.any(current_times < 1.0):
+                # STEP 1: Take a random step to create branches
                 # Flow step - process all samples in one batch
                 velocity = self.flow_model(
                     current_times, current_samples, current_label
@@ -878,15 +880,48 @@ class MCTSFlowSampler:
                 dts = torch.clamp(
                     dts,
                     min=torch.tensor(0.0, device=self.device),
-                    max=1.0 - current_times,
+                    max=(1.0 - current_times)
+                    / 2,  # Ensure we have room for alignment step
                 )
 
                 # Apply different step sizes to create branches
-                generated = current_samples + velocity * dts.view(-1, 1, 1, 1)
-                new_times = current_times + dts
+                branched_samples = current_samples + velocity * dts.view(-1, 1, 1, 1)
+                branched_times = current_times + dts
 
-                # Calculate intermediate FID scores for all samples in one batch
-                fid_scores = self.batch_compute_fid_change(generated, current_label)
+                # STEP 2: Align all branches to the same timepoint
+                # Calculate the target time (same for all samples in the batch)
+                target_time = torch.min(current_times) + 2 * base_dt
+                target_time = torch.min(
+                    target_time, torch.tensor(1.0, device=self.device)
+                )
+
+                # Calculate dt to reach the target time
+                dt_to_target = target_time - branched_times
+
+                # Get velocity for alignment step
+                velocity = self.flow_model(
+                    branched_times, branched_samples, current_label
+                )
+
+                # Apply the step to align all branches
+                aligned_samples = branched_samples + velocity * dt_to_target.view(
+                    -1, 1, 1, 1
+                )
+                aligned_times = torch.full(
+                    (len(branched_times),), target_time.item(), device=self.device
+                )
+
+                # Verify all branches are at the same time
+                time_diff = torch.max(torch.abs(aligned_times - target_time))
+                if time_diff > 1e-8:
+                    print(
+                        f"WARNING: Branches not at same time. Max difference: {time_diff.item():.8f}"
+                    )
+
+                # Calculate intermediate FID scores for all aligned samples
+                fid_scores = self.batch_compute_fid_change(
+                    aligned_samples, current_label
+                )
 
                 # Select top num_keep samples for each batch element
                 selected_samples = []
@@ -895,13 +930,13 @@ class MCTSFlowSampler:
                 for batch_idx in range(batch_size):
                     # Get samples for this batch element
                     batch_mask = batch_indices == batch_idx
-                    batch_samples = generated[batch_mask]
+                    batch_samples = aligned_samples[batch_mask]
                     batch_scores = fid_scores[batch_mask]
-                    batch_times = new_times[batch_mask]
+                    batch_times = aligned_times[batch_mask]
 
                     # Select top num_keep samples (highest FID scores = lowest actual FID)
                     top_k_values, top_k_indices = torch.topk(
-                        batch_scores, k=num_keep, dim=0
+                        batch_scores, k=min(num_keep, len(batch_scores)), dim=0
                     )
                     selected_samples.append(batch_samples[top_k_indices])
                     selected_times.append(batch_times[top_k_indices])

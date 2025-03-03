@@ -363,13 +363,13 @@ def main():
         num_timesteps=10,
         num_classes=num_classes,
         # buffer_size=1000,
-        buffer_size=10,
+        buffer_size=100,
     )
 
     # Training configuration
     n_epochs_per_cycle = 1
     n_training_cycles = 100
-    branch_keep_pairs = [(1, 1), (8, 4), (12, 6), (16, 8)]
+    branch_keep_pairs = [(1, 1), (4, 1), (8, 2), (16, 4)]
 
     # Initialize metrics
     fid = FID.FrechetInceptionDistance(normalize=True, reset_real_features=False).to(
