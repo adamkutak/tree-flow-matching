@@ -364,6 +364,10 @@ def main():
         num_classes=num_classes,
         # buffer_size=1000,
         buffer_size=100,
+        load_models=True,
+        flow_model="large_flow_model.pt",
+        value_model=None,
+        num_channels=256,
     )
 
     # Training configuration
