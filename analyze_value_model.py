@@ -554,6 +554,7 @@ def main():
         num_classes=10,
         buffer_size=100,
         flow_model="large_flow_model.pt",
+        value_model=None,
         num_channels=256,
     )
     # Run value model prediction analysis
