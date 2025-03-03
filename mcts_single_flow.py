@@ -298,6 +298,50 @@ class MCTSFlowSampler:
         # The reward is the negative change in FID multiplied by a factor (here, 100)
         return -(new_fid - baseline_fid) * 100
 
+    def batch_compute_fid_change(self, images, class_indices):
+        """
+        Compute FID change for a batch of images in a more efficient way.
+
+        Args:
+            images: Tensor of shape [batch_size, C, H, W]
+            class_indices: Tensor or list of class indices for each image
+
+        Returns:
+            Tensor of FID change scores (higher is better)
+        """
+        # Extract features for all images in one batch
+        features = self.extract_inception_features(
+            images
+        )  # shape: (batch_size, feat_dim)
+
+        # Convert class_indices to list if it's a tensor
+        if torch.is_tensor(class_indices):
+            class_indices = class_indices.cpu().tolist()
+
+        # Calculate FID changes for each image
+        fid_changes = []
+
+        for i, (feature, class_idx) in enumerate(zip(features, class_indices)):
+            class_fid = self.fids[class_idx]
+
+            # Create a candidate set from the constant buffer
+            new_features = list(class_fid["features"])
+            # Replace the last feature with the new image's feature
+            new_features[-1] = feature
+            new_features = np.array(new_features)
+
+            mu_new = np.mean(new_features, axis=0)
+            sigma_new = np.cov(new_features, rowvar=False)
+            new_fid = self.calculate_frechet_distance(
+                mu_new, sigma_new, class_fid["mu"], class_fid["sigma"]
+            )
+
+            baseline_fid = class_fid["baseline_fid"]
+            # The reward is the negative change in FID multiplied by a factor
+            fid_changes.append(-(new_fid - baseline_fid) * 100)
+
+        return torch.tensor(fid_changes, device=images.device)
+
     def calculate_frechet_distance(self, mu1, sigma1, mu2, sigma2):
         """Calculate the Frechet distance between two distributions."""
         diff = mu1 - mu2
@@ -764,6 +808,141 @@ class MCTSFlowSampler:
                 batch_mask = batch_indices == batch_idx
                 batch_samples = current_samples[batch_mask]
                 batch_scores = value_scores[batch_mask]
+                best_idx = torch.argmax(batch_scores)
+                final_samples.append(batch_samples[best_idx])
+
+            return torch.stack(final_samples)  # shape: [batch_size, C, H, W]
+
+    def batch_sample_wdt_intermediate_fid(
+        self, class_label, batch_size=16, num_branches=4, num_keep=2, dt_std=0.1
+    ):
+        """
+        Efficient batched sampling method that uses intermediate FID scores to rank branches.
+        Creates branches by varying dt instead of adding noise.
+
+        Args:
+            class_label: Target class to generate
+            batch_size: Number of final samples to generate
+            num_branches: Number of branches per batch element (constant throughout)
+            num_keep: Number of samples to keep before expansion
+            dt_std: Standard deviation for sampling different dt values
+        Returns:
+            Tensor of shape [batch_size, C, H, W]
+        """
+        if num_branches == 1 and num_keep == 1:
+            return self.regular_batch_sample(class_label, batch_size)
+
+        assert (
+            num_branches % num_keep == 0
+        ), "num_branches must be divisible by num_keep"
+        expansion_factor = num_branches // num_keep
+
+        self.flow_model.eval()
+
+        with torch.no_grad():
+            # Initialize with num_branches samples per batch element
+            current_samples = torch.randn(
+                batch_size * num_branches,
+                self.channels,
+                self.image_size,
+                self.image_size,
+                device=self.device,
+            )
+            current_label = torch.full(
+                (batch_size * num_branches,), class_label, device=self.device
+            )
+
+            # Track current time for each sample
+            current_times = torch.zeros(batch_size * num_branches, device=self.device)
+
+            # Track which batch element each sample belongs to
+            batch_indices = torch.arange(
+                batch_size, device=self.device
+            ).repeat_interleave(num_branches)
+
+            base_dt = 1 / self.num_timesteps
+            # Generate samples with branching
+            while torch.any(current_times < 1.0):
+                # Flow step - process all samples in one batch
+                velocity = self.flow_model(
+                    current_times, current_samples, current_label
+                )
+
+                # Sample different dt values for each sample
+                dts = torch.normal(
+                    mean=base_dt,
+                    std=dt_std * base_dt,
+                    size=(len(current_samples),),
+                    device=self.device,
+                )
+                dts = torch.clamp(
+                    dts,
+                    min=torch.tensor(0.0, device=self.device),
+                    max=1.0 - current_times,
+                )
+
+                # Apply different step sizes to create branches
+                generated = current_samples + velocity * dts.view(-1, 1, 1, 1)
+                new_times = current_times + dts
+
+                # Calculate intermediate FID scores for all samples in one batch
+                fid_scores = self.batch_compute_fid_change(generated, current_label)
+
+                # Select top num_keep samples for each batch element
+                selected_samples = []
+                selected_times = []
+
+                for batch_idx in range(batch_size):
+                    # Get samples for this batch element
+                    batch_mask = batch_indices == batch_idx
+                    batch_samples = generated[batch_mask]
+                    batch_scores = fid_scores[batch_mask]
+                    batch_times = new_times[batch_mask]
+
+                    # Select top num_keep samples (highest FID scores = lowest actual FID)
+                    top_k_values, top_k_indices = torch.topk(
+                        batch_scores, k=num_keep, dim=0
+                    )
+                    selected_samples.append(batch_samples[top_k_indices])
+                    selected_times.append(batch_times[top_k_indices])
+
+                # Stack selected samples and times
+                current_samples = torch.cat(
+                    selected_samples, dim=0
+                )  # shape: [batch_size * num_keep, C, H, W]
+                current_times = torch.cat(
+                    selected_times, dim=0
+                )  # shape: [batch_size * num_keep]
+
+                # Expand each kept sample into expansion_factor new samples
+                current_samples = current_samples.repeat_interleave(
+                    expansion_factor, dim=0
+                )
+                current_times = current_times.repeat_interleave(expansion_factor)
+                current_label = torch.full(
+                    (batch_size * num_branches,), class_label, device=self.device
+                )
+                batch_indices = torch.arange(
+                    batch_size, device=self.device
+                ).repeat_interleave(num_branches)
+
+                # Break if all samples have reached t=1
+                if torch.all(current_times >= 1.0):
+                    break
+
+            # Final selection - take best sample from each batch element's num_branches samples
+            final_samples = []
+
+            # Calculate final FID scores for all samples in one batch
+            final_fid_scores = self.batch_compute_fid_change(
+                current_samples, current_label
+            )
+
+            for batch_idx in range(batch_size):
+                batch_mask = batch_indices == batch_idx
+                batch_samples = current_samples[batch_mask]
+                batch_scores = final_fid_scores[batch_mask]
+
                 best_idx = torch.argmax(batch_scores)
                 final_samples.append(batch_samples[best_idx])
 
