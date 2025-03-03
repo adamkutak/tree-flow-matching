@@ -835,18 +835,32 @@ class MCTSFlowSampler:
         value_exists = os.path.exists(value_path)
 
         if flow_exists:
-            checkpoint = torch.load(
-                flow_path, weights_only=True, map_location=self.device
-            )
-            self.flow_model.load_state_dict(checkpoint["model"])
-            print(f"Flow model loaded from {flow_path}")
+            try:
+                # First try loading as a checkpoint dictionary
+                checkpoint = torch.load(flow_path, map_location=self.device)
+                if isinstance(checkpoint, dict) and "model" in checkpoint:
+                    self.flow_model.load_state_dict(checkpoint["model"])
+                else:
+                    # If not a checkpoint dict, assume it's a direct state_dict
+                    self.flow_model.load_state_dict(checkpoint)
+                print(f"Flow model loaded from {flow_path}")
+            except Exception as e:
+                print(f"Error loading flow model: {e}")
+                flow_exists = False
 
         if value_exists:
-            checkpoint = torch.load(
-                value_path, weights_only=True, map_location=self.device
-            )
-            self.value_model.load_state_dict(checkpoint["model"])
-            print(f"Value model loaded from {value_path}")
+            try:
+                # First try loading as a checkpoint dictionary
+                checkpoint = torch.load(value_path, map_location=self.device)
+                if isinstance(checkpoint, dict) and "model" in checkpoint:
+                    self.value_model.load_state_dict(checkpoint["model"])
+                else:
+                    # If not a checkpoint dict, assume it's a direct state_dict
+                    self.value_model.load_state_dict(checkpoint)
+                print(f"Value model loaded from {value_path}")
+            except Exception as e:
+                print(f"Error loading value model: {e}")
+                value_exists = False
 
         return flow_exists and value_exists
 
