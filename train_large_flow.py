@@ -97,18 +97,18 @@ def train_large_flow_model(
     for epoch in range(num_epochs):
         print(f"\nEpoch {epoch + 1}/{num_epochs}")
 
-        # # Train flow model for one epoch
-        # flow_loss = sampler.train_flow_matching(
-        #     train_loader, desc=f"Flow training {epoch + 1}/{num_epochs}", use_tqdm=True
-        # )
+        # Train flow model for one epoch
+        flow_loss = sampler.train_flow_matching(
+            train_loader, desc=f"Flow training {epoch + 1}/{num_epochs}", use_tqdm=True
+        )
 
-        # # Step the scheduler
-        # sampler.flow_scheduler.step()
+        # Step the scheduler
+        sampler.flow_scheduler.step()
 
         # Save model and evaluate metrics at intervals
         if (epoch + 1) % save_interval == 0 or epoch == num_epochs - 1:
             save_path = f"saved_models/large_flow_model.pt"
-            # torch.save(sampler.flow_model.state_dict(), save_path)
+            torch.save(sampler.flow_model.state_dict(), save_path)
             print(f"Model saved to {save_path}")
 
             print("Evaluating metrics...")
@@ -136,7 +136,7 @@ def train_large_flow_model(
 
 if __name__ == "__main__":
     # Use the specified GPU device
-    device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+    device = torch.device("cuda:1" if torch.cuda.is_available() else "cpu")
     print(f"Using device: {device}")
 
     train_large_flow_model(
