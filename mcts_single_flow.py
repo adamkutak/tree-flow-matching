@@ -91,6 +91,8 @@ class MCTSFlowSampler:
         num_channels=128,
         learning_rate=5e-4,
         load_models=True,
+        flow_model="single_flow_model.pt",
+        value_model="single_value_model.pt",
     ):
         # Check if CUDA is available and set device
         if torch.cuda.is_available():
@@ -173,7 +175,10 @@ class MCTSFlowSampler:
 
         # Try to load pre-trained models
         if load_models:
-            if self.load_models():
+            if self.load_models(
+                flow_model=flow_model,
+                value_model=value_model,
+            ):
                 print("Successfully loaded pre-trained flow and value models")
             else:
                 print("No pre-trained models found, starting from scratch")
@@ -816,10 +821,15 @@ class MCTSFlowSampler:
         )
         print(f"Value model saved to {value_path}")
 
-    def load_models(self, path="saved_models"):
+    def load_models(
+        self,
+        path="saved_models",
+        flow_model="single_flow_model.pt",
+        value_model="single_value_model.pt",
+    ):
         """Load flow and value models if they exist."""
-        flow_path = f"{path}/single_flow_model.pt"
-        value_path = f"{path}/single_value_model.pt"
+        flow_path = f"{path}/{flow_model}"
+        value_path = f"{path}/{value_model}"
 
         flow_exists = os.path.exists(flow_path)
         value_exists = os.path.exists(value_path)

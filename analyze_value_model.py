@@ -553,6 +553,8 @@ def main():
         num_timesteps=10,
         num_classes=10,
         buffer_size=100,
+        flow_model="large_flow_model.pt",
+        num_channels=256,
     )
     # Run value model prediction analysis
     analysis_results = analyze_value_model_predictions(
