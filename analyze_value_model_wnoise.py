@@ -512,7 +512,7 @@ def main():
         device=device,
         num_timesteps=10,
         num_classes=10,
-        buffer_size=1000,
+        buffer_size=100,
     )
 
     # Run value model prediction analysis with noise-based branching
