@@ -111,7 +111,7 @@ def analyze_value_model_predictions(
                     active_label = label[active_mask]
 
                     t = step * base_dt
-                    t_batch = torch.full((active_mask.sum(),), t.item(), device=device)
+                    t_batch = torch.full((active_mask.sum(),), t, device=device)
 
                     velocity = sampler.flow_model(t_batch, active_x, active_label)
                     active_x = active_x + velocity * base_dt
