@@ -238,13 +238,14 @@ def analyze_value_model_predictions(
                             t_batch, current_samples, branch_labels
                         )
                         current_samples = current_samples + velocity * dt
+                        current_time = sampler.timesteps[step + 1].item()
 
                     # Final samples are now all in current_samples
                     final_samples = current_samples
 
                     # Verify all branches reached t=1
                     if (
-                        abs(current_time - 1.0) > 1e-5
+                        abs(current_time - 1.0) > 1e-8
                     ):  # Check if time is not approximately 1.0
                         print(
                             f"WARNING: Branches ended at time {current_time:.4f}, not t=1.0"
