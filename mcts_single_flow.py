@@ -214,8 +214,6 @@ class MCTSFlowSampler:
                 remaining = samples_per_class
                 all_features = []
 
-                print(f"Initializing buffer for class {class_idx}...")
-
                 while remaining > 0:
                     # Determine current batch size
                     current_batch_size = min(batch_size, remaining)
