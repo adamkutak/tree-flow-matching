@@ -94,6 +94,7 @@ class MCTSFlowSampler:
         flow_model="single_flow_model.pt",
         value_model="single_value_model.pt",
         inception_layer=3,
+        pca_dim=128,
     ):
         # Check if CUDA is available and set device
         if torch.cuda.is_available():
@@ -184,7 +185,6 @@ class MCTSFlowSampler:
             else:
                 print("No pre-trained models found, starting from scratch")
 
-        # Initialize inception model for FID computation
         self.inception = InceptionV3([inception_layer], normalize_input=True).to(device)
         self.inception.eval()
 
@@ -197,13 +197,28 @@ class MCTSFlowSampler:
                 f"Supported layers are: {list(layer_to_dim.keys())}"
             )
 
-        feature_dim = layer_to_dim[inception_layer]
-        print(
-            f"Using inception layer {inception_layer} with {feature_dim} feature dimensions"
-        )
+        self.feature_dim = layer_to_dim[inception_layer]
+        self.inception_layer = inception_layer
+        self.use_pca = inception_layer == 3  # Only use PCA for layer 3
+        self.pca_dim = pca_dim if self.use_pca else self.feature_dim
 
-        # Load reference statistics for CIFAR-10 based on feature dimension
-        stats_file = f"cifar10_fid_stats_{feature_dim}dim.pkl"
+        if self.use_pca:
+            print(
+                f"Using inception layer {inception_layer} with {self.feature_dim} feature dimensions"
+            )
+            print(f"Will reduce to {self.pca_dim} dimensions using PCA")
+            self._load_or_fit_pca()
+        else:
+            print(
+                f"Using inception layer {inception_layer} with {self.feature_dim} feature dimensions"
+            )
+
+        # Load reference statistics based on feature dimension and PCA if applicable
+        if self.use_pca:
+            stats_file = f"cifar10_fid_stats_{self.feature_dim}to{self.pca_dim}dim.pkl"
+        else:
+            stats_file = f"cifar10_fid_stats_{self.feature_dim}dim.pkl"
+
         try:
             with open(stats_file, "rb") as f:
                 cifar_stats = pickle.load(f)
@@ -211,7 +226,7 @@ class MCTSFlowSampler:
         except FileNotFoundError:
             raise FileNotFoundError(
                 f"Statistics file {stats_file} not found. Please run compute_cifar_stats.py "
-                f"with --dim {feature_dim} to generate the required statistics."
+                f"with appropriate parameters to generate the required statistics."
             )
 
         # Initialize per-class FID metrics and buffers
@@ -226,6 +241,25 @@ class MCTSFlowSampler:
 
         print("Initializing per-class buffers...")
         self.initialize_class_buffers(buffer_size)
+
+    def _load_or_fit_pca(self):
+        """Load or fit a PCA model for dimensionality reduction."""
+        import pickle
+        from sklearn.decomposition import PCA
+
+        pca_file = f"inception_pca_{self.feature_dim}to{self.pca_dim}.pkl"
+
+        try:
+            # Try to load existing PCA model
+            with open(pca_file, "rb") as f:
+                self.pca = pickle.load(f)
+            print(f"Loaded PCA model from {pca_file}")
+        except FileNotFoundError:
+            print(f"PCA model not found at {pca_file}.")
+            print(
+                "Please run compute_cifar_stats.py with --dim 2048 --pca_dim {self.pca_dim} first."
+            )
+            raise FileNotFoundError(f"PCA model file {pca_file} not found.")
 
     def set_timesteps(self, num_timesteps):
         self.num_timesteps = num_timesteps
@@ -292,8 +326,7 @@ class MCTSFlowSampler:
             print(f"Class {class_idx} baseline FID: {baseline_fid:.4f}")
 
     def extract_inception_features(self, images):
-        """Extract inception features using pytorch-fid."""
-        # Resize images to inception input size
+        """Extract inception features using pytorch-fid with optional PCA reduction."""
         images = F.interpolate(
             images, size=(299, 299), mode="bilinear", align_corners=False
         )
@@ -306,7 +339,14 @@ class MCTSFlowSampler:
             # Global average pooling if features have spatial dimensions
             if len(features.shape) > 2:
                 features = features.mean([2, 3])
-            return features.cpu().numpy()
+
+            # Apply PCA reduction if using layer 3
+            if self.use_pca:
+                features_np = features.cpu().numpy()
+                features_reduced = self.pca.transform(features_np)
+                return features_reduced
+            else:
+                return features.cpu().numpy()
 
     def compute_fid_change(self, image, class_idx):
         """
