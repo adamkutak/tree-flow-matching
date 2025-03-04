@@ -93,7 +93,7 @@ class MCTSFlowSampler:
         load_models=True,
         flow_model="single_flow_model.pt",
         value_model="single_value_model.pt",
-        inception_layer=1,
+        inception_layer=0,
     ):
         # Check if CUDA is available and set device
         if torch.cuda.is_available():
