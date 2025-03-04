@@ -153,7 +153,7 @@ def analyze_value_model_predictions(
 
                     # Now simulate all branches forward one more step to a common time point
                     # Use the next timestep in the schedule after the branch point
-                    next_timestep = (branch_step + 1) * base_dt
+                    next_timestep = branch_times + 2 * base_dt
 
                     # Calculate dt to reach the next common timestep for each branch
                     dt_to_next = next_timestep - new_times
