@@ -93,7 +93,7 @@ class MCTSFlowSampler:
         load_models=True,
         flow_model="single_flow_model.pt",
         value_model="single_value_model.pt",
-        inception_layer=0,
+        inception_layer=3,
     ):
         # Check if CUDA is available and set device
         if torch.cuda.is_available():
@@ -188,11 +188,31 @@ class MCTSFlowSampler:
         self.inception = InceptionV3([inception_layer], normalize_input=True).to(device)
         self.inception.eval()
 
-        # TODO: load stats for cifar10 depending on inception layer number
+        # Map inception layer to feature dimension
+        layer_to_dim = {0: 64, 1: 192, 2: 768, 3: 2048}
 
-        # Load reference statistics for CIFAR-10
-        with open("cifar10_fid_stats_64dim.pkl", "rb") as f:
-            cifar_stats = pickle.load(f)
+        if inception_layer not in layer_to_dim:
+            raise ValueError(
+                f"Unsupported inception layer: {inception_layer}. "
+                f"Supported layers are: {list(layer_to_dim.keys())}"
+            )
+
+        feature_dim = layer_to_dim[inception_layer]
+        print(
+            f"Using inception layer {inception_layer} with {feature_dim} feature dimensions"
+        )
+
+        # Load reference statistics for CIFAR-10 based on feature dimension
+        stats_file = f"cifar10_fid_stats_{feature_dim}dim.pkl"
+        try:
+            with open(stats_file, "rb") as f:
+                cifar_stats = pickle.load(f)
+            print(f"Loaded CIFAR-10 statistics from {stats_file}")
+        except FileNotFoundError:
+            raise FileNotFoundError(
+                f"Statistics file {stats_file} not found. Please run compute_cifar_stats.py "
+                f"with --dim {feature_dim} to generate the required statistics."
+            )
 
         # Initialize per-class FID metrics and buffers
         self.fids = {
@@ -1115,74 +1135,74 @@ class MCTSFlowSampler:
 
         return flow_exists and value_exists
 
-    def calculate_frechet_distance_components(self, mu1, sigma1, mu2, sigma2):
-        """
-        Calculate the components of the Frechet distance between two distributions.
+    # def calculate_frechet_distance_components(self, mu1, sigma1, mu2, sigma2):
+    #     """
+    #     Calculate the components of the Frechet distance between two distributions.
 
-        Returns:
-            mean_distance: The squared distance between means
-            cov_distance: The trace term for covariance matrices
-            covmean_term: The trace of the square root of product of covariances
-        """
-        # Mean term: ||μ1 - μ2||^2
-        mean_distance = np.sum((mu1 - mu2) ** 2)
+    #     Returns:
+    #         mean_distance: The squared distance between means
+    #         cov_distance: The trace term for covariance matrices
+    #         covmean_term: The trace of the square root of product of covariances
+    #     """
+    #     # Mean term: ||μ1 - μ2||^2
+    #     mean_distance = np.sum((mu1 - mu2) ** 2)
 
-        # Covariance terms: Tr(Σ1) + Tr(Σ2) - 2*Tr(sqrt(Σ1*Σ2))
-        trace_sigma1 = np.trace(sigma1)
-        trace_sigma2 = np.trace(sigma2)
+    #     # Covariance terms: Tr(Σ1) + Tr(Σ2) - 2*Tr(sqrt(Σ1*Σ2))
+    #     trace_sigma1 = np.trace(sigma1)
+    #     trace_sigma2 = np.trace(sigma2)
 
-        # Calculate sqrt(Σ1*Σ2)
-        covmean = sqrtm(sigma1.dot(sigma2))
-        if np.iscomplexobj(covmean):
-            covmean = covmean.real
+    #     # Calculate sqrt(Σ1*Σ2)
+    #     covmean = sqrtm(sigma1.dot(sigma2))
+    #     if np.iscomplexobj(covmean):
+    #         covmean = covmean.real
 
-        # 2*Tr(sqrt(Σ1*Σ2))
-        covmean_term = 2 * np.trace(covmean)
+    #     # 2*Tr(sqrt(Σ1*Σ2))
+    #     covmean_term = 2 * np.trace(covmean)
 
-        # Tr(Σ1) + Tr(Σ2)
-        cov_distance = trace_sigma1 + trace_sigma2
+    #     # Tr(Σ1) + Tr(Σ2)
+    #     cov_distance = trace_sigma1 + trace_sigma2
 
-        return mean_distance, cov_distance, covmean_term
+    #     return mean_distance, cov_distance, covmean_term
 
-    def analyze_fid_components(self, generated_samples, class_idx):
-        """
-        Analyze the components of the FID score for a set of generated samples.
+    # def analyze_fid_components(self, generated_samples, class_idx):
+    #     """
+    #     Analyze the components of the FID score for a set of generated samples.
 
-        Args:
-            generated_samples: Tensor of generated images
-            class_idx: Class index for comparison
+    #     Args:
+    #         generated_samples: Tensor of generated images
+    #         class_idx: Class index for comparison
 
-        Returns:
-            Dictionary with FID components
-        """
-        # Extract features from generated samples
-        features = self.extract_inception_features(generated_samples)
+    #     Returns:
+    #         Dictionary with FID components
+    #     """
+    #     # Extract features from generated samples
+    #     features = self.extract_inception_features(generated_samples)
 
-        # Calculate statistics for generated samples
-        mu_gen = np.mean(features, axis=0)
-        sigma_gen = np.cov(features, rowvar=False)
+    #     # Calculate statistics for generated samples
+    #     mu_gen = np.mean(features, axis=0)
+    #     sigma_gen = np.cov(features, rowvar=False)
 
-        # Get reference statistics for this class
-        mu_ref = self.fids[class_idx]["mu"]
-        sigma_ref = self.fids[class_idx]["sigma"]
+    #     # Get reference statistics for this class
+    #     mu_ref = self.fids[class_idx]["mu"]
+    #     sigma_ref = self.fids[class_idx]["sigma"]
 
-        # Calculate FID components
-        mean_dist, cov_dist, covmean_term = self.calculate_frechet_distance_components(
-            mu_gen, sigma_gen, mu_ref, sigma_ref
-        )
+    #     # Calculate FID components
+    #     mean_dist, cov_dist, covmean_term = self.calculate_frechet_distance_components(
+    #         mu_gen, sigma_gen, mu_ref, sigma_ref
+    #     )
 
-        # Calculate total FID
-        fid_score = mean_dist + cov_dist - covmean_term
+    #     # Calculate total FID
+    #     fid_score = mean_dist + cov_dist - covmean_term
 
-        return {
-            "fid_total": fid_score,
-            "mean_distance": mean_dist,
-            "covariance_distance": cov_dist,
-            "covmean_term": covmean_term,
-            "mean_distance_percent": (
-                100 * mean_dist / fid_score if fid_score > 0 else 0
-            ),
-            "covariance_percent": (
-                100 * (cov_dist - covmean_term) / fid_score if fid_score > 0 else 0
-            ),
-        }
+    #     return {
+    #         "fid_total": fid_score,
+    #         "mean_distance": mean_dist,
+    #         "covariance_distance": cov_dist,
+    #         "covmean_term": covmean_term,
+    #         "mean_distance_percent": (
+    #             100 * mean_dist / fid_score if fid_score > 0 else 0
+    #         ),
+    #         "covariance_percent": (
+    #             100 * (cov_dist - covmean_term) / fid_score if fid_score > 0 else 0
+    #         ),
+    #     }
