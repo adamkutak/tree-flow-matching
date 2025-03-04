@@ -221,7 +221,7 @@ def analyze_value_model_predictions(
                     current_samples = aligned_samples
                     current_time = next_timestep[0].item()
                     # Simulate until completion with batched operations
-                    while current_time < 1.0:
+                    while current_time < (1.0 - 1e-8):
                         t_batch = torch.full(
                             (num_branches,), current_time, device=device
                         )
