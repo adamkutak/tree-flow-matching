@@ -771,10 +771,15 @@ def analyze_intermediate_fid_correlation(
                             normalize=True, reset_real_features=False
                         ).to(device)
                         # Copy real features from main FID metric
-                        branch_fid.real_features = fid_metric.real_features.clone()
-                        branch_fid.real_mean = fid_metric.real_mean.clone()
-                        branch_fid.real_cov = fid_metric.real_cov.clone()
-                        branch_fid.real_features_num = fid_metric.real_features_num
+                        branch_fid.real_features_sum = (
+                            fid_metric.real_features_sum.clone()
+                        )
+                        branch_fid.real_features_cov_sum = (
+                            fid_metric.real_features_cov_sum.clone()
+                        )
+                        branch_fid.real_features_num_samples = (
+                            fid_metric.real_features_num_samples.clone()
+                        )
                         branch_fids.append(branch_fid)
 
                     # Generate samples for each branch
