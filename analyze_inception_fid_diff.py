@@ -91,7 +91,7 @@ def analyze_fid_correlation(
 
                 # Process in batches
                 num_batches = (samples_per_class + batch_size - 1) // batch_size
-                for batch_idx in tqdm(range(num_batches)):
+                for batch_idx in range(num_batches):
                     # Determine actual batch size (might be smaller for last batch)
                     actual_batch_size = min(
                         batch_size, samples_per_class - batch_idx * batch_size
@@ -207,16 +207,15 @@ def main():
         flow_model="large_flow_model.pt",
         value_model=None,
         num_channels=256,
-        inception_layer=0,  # Use the lower layer (64-dim) for simplified FID
     )
 
     # Run FID correlation analysis
     correlation_results = analyze_fid_correlation(
         sampler=sampler,
         device=device,
-        num_timesteps_list=[2, 4, 6, 8, 10, 12, 14, 16, 20],
-        samples_per_timestep=500,
-        batch_size=16,
+        num_timesteps_list=[5, 10, 20, 40],
+        samples_per_timestep=1000,
+        batch_size=32,
     )
 
 
