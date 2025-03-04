@@ -764,90 +764,93 @@ def analyze_intermediate_fid_correlation(
                     # Stack final samples
                     final_samples_tensor = torch.cat(final_samples, dim=0)
 
-                    # Calculate actual FID for each branch individually
-                    actual_fid_scores = []
-
-                    # Generate a larger batch of samples for each branch to get a more accurate FID
-                    num_gen_samples = 100  # Number of samples to generate per branch for FID calculation
-
+                    # Create FID metrics for each branch
+                    branch_fids = []
                     for j in range(num_branches):
-                        # Reset FID metric for this branch
                         branch_fid = FID.FrechetInceptionDistance(
                             normalize=True, reset_real_features=False
                         ).to(device)
-
                         # Copy real features from main FID metric
                         branch_fid.real_features = fid_metric.real_features.clone()
                         branch_fid.real_mean = fid_metric.real_mean.clone()
                         branch_fid.real_cov = fid_metric.real_cov.clone()
                         branch_fid.real_features_num = fid_metric.real_features_num
+                        branch_fids.append(branch_fid)
 
-                        # Generate samples using this branch's trajectory
-                        branch_samples = []
+                    # Generate samples for each branch
+                    num_gen_samples = 100  # Number of samples to generate per branch
+                    gen_batch_size = 10
 
+                    # Generate samples for all branches
+                    for j in range(num_branches):
                         # Generate samples in smaller batches
-                        gen_batch_size = 10
                         for k in range(0, num_gen_samples, gen_batch_size):
                             actual_gen_size = min(gen_batch_size, num_gen_samples - k)
 
-                            # Start from noise
-                            gen_x = torch.randn(
-                                actual_gen_size,
-                                sampler.channels,
-                                sampler.image_size,
-                                sampler.image_size,
-                                device=device,
-                            )
-                            gen_label = torch.full(
-                                (actual_gen_size,), class_idx, device=device
-                            )
-
-                            # Simulate up to branch point using standard trajectory
-                            gen_time = torch.zeros(actual_gen_size, device=device)
-
-                            for step in range(branch_step + 1):
-                                t = sampler.timesteps[step]
-                                dt = sampler.timesteps[step + 1] - t
-                                t_batch = torch.full(
-                                    (actual_gen_size,), t.item(), device=device
+                            # Generate samples across all classes
+                            all_class_samples = []
+                            for gen_class in range(sampler.num_classes):
+                                # Start from noise
+                                gen_x = torch.randn(
+                                    actual_gen_size,
+                                    sampler.channels,
+                                    sampler.image_size,
+                                    sampler.image_size,
+                                    device=device,
+                                )
+                                gen_label = torch.full(
+                                    (actual_gen_size,), gen_class, device=device
                                 )
 
-                                velocity = sampler.flow_model(t_batch, gen_x, gen_label)
-                                gen_x = gen_x + velocity * dt
-                                gen_time = sampler.timesteps[step + 1].item()
+                                # Simulate up to branch point using standard trajectory
+                                gen_time = torch.zeros(actual_gen_size, device=device)
 
-                            # Apply the specific branch's dt
-                            t_batch = torch.full(
-                                (actual_gen_size,), gen_time, device=device
-                            )
-                            velocity = sampler.flow_model(t_batch, gen_x, gen_label)
-                            gen_x = gen_x + velocity * dts[j]
-                            gen_time = gen_time + dts[j]
+                                for step in range(branch_step + 1):
+                                    t = sampler.timesteps[step]
+                                    dt = sampler.timesteps[step + 1] - t
+                                    t_batch = torch.full(
+                                        (actual_gen_size,), t.item(), device=device
+                                    )
 
-                            # Continue simulation to completion
-                            for step in range(
-                                branch_step + 1, sampler.num_timesteps - 1
-                            ):
-                                t = sampler.timesteps[step]
-                                dt = sampler.timesteps[step + 1] - t
+                                    velocity = sampler.flow_model(
+                                        t_batch, gen_x, gen_label
+                                    )
+                                    gen_x = gen_x + velocity * dt
+                                    gen_time = sampler.timesteps[step + 1].item()
+
+                                # Apply the specific branch's dt
                                 t_batch = torch.full(
-                                    (actual_gen_size,), t.item(), device=device
+                                    (actual_gen_size,), gen_time, device=device
                                 )
-
                                 velocity = sampler.flow_model(t_batch, gen_x, gen_label)
-                                gen_x = gen_x + velocity * dt
+                                gen_x = gen_x + velocity * dts[j]
+                                gen_time = gen_time + dts[j]
 
-                            branch_samples.append(gen_x)
+                                # Continue simulation to completion
+                                for step in range(
+                                    branch_step + 1, sampler.num_timesteps - 1
+                                ):
+                                    t = sampler.timesteps[step]
+                                    dt = sampler.timesteps[step + 1] - t
+                                    t_batch = torch.full(
+                                        (actual_gen_size,), t.item(), device=device
+                                    )
 
-                        # Stack all generated samples for this branch
-                        branch_samples_tensor = torch.cat(branch_samples, dim=0)
+                                    velocity = sampler.flow_model(
+                                        t_batch, gen_x, gen_label
+                                    )
+                                    gen_x = gen_x + velocity * dt
 
-                        # Update FID with these samples
-                        branch_fid.update(branch_samples_tensor, real=False)
+                                all_class_samples.append(gen_x)
 
-                        # Compute FID score for this branch
-                        branch_fid_score = branch_fid.compute().item()
-                        actual_fid_scores.append(branch_fid_score)
+                            # Combine samples from all classes
+                            combined_samples = torch.cat(all_class_samples, dim=0)
+
+                            # Update FID for this branch
+                            branch_fids[j].update(combined_samples, real=False)
+
+                    # Compute FID scores for all branches
+                    actual_fid_scores = [fid.compute().item() for fid in branch_fids]
 
                     # Rank branches by intermediate FID (lower is better)
                     intermediate_ranks = np.argsort(intermediate_fid_changes)
