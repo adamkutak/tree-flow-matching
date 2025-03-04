@@ -79,7 +79,7 @@ def analyze_fid_correlation(
             sampler.set_timesteps(num_timesteps)
 
             # Reset the standard FID metric for fake images
-            fid_metric.reset_fake_features()
+            fid_metric.reset()
 
             # Generate samples evenly across all classes
             samples_per_class = samples_per_timestep // sampler.num_classes
