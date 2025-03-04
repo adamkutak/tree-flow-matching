@@ -188,7 +188,7 @@ def analyze_fid_rank_consistency(
                         x.cpu()
                     )  # Store for real FID calculation
 
-    # Calculate statistics for intermediate FID scores
+    # Calculate statistics for final FID change scores
     rank_avg_fid = {}
     rank_std_fid = {}
 
@@ -197,7 +197,7 @@ def analyze_fid_rank_consistency(
         rank_avg_fid[rank] = np.mean(fid_scores)
         rank_std_fid[rank] = np.std(fid_scores)
 
-    # Calculate correlation between rank and average intermediate FID
+    # Calculate correlation between rank and average final FID change
     ranks = list(range(1, num_branches + 1))
     avg_fids = [rank_avg_fid[r] for r in ranks]
 
@@ -206,25 +206,25 @@ def analyze_fid_rank_consistency(
     else:
         rank_fid_correlation, p_value = float("nan"), float("nan")
 
-    # Print results for intermediate FID
-    print("\n===== Intermediate FID Rank Consistency Results =====")
+    # Print results for final FID change
+    print("\n===== Final FID Change Rank Consistency Results =====")
     print(
-        f"Correlation between rank and average intermediate FID: {rank_fid_correlation:.4f} (p-value: {p_value:.4f})"
+        f"Correlation between rank and average final FID change: {rank_fid_correlation:.4f} (p-value: {p_value:.4f})"
     )
-    print("\nAverage intermediate FID by rank:")
+    print("\nAverage final FID change by rank:")
     for rank in range(1, num_branches + 1):
         print(f"  Rank {rank}: {rank_avg_fid[rank]:.4f} ± {rank_std_fid[rank]:.4f}")
 
-    # Plot results for intermediate FID
+    # Plot results for final FID change
     plt.figure(figsize=(10, 6))
     plt.errorbar(
         ranks, avg_fids, yerr=[rank_std_fid[r] for r in ranks], fmt="o-", capsize=5
     )
     plt.xlabel("Branch Rank by Intermediate FID (1 = best)")
-    plt.ylabel("Average Intermediate FID Score")
-    plt.title("Intermediate FID Score by Consistently Selected Branch Rank")
+    plt.ylabel("Average Final FID Change Score")
+    plt.title("Final FID Change by Consistently Selected Branch Rank")
     plt.grid(True)
-    plt.savefig("intermediate_fid_rank_consistency.png")
+    plt.savefig("final_fid_change_rank_consistency.png")
     plt.close()
 
     # Now calculate real FID scores for each rank
