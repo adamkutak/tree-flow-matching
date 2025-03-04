@@ -8,7 +8,7 @@ from scipy.stats import spearmanr
 from mcts_single_flow import MCTSFlowSampler
 
 
-def analyze_rank_consistency(
+def analyze_fid_rank_consistency(
     sampler,
     device,
     num_samples=10,
@@ -17,11 +17,11 @@ def analyze_rank_consistency(
     class_label=None,
 ):
     """
-    Analyze how consistently selecting the nth-ranked branch affects final FID.
+    Analyze how consistently selecting the nth-ranked branch by FID affects final FID.
 
     This function generates trajectories where at each possible branching point, we consistently
     select the branch ranked n (where n=1 is best, n=2 is second-best, etc.) according
-    to the value model. We then measure the final FID of these trajectories.
+    to the intermediate FID calculation. We then measure the final FID of these trajectories.
 
     Args:
         sampler: The MCTSFlowSampler instance
@@ -34,10 +34,9 @@ def analyze_rank_consistency(
     Returns:
         Dictionary containing correlation metrics and raw data for plotting
     """
-    print("\n===== Rank Consistency Analysis =====")
+    print("\n===== FID Rank Consistency Analysis =====")
 
     sampler.flow_model.eval()
-    sampler.value_model.eval()
 
     # Sample across all classes or specific class
     if class_label is None:
@@ -139,18 +138,19 @@ def analyze_rank_consistency(
                                 branched_samples
                                 + velocity * dt_to_next.view(-1, 1, 1, 1)
                             )
-
-                            # Get value model predictions for all aligned branches
-                            value_preds = sampler.value_model(
-                                torch.full(
-                                    (num_branches,), next_timestep, device=device
-                                ),
-                                aligned_samples,
-                                branch_labels,
+                            aligned_times = torch.full(
+                                (num_branches,), next_timestep, device=device
                             )
 
-                            # Sort branches by value prediction (descending)
-                            sorted_indices = torch.argsort(value_preds, descending=True)
+                            # Calculate intermediate FID for all aligned branches
+                            intermediate_fid_changes = sampler.batch_compute_fid_change(
+                                aligned_samples, branch_labels
+                            )
+
+                            # Sort branches by FID (descending, as higher FID is better in this context)
+                            sorted_indices = torch.argsort(
+                                intermediate_fid_changes, descending=True
+                            )
 
                             # Select the branch with the specified rank (rank 1 = best, rank num_branches = worst)
                             selected_idx = sorted_indices[rank - 1]
@@ -197,7 +197,7 @@ def analyze_rank_consistency(
         rank_fid_correlation, p_value = float("nan"), float("nan")
 
     # Print results
-    print("\n===== Rank Consistency Results =====")
+    print("\n===== FID Rank Consistency Results =====")
     print(
         f"Correlation between rank and average FID: {rank_fid_correlation:.4f} (p-value: {p_value:.4f})"
     )
@@ -210,11 +210,11 @@ def analyze_rank_consistency(
     plt.errorbar(
         ranks, avg_fids, yerr=[rank_std_fid[r] for r in ranks], fmt="o-", capsize=5
     )
-    plt.xlabel("Branch Rank (1 = best according to value model)")
-    plt.ylabel("Average FID Score")
-    plt.title("FID Score by Consistently Selected Branch Rank")
+    plt.xlabel("Branch Rank by Intermediate FID (1 = best)")
+    plt.ylabel("Average Final FID Score")
+    plt.title("Final FID Score by Consistently Selected Branch Rank")
     plt.grid(True)
-    plt.savefig("rank_consistency_analysis.png")
+    plt.savefig("fid_rank_consistency_analysis.png")
     plt.close()
 
     # Return results
@@ -241,13 +241,13 @@ def main():
         num_classes=10,
         buffer_size=100,
         flow_model="large_flow_model.pt",
-        value_model="value_model.pt",
+        value_model="value_model.pt",  # Still needed for sampler initialization
         num_channels=256,
         inception_layer=0,
     )
 
-    # Run rank consistency analysis
-    analysis_results = analyze_rank_consistency(
+    # Run FID rank consistency analysis
+    analysis_results = analyze_fid_rank_consistency(
         sampler=sampler,
         device=device,
         num_samples=100,  # Samples per class
