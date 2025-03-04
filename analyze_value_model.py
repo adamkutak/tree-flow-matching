@@ -213,8 +213,7 @@ def analyze_value_model_predictions(
                     # Use batch_compute_fid_change instead of individual calls
                     lookahead_fid_changes = (
                         (
-                            -1
-                            * sampler.batch_compute_fid_change(
+                            sampler.batch_compute_fid_change(
                                 lookahead_samples,
                                 torch.full((num_branches,), class_idx, device=device),
                             )
@@ -244,12 +243,11 @@ def analyze_value_model_predictions(
                     final_samples = current_samples
 
                     # Verify all branches reached t=1
-                    final_time = sampler.timesteps[-1].item()
                     if (
-                        abs(final_time - 1.0) > 1e-5
+                        abs(current_time - 1.0) > 1e-5
                     ):  # Check if time is not approximately 1.0
                         print(
-                            f"WARNING: Branches ended at time {final_time:.4f}, not t=1.0"
+                            f"WARNING: Branches ended at time {current_time:.4f}, not t=1.0"
                         )
 
                     # Calculate actual FID change for each final sample
@@ -284,19 +282,16 @@ def analyze_value_model_predictions(
                     if len(value_preds) > 1 and len(actual_fid_changes) > 1:
                         total_branch_points += 1
 
-                        # For value model predictions (lower is better for FID)
-                        value_best_idx = torch.argmin(value_preds).item()
-                        final_best_idx = np.argmin(actual_fid_changes)
+                        value_best_idx = torch.argmax(value_preds).item()
+                        final_best_idx = np.argmax(actual_fid_changes)
                         if value_best_idx == final_best_idx:
                             value_top_match_count += 1
 
-                        # For intermediate FID (lower is better for FID)
-                        intermediate_best_idx = np.argmin(intermediate_fid_changes)
+                        intermediate_best_idx = np.argmax(intermediate_fid_changes)
                         if intermediate_best_idx == final_best_idx:
                             intermediate_top_match_count += 1
 
-                        # For look-ahead FID (lower is better for FID)
-                        lookahead_best_idx = np.argmin(lookahead_fid_changes)
+                        lookahead_best_idx = np.argmax(lookahead_fid_changes)
                         if lookahead_best_idx == final_best_idx:
                             lookahead_top_match_count += 1
 
@@ -436,12 +431,12 @@ def analyze_value_model_predictions(
                 timestep_branch_counts[step] += 1
 
                 # Check top branch matches
-                value_best_idx = np.argmin(branch_data["value_predictions"])
-                final_best_idx = np.argmin(branch_data["actual_fid_changes"])
-                intermediate_best_idx = np.argmin(
+                value_best_idx = np.argmax(branch_data["value_predictions"])
+                final_best_idx = np.argmax(branch_data["actual_fid_changes"])
+                intermediate_best_idx = np.argmax(
                     branch_data["intermediate_fid_changes"]
                 )
-                lookahead_best_idx = np.argmin(branch_data["lookahead_fid_changes"])
+                lookahead_best_idx = np.argmax(branch_data["lookahead_fid_changes"])
 
                 if value_best_idx == final_best_idx:
                     timestep_value_match_counts[step] += 1
