@@ -540,6 +540,421 @@ def analyze_value_model_predictions(
     }
 
 
+def analyze_intermediate_fid_correlation(
+    sampler,
+    device,
+    num_samples=50,
+    num_branches=8,
+    dt_std=0.1,
+    class_label=None,
+    batch_size=10,
+):
+    """
+    Analyze how well the intermediate FID rankings correlate with actual final FID scores.
+
+    Args:
+        sampler: The MCTSFlowSampler instance
+        device: The device to run computations on
+        num_samples: Number of samples to analyze
+        num_branches: Number of branches to create at each test point
+        dt_std: Standard deviation for dt variation when branching
+        class_label: Specific class to analyze (if None, samples across all classes)
+        batch_size: Number of samples to process in parallel
+
+    Returns:
+        Dictionary containing correlation metrics between intermediate FID rankings and actual FID
+    """
+    print("\n===== Intermediate FID Correlation Analysis =====")
+
+    # Import necessary libraries
+    from scipy.stats import spearmanr
+    import torchmetrics.image.fid as FID
+
+    # Initialize FID metric for actual FID calculation
+    fid_metric = FID.FrechetInceptionDistance(
+        normalize=True, reset_real_features=False
+    ).to(device)
+
+    # Load real images for FID calculation
+    transform = transforms.Compose(
+        [
+            transforms.ToTensor(),
+            transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
+        ]
+    )
+    cifar10 = datasets.CIFAR10(
+        root="./data", train=True, download=True, transform=transform
+    )
+
+    # Randomly sample real images
+    indices = np.random.choice(len(cifar10), 5000, replace=False)
+    real_images = torch.stack([cifar10[i][0] for i in indices]).to(device)
+
+    # Process real images in batches
+    real_batch_size = 100
+    print("Processing real images for FID calculation...")
+    for i in range(0, len(real_images), real_batch_size):
+        batch = real_images[i : i + real_batch_size]
+        fid_metric.update(batch, real=True)
+
+    sampler.flow_model.eval()
+    if sampler.value_model:
+        sampler.value_model.eval()
+
+    # Data collection
+    branch_point_data = []
+    timestep_data = [[] for _ in range(sampler.num_timesteps)]
+
+    # Sample across all classes or specific class
+    if class_label is None:
+        # Distribute samples across classes
+        samples_per_class = num_samples // sampler.num_classes
+        class_range = range(sampler.num_classes)
+    else:
+        samples_per_class = num_samples
+        class_range = [class_label]
+
+    # Print timestep schedule
+    print(f"Timestep schedule: {sampler.timesteps.cpu().numpy()}")
+
+    # Counters for rank correlation
+    total_branch_points = 0
+    total_rank_correlation = 0
+    top1_matches = 0
+    top2_matches = 0
+    top3_matches = 0
+
+    with torch.no_grad():
+        for class_idx in class_range:
+            print(f"Processing class {class_idx}...")
+
+            # Process in batches
+            num_batches = (
+                samples_per_class + batch_size - 1
+            ) // batch_size  # Ceiling division
+            for batch_idx in tqdm(
+                range(num_batches), desc=f"Class {class_idx} batches"
+            ):
+                # Determine actual batch size (might be smaller for last batch)
+                actual_batch_size = min(
+                    batch_size, samples_per_class - batch_idx * batch_size
+                )
+                if actual_batch_size <= 0:
+                    break
+
+                # Start with random noise
+                x = torch.randn(
+                    actual_batch_size,
+                    sampler.channels,
+                    sampler.image_size,
+                    sampler.image_size,
+                    device=device,
+                )
+                label = torch.full((actual_batch_size,), class_idx, device=device)
+
+                # Choose random timesteps to branch at (between 0 and num_timesteps-3)
+                # We need at least 2 more steps after branching
+                branch_steps = torch.randint(
+                    0, sampler.num_timesteps - 2, (actual_batch_size,)
+                ).to(device)
+
+                # Track current time for each sample
+                current_times = torch.zeros(actual_batch_size, device=device)
+
+                # Simulate each sample up to its branch point
+                for step in range(sampler.num_timesteps - 1):
+                    # Find which samples need to be updated at this step
+                    active_mask = branch_steps >= step
+                    if not active_mask.any():
+                        break
+
+                    active_x = x[active_mask]
+                    active_label = label[active_mask]
+
+                    t = sampler.timesteps[step]
+                    dt = sampler.timesteps[step + 1] - t
+                    t_batch = torch.full((active_mask.sum(),), t.item(), device=device)
+
+                    velocity = sampler.flow_model(t_batch, active_x, active_label)
+                    active_x = active_x + velocity * dt
+
+                    # Update the samples and times
+                    x[active_mask] = active_x
+                    current_times[active_mask] = sampler.timesteps[step + 1].item()
+
+                # Process each sample's branches separately
+                for i in range(actual_batch_size):
+                    branch_step = branch_steps[i].item()
+
+                    # Create branches for this sample
+                    branches = x[i : i + 1].repeat(num_branches, 1, 1, 1)
+                    branch_labels = label[i : i + 1].repeat(num_branches)
+                    branch_times = torch.full(
+                        (num_branches,), current_times[i].item(), device=device
+                    )
+
+                    # Sample different dt values for each branch
+                    base_dt = 1.0 / sampler.num_timesteps
+                    dts = torch.normal(
+                        mean=base_dt,
+                        std=dt_std * base_dt,
+                        size=(num_branches,),
+                        device=device,
+                    )
+                    dts = torch.clamp(
+                        dts,
+                        min=torch.tensor(0.0, device=device),
+                        max=1.0 - branch_times,
+                    )
+
+                    # Get velocity for all branches in a single batched calculation
+                    velocity = sampler.flow_model(branch_times, branches, branch_labels)
+
+                    # Apply different step sizes to create branches
+                    branched_samples = branches + velocity * dts.view(-1, 1, 1, 1)
+                    new_times = branch_times + dts
+
+                    # Now simulate all branches forward one more step to a common time point
+                    next_timestep = sampler.timesteps[branch_step + 1].item()
+
+                    # Calculate dt to reach the next common timestep for each branch
+                    dt_to_next = next_timestep - new_times
+
+                    # Get velocity for all branches in a single batched calculation
+                    velocity = sampler.flow_model(
+                        new_times, branched_samples, branch_labels
+                    )
+
+                    # Apply the step to all branches at once
+                    aligned_samples = branched_samples + velocity * dt_to_next.view(
+                        -1, 1, 1, 1
+                    )
+                    aligned_times = torch.full(
+                        (num_branches,), next_timestep, device=device
+                    )
+
+                    # Calculate intermediate FID for aligned samples
+                    intermediate_fid_changes = []
+                    for j in range(num_branches):
+                        intermediate_fid = sampler.compute_fid_change(
+                            aligned_samples[j : j + 1], class_idx
+                        )
+                        intermediate_fid_changes.append(intermediate_fid)
+
+                    # Simulate all branches to completion
+                    final_samples = []
+                    for j in range(num_branches):
+                        # Start from aligned sample
+                        current_sample = aligned_samples[j : j + 1]
+                        current_time = next_timestep
+
+                        # Simulate until completion
+                        for step in range(branch_step + 1, sampler.num_timesteps - 1):
+                            t = sampler.timesteps[step]
+                            dt = sampler.timesteps[step + 1] - t
+                            t_batch = torch.full((1,), t.item(), device=device)
+
+                            velocity = sampler.flow_model(
+                                t_batch, current_sample, branch_labels[j : j + 1]
+                            )
+                            current_sample = current_sample + velocity * dt
+
+                        final_samples.append(current_sample)
+
+                    # Stack final samples
+                    final_samples_tensor = torch.cat(final_samples, dim=0)
+
+                    # Calculate actual FID for each branch individually
+                    actual_fid_scores = []
+
+                    # Generate a larger batch of samples for each branch to get a more accurate FID
+                    num_gen_samples = 100  # Number of samples to generate per branch for FID calculation
+
+                    for j in range(num_branches):
+                        # Reset FID metric for this branch
+                        branch_fid = FID.FrechetInceptionDistance(
+                            normalize=True, reset_real_features=False
+                        ).to(device)
+
+                        # Copy real features from main FID metric
+                        branch_fid.real_features = fid_metric.real_features.clone()
+                        branch_fid.real_mean = fid_metric.real_mean.clone()
+                        branch_fid.real_cov = fid_metric.real_cov.clone()
+                        branch_fid.real_features_num = fid_metric.real_features_num
+
+                        # Generate samples using this branch's trajectory
+                        branch_samples = []
+
+                        # Generate samples in smaller batches
+                        gen_batch_size = 10
+                        for k in range(0, num_gen_samples, gen_batch_size):
+                            actual_gen_size = min(gen_batch_size, num_gen_samples - k)
+
+                            # Start from noise
+                            gen_x = torch.randn(
+                                actual_gen_size,
+                                sampler.channels,
+                                sampler.image_size,
+                                sampler.image_size,
+                                device=device,
+                            )
+                            gen_label = torch.full(
+                                (actual_gen_size,), class_idx, device=device
+                            )
+
+                            # Simulate up to branch point using standard trajectory
+                            gen_time = torch.zeros(actual_gen_size, device=device)
+
+                            for step in range(branch_step + 1):
+                                t = sampler.timesteps[step]
+                                dt = sampler.timesteps[step + 1] - t
+                                t_batch = torch.full(
+                                    (actual_gen_size,), t.item(), device=device
+                                )
+
+                                velocity = sampler.flow_model(t_batch, gen_x, gen_label)
+                                gen_x = gen_x + velocity * dt
+                                gen_time = sampler.timesteps[step + 1].item()
+
+                            # Apply the specific branch's dt
+                            t_batch = torch.full(
+                                (actual_gen_size,), gen_time, device=device
+                            )
+                            velocity = sampler.flow_model(t_batch, gen_x, gen_label)
+                            gen_x = gen_x + velocity * dts[j]
+                            gen_time = gen_time + dts[j]
+
+                            # Continue simulation to completion
+                            for step in range(
+                                branch_step + 1, sampler.num_timesteps - 1
+                            ):
+                                t = sampler.timesteps[step]
+                                dt = sampler.timesteps[step + 1] - t
+                                t_batch = torch.full(
+                                    (actual_gen_size,), t.item(), device=device
+                                )
+
+                                velocity = sampler.flow_model(t_batch, gen_x, gen_label)
+                                gen_x = gen_x + velocity * dt
+
+                            branch_samples.append(gen_x)
+
+                        # Stack all generated samples for this branch
+                        branch_samples_tensor = torch.cat(branch_samples, dim=0)
+
+                        # Update FID with these samples
+                        branch_fid.update(branch_samples_tensor, real=False)
+
+                        # Compute FID score for this branch
+                        branch_fid_score = branch_fid.compute().item()
+                        actual_fid_scores.append(branch_fid_score)
+
+                    # Rank branches by intermediate FID (lower is better)
+                    intermediate_ranks = np.argsort(intermediate_fid_changes)
+
+                    # Rank branches by actual FID (lower is better)
+                    actual_ranks = np.argsort(actual_fid_scores)
+
+                    # Store branch data
+                    branch_data = {
+                        "intermediate_fid_changes": np.array(intermediate_fid_changes),
+                        "intermediate_ranks": intermediate_ranks,
+                        "actual_fid_scores": np.array(actual_fid_scores),
+                        "actual_ranks": actual_ranks,
+                        "timestep": branch_step,
+                    }
+
+                    branch_point_data.append(branch_data)
+                    timestep_data[branch_step].append(branch_data)
+
+                    # Update correlation statistics
+                    total_branch_points += 1
+
+                    # Calculate rank correlation between intermediate FID and actual FID
+                    if len(intermediate_fid_changes) > 1:
+                        corr, _ = spearmanr(intermediate_fid_changes, actual_fid_scores)
+                        total_rank_correlation += corr
+
+                        # Check top-k matches
+                        if intermediate_ranks[0] == actual_ranks[0]:
+                            top1_matches += 1
+
+                        if intermediate_ranks[0] in actual_ranks[:2]:
+                            top2_matches += 1
+
+                        if intermediate_ranks[0] in actual_ranks[:3]:
+                            top3_matches += 1
+
+    # Calculate average rank correlation
+    avg_rank_correlation = (
+        total_rank_correlation / total_branch_points if total_branch_points > 0 else 0
+    )
+
+    print(
+        f"\nAverage rank correlation between intermediate FID and actual FID: {avg_rank_correlation:.4f}"
+    )
+
+    # Calculate top-k accuracy
+    top1_accuracy = top1_matches / total_branch_points if total_branch_points > 0 else 0
+    top2_accuracy = top2_matches / total_branch_points if total_branch_points > 0 else 0
+    top3_accuracy = top3_matches / total_branch_points if total_branch_points > 0 else 0
+
+    print(f"Top-1 accuracy: {top1_accuracy:.4f} ({top1_matches}/{total_branch_points})")
+    print(f"Top-2 accuracy: {top2_accuracy:.4f} ({top2_matches}/{total_branch_points})")
+    print(f"Top-3 accuracy: {top3_accuracy:.4f} ({top3_matches}/{total_branch_points})")
+
+    # Calculate per-timestep correlations
+    print("\nRank correlation by timestep:")
+    timestep_correlations = []
+    timestep_top1_accuracy = []
+
+    for step in range(sampler.num_timesteps):
+        step_correlations = []
+        step_top1_matches = 0
+        step_branch_points = 0
+
+        for branch_data in timestep_data[step]:
+            if len(branch_data["intermediate_fid_changes"]) > 1:
+                corr, _ = spearmanr(
+                    branch_data["intermediate_fid_changes"],
+                    branch_data["actual_fid_scores"],
+                )
+                step_correlations.append(corr)
+
+                # Check top-1 match for this timestep
+                if (
+                    branch_data["intermediate_ranks"][0]
+                    == branch_data["actual_ranks"][0]
+                ):
+                    step_top1_matches += 1
+
+                step_branch_points += 1
+
+        if step_correlations:
+            avg_step_corr = np.mean(step_correlations)
+            timestep_correlations.append(avg_step_corr)
+
+            step_top1_acc = (
+                step_top1_matches / step_branch_points if step_branch_points > 0 else 0
+            )
+            timestep_top1_accuracy.append(step_top1_acc)
+
+            print(
+                f"  Timestep {step}: correlation={avg_step_corr:.4f}, top-1 accuracy={step_top1_acc:.4f} ({step_top1_matches}/{step_branch_points})"
+            )
+        else:
+            timestep_correlations.append(np.nan)
+            timestep_top1_accuracy.append(np.nan)
+            print(f"  Timestep {step}: insufficient data")
+
+    # Return analysis results
+    return {
+        "avg_rank_correlation": avg_rank_correlation,
+        "top1_accuracy": top1_accuracy,
+        "top2_accuracy": top2_accuracy,
+    }
+
+
 def main():
     # Use the specified GPU device
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
@@ -557,8 +972,15 @@ def main():
         value_model=None,
         num_channels=256,
     )
-    # Run value model prediction analysis
-    analysis_results = analyze_value_model_predictions(
+    # # Run value model prediction analysis
+    # analysis_results = analyze_value_model_predictions(
+    #     sampler=sampler,
+    #     device=device,
+    #     num_samples=1000,
+    #     num_branches=8,
+    #     dt_std=0.1,
+    # )
+    analyze_intermediate_fid_correlation(
         sampler=sampler,
         device=device,
         num_samples=1000,
