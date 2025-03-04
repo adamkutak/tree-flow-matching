@@ -968,6 +968,16 @@ class MCTSFlowSampler:
             # Final selection - take best sample from each batch element's num_branches samples
             final_samples = []
 
+            if not torch.all(current_times >= 1.0 - 1e-6):
+                print("WARNING: Not all samples reached t=1 after simulation")
+                print(f"Current times: {current_times}")
+                print(
+                    f"Min time: {current_times.min().item():.6f}, Max time: {current_times.max().item():.6f}"
+                )
+                print(
+                    f"Number of samples < 1.0: {torch.sum(current_times < 1.0).item()}"
+                )
+
             # Calculate final FID scores for all samples in one batch
             final_fid_scores = self.batch_compute_fid_change(
                 current_samples, current_label
