@@ -4,6 +4,9 @@ import os
 from tqdm import tqdm
 import matplotlib.pyplot as plt
 from scipy.stats import spearmanr
+import torchvision.transforms as transforms
+import torchvision.datasets as datasets
+import torchmetrics.image.fid as FID
 
 from mcts_single_flow import MCTSFlowSampler
 
@@ -51,7 +54,11 @@ def analyze_fid_rank_consistency(
 
     # Store results for each rank
     rank_results = {
-        rank: {"fid_scores": [], "trajectories": []}
+        rank: {
+            "fid_scores": [],
+            "trajectories": [],
+            "final_samples": [],  # Store final samples for real FID calculation
+        }
         for rank in range(1, num_branches + 1)
     }
 
@@ -177,8 +184,11 @@ def analyze_fid_rank_consistency(
                     # Store results
                     rank_results[rank]["fid_scores"].append(fid_score)
                     rank_results[rank]["trajectories"].append(trajectory)
+                    rank_results[rank]["final_samples"].append(
+                        x.cpu()
+                    )  # Store for real FID calculation
 
-    # Calculate statistics
+    # Calculate statistics for intermediate FID scores
     rank_avg_fid = {}
     rank_std_fid = {}
 
@@ -187,7 +197,7 @@ def analyze_fid_rank_consistency(
         rank_avg_fid[rank] = np.mean(fid_scores)
         rank_std_fid[rank] = np.std(fid_scores)
 
-    # Calculate correlation between rank and average FID
+    # Calculate correlation between rank and average intermediate FID
     ranks = list(range(1, num_branches + 1))
     avg_fids = [rank_avg_fid[r] for r in ranks]
 
@@ -196,33 +206,112 @@ def analyze_fid_rank_consistency(
     else:
         rank_fid_correlation, p_value = float("nan"), float("nan")
 
-    # Print results
-    print("\n===== FID Rank Consistency Results =====")
+    # Print results for intermediate FID
+    print("\n===== Intermediate FID Rank Consistency Results =====")
     print(
-        f"Correlation between rank and average FID: {rank_fid_correlation:.4f} (p-value: {p_value:.4f})"
+        f"Correlation between rank and average intermediate FID: {rank_fid_correlation:.4f} (p-value: {p_value:.4f})"
     )
-    print("\nAverage FID by rank:")
+    print("\nAverage intermediate FID by rank:")
     for rank in range(1, num_branches + 1):
         print(f"  Rank {rank}: {rank_avg_fid[rank]:.4f} ± {rank_std_fid[rank]:.4f}")
 
-    # Plot results
+    # Plot results for intermediate FID
     plt.figure(figsize=(10, 6))
     plt.errorbar(
         ranks, avg_fids, yerr=[rank_std_fid[r] for r in ranks], fmt="o-", capsize=5
     )
     plt.xlabel("Branch Rank by Intermediate FID (1 = best)")
-    plt.ylabel("Average Final FID Score")
-    plt.title("Final FID Score by Consistently Selected Branch Rank")
+    plt.ylabel("Average Intermediate FID Score")
+    plt.title("Intermediate FID Score by Consistently Selected Branch Rank")
     plt.grid(True)
-    plt.savefig("fid_rank_consistency_analysis.png")
+    plt.savefig("intermediate_fid_rank_consistency.png")
+    plt.close()
+
+    # Now calculate real FID scores for each rank
+    print("\n===== Computing Real FID Scores =====")
+
+    # Setup CIFAR-10 dataset with appropriate transforms for real FID calculation
+    transform = transforms.Compose(
+        [
+            transforms.ToTensor(),
+            transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
+        ]
+    )
+    cifar10 = datasets.CIFAR10(
+        root="./data", train=True, download=True, transform=transform
+    )
+
+    # Initialize FID metric
+    fid_metric = FID.FrechetInceptionDistance(
+        normalize=True, reset_real_features=False
+    ).to(device)
+
+    # Process real images
+    real_batch_size = 100
+    indices = np.random.choice(len(cifar10), 5000, replace=False)
+    real_images = torch.stack([cifar10[i][0] for i in indices]).to(device)
+
+    print("Processing real images...")
+    for i in range(0, len(real_images), real_batch_size):
+        batch = real_images[i : i + real_batch_size]
+        fid_metric.update(batch, real=True)
+        torch.cuda.empty_cache()
+
+    # Calculate real FID for each rank
+    real_fid_scores = {}
+
+    for rank in range(1, num_branches + 1):
+        # Reset FID for fake images
+        fid_metric.reset_fake_features()
+
+        # Stack all final samples for this rank
+        final_samples = torch.cat(rank_results[rank]["final_samples"], dim=0)
+
+        # Process in batches
+        batch_size = 64
+        print(f"Processing rank {rank} samples for real FID...")
+        for i in range(0, len(final_samples), batch_size):
+            batch = final_samples[i : i + batch_size].to(device)
+            fid_metric.update(batch, real=False)
+            torch.cuda.empty_cache()
+
+        # Compute FID score
+        real_fid_score = fid_metric.compute().item()
+        real_fid_scores[rank] = real_fid_score
+        print(f"  Rank {rank} real FID: {real_fid_score:.4f}")
+
+    # Calculate correlation between rank and real FID
+    real_fid_values = [real_fid_scores[r] for r in ranks]
+
+    if len(ranks) > 1:
+        real_fid_correlation, real_p_value = spearmanr(ranks, real_fid_values)
+    else:
+        real_fid_correlation, real_p_value = float("nan"), float("nan")
+
+    print("\n===== Real FID Rank Correlation =====")
+    print(
+        f"Correlation between rank and real FID: {real_fid_correlation:.4f} (p-value: {real_p_value:.4f})"
+    )
+
+    # Plot real FID results
+    plt.figure(figsize=(10, 6))
+    plt.plot(ranks, real_fid_values, "o-")
+    plt.xlabel("Branch Rank by Intermediate FID (1 = best)")
+    plt.ylabel("Real FID Score (lower is better)")
+    plt.title("Real FID Score by Consistently Selected Branch Rank")
+    plt.grid(True)
+    plt.savefig("real_fid_rank_consistency.png")
     plt.close()
 
     # Return results
     return {
-        "rank_fid_correlation": rank_fid_correlation,
-        "p_value": p_value,
-        "rank_avg_fid": rank_avg_fid,
-        "rank_std_fid": rank_std_fid,
+        "intermediate_fid_correlation": rank_fid_correlation,
+        "intermediate_fid_p_value": p_value,
+        "rank_avg_intermediate_fid": rank_avg_fid,
+        "rank_std_intermediate_fid": rank_std_fid,
+        "real_fid_scores": real_fid_scores,
+        "real_fid_correlation": real_fid_correlation,
+        "real_fid_p_value": real_p_value,
         "rank_results": rank_results,
     }
 
