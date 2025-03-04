@@ -204,40 +204,64 @@ class MCTSFlowSampler:
         print("Initializing per-class buffers...")
         self.initialize_class_buffers(buffer_size)
 
-    def initialize_class_buffers(self, n_samples):
-        """Initialize buffers for each class with generated samples."""
+    def initialize_class_buffers(self, n_samples, batch_size=64):
+        """Initialize buffers for each class with generated samples in batches to save memory."""
         self.flow_model.eval()
         with torch.no_grad():
             samples_per_class = n_samples
             for class_idx in range(self.num_classes):
-                # Generate samples for this specific class
-                labels = torch.full((samples_per_class,), class_idx, device=self.device)
-                x = torch.randn(
-                    samples_per_class,
-                    self.channels,
-                    self.image_size,
-                    self.image_size,
-                    device=self.device,
-                )
+                # Process in batches
+                remaining = samples_per_class
+                all_features = []
 
-                # Generate samples using simple flow
-                for t_idx in range(len(self.timesteps) - 1):
-                    t = self.timesteps[t_idx]
-                    dt = self.timesteps[t_idx + 1] - t
-                    t_batch = torch.full(
-                        (samples_per_class,), t.item(), device=self.device
+                print(f"Initializing buffer for class {class_idx}...")
+
+                while remaining > 0:
+                    # Determine current batch size
+                    current_batch_size = min(batch_size, remaining)
+
+                    # Generate samples for this specific class
+                    labels = torch.full(
+                        (current_batch_size,), class_idx, device=self.device
                     )
-                    velocity = self.flow_model(t_batch, x, labels)
-                    x = x + velocity * dt
+                    x = torch.randn(
+                        current_batch_size,
+                        self.channels,
+                        self.image_size,
+                        self.image_size,
+                        device=self.device,
+                    )
 
-                # Extract and store features for this class
-                features = self.extract_inception_features(x)
-                self.fids[class_idx]["features"].extend(list(features))
+                    # Generate samples using simple flow
+                    for t_idx in range(len(self.timesteps) - 1):
+                        t = self.timesteps[t_idx]
+                        dt = self.timesteps[t_idx + 1] - t
+                        t_batch = torch.full(
+                            (current_batch_size,), t.item(), device=self.device
+                        )
+                        velocity = self.flow_model(t_batch, x, labels)
+                        x = x + velocity * dt
 
+                    # Extract and store features for this batch
+                    features = self.extract_inception_features(x)
+                    all_features.extend(list(features))
+
+                    # Update remaining count
+                    remaining -= current_batch_size
+
+                    # Print progress
+                    progress = (samples_per_class - remaining) / samples_per_class * 100
+                    print(
+                        f"Class {class_idx} progress: {progress:.1f}% ({len(all_features)}/{samples_per_class})"
+                    )
+
+                # Store all collected features for this class
+                self.fids[class_idx]["features"].extend(all_features)
                 print(
                     f"Class {class_idx} initialized with {len(self.fids[class_idx]['features'])} samples"
                 )
 
+        print("Computing baseline FID scores for each class...")
         for class_idx in range(self.num_classes):
             feats = np.array(list(self.fids[class_idx]["features"]))
             mu = np.mean(feats, axis=0)
@@ -246,6 +270,7 @@ class MCTSFlowSampler:
                 mu, sigma, self.fids[class_idx]["mu"], self.fids[class_idx]["sigma"]
             )
             self.fids[class_idx]["baseline_fid"] = baseline_fid
+            print(f"Class {class_idx} baseline FID: {baseline_fid:.4f}")
 
     def extract_inception_features(self, images):
         """Extract inception features using pytorch-fid."""
