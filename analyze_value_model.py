@@ -223,7 +223,7 @@ def analyze_value_model_predictions(
                     # Simulate all branches to completion with batched operations
                     current_samples = aligned_samples
                     current_time = next_timestep  # All samples are at the same time now
-
+                    breakpoint()
                     # Simulate until completion with batched operations
                     while current_time < 1.0:
                         t = current_time
