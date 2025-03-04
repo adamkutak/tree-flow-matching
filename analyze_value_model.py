@@ -157,7 +157,6 @@ def analyze_value_model_predictions(
 
                     # Calculate dt to reach the next common timestep for each branch
                     dt_to_next = next_timestep - new_times
-                    breakpoint()
 
                     # Get velocity for all branches in a single batched calculation
                     velocity = sampler.flow_model(
@@ -226,15 +225,15 @@ def analyze_value_model_predictions(
                     current_time = next_timestep  # All samples are at the same time now
                     # Simulate until completion with batched operations
                     while current_time < 1.0:
-                        t = current_time
-                        dt = base_dt
-                        t_batch = torch.full((num_branches,), t, device=device)
+                        t_batch = torch.full(
+                            (num_branches,), current_time, device=device
+                        )
 
                         velocity = sampler.flow_model(
                             t_batch, current_samples, branch_labels
                         )
-                        current_samples = current_samples + velocity * dt
-                        current_time += dt
+                        current_samples = current_samples + velocity * base_dt
+                        current_time += base_dt
 
                     # Final samples are now all in current_samples
                     final_samples = current_samples
