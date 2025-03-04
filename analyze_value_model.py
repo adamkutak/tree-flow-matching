@@ -146,6 +146,7 @@ def analyze_value_model_predictions(
 
                     # Get velocity for all branches in a single batched calculation
                     velocity = sampler.flow_model(branch_times, branches, branch_labels)
+                    breakpoint()
 
                     # Apply different step sizes to create branches
                     branched_samples = branches + velocity * dts.view(-1, 1, 1, 1)
@@ -223,7 +224,6 @@ def analyze_value_model_predictions(
                     # Simulate all branches to completion with batched operations
                     current_samples = aligned_samples
                     current_time = next_timestep  # All samples are at the same time now
-                    breakpoint()
                     # Simulate until completion with batched operations
                     while current_time < 1.0:
                         t = current_time
