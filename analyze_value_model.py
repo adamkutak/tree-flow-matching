@@ -55,9 +55,6 @@ def analyze_value_model_predictions(
         samples_per_class = num_samples
         class_range = [class_label]
 
-    # Print timestep schedule only once
-    print(f"Timestep schedule: {sampler.timesteps.cpu().numpy()}")
-
     # Counters for top branch matching
     value_top_match_count = 0
     intermediate_top_match_count = 0
@@ -111,16 +108,15 @@ def analyze_value_model_predictions(
                     active_x = x[active_mask]
                     active_label = label[active_mask]
 
-                    t = sampler.timesteps[step]
-                    dt = sampler.timesteps[step + 1] - t
+                    t = step * base_dt
                     t_batch = torch.full((active_mask.sum(),), t.item(), device=device)
 
                     velocity = sampler.flow_model(t_batch, active_x, active_label)
-                    active_x = active_x + velocity * dt
+                    active_x = active_x + velocity * base_dt
 
                     # Update the samples and times
                     x[active_mask] = active_x
-                    current_times[active_mask] = sampler.timesteps[step + 1].item()
+                    current_times[active_mask] = t + base_dt
 
                 # Process each sample's branches separately to maintain branch point grouping
                 for i in range(actual_batch_size):
@@ -156,7 +152,7 @@ def analyze_value_model_predictions(
 
                     # Now simulate all branches forward one more step to a common time point
                     # Use the next timestep in the schedule after the branch point
-                    next_timestep = sampler.timesteps[branch_step + 1].item()
+                    next_timestep = (branch_step + 1) * base_dt
 
                     # Calculate dt to reach the next common timestep for each branch
                     dt_to_next = next_timestep - new_times
@@ -226,12 +222,11 @@ def analyze_value_model_predictions(
                     # Simulate all branches to completion with batched operations
                     current_samples = aligned_samples
                     current_time = next_timestep  # All samples are at the same time now
-                    next_step = branch_step + 1  # We know this is the correct index
 
                     # Simulate until completion with batched operations
-                    for step in range(next_step + 1, sampler.num_timesteps - 1):
-                        t = sampler.timesteps[step]
-                        dt = sampler.timesteps[step + 1] - t
+                    while current_time < 1.0:
+                        t = current_time
+                        dt = base_dt
                         t_batch = torch.full((num_branches,), t.item(), device=device)
 
                         velocity = sampler.flow_model(
