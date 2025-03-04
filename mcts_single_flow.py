@@ -249,12 +249,6 @@ class MCTSFlowSampler:
                     # Update remaining count
                     remaining -= current_batch_size
 
-                    # Print progress
-                    progress = (samples_per_class - remaining) / samples_per_class * 100
-                    print(
-                        f"Class {class_idx} progress: {progress:.1f}% ({len(all_features)}/{samples_per_class})"
-                    )
-
                 # Store all collected features for this class
                 self.fids[class_idx]["features"].extend(all_features)
                 print(
