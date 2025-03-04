@@ -312,7 +312,6 @@ def calculate_metrics(
                 num_branches=num_branches,
                 num_keep=num_keep,
                 dt_std=0.1,
-                # sigma=noise_scale,
             )
             generated_samples.extend(sample.cpu())
 
@@ -377,10 +376,6 @@ def main():
     # Initialize metrics
     fid = FID.FrechetInceptionDistance(normalize=True, reset_real_features=False).to(
         device
-    )
-    # Get random real images from CIFAR-10
-    transform = transforms.Compose(
-        [transforms.ToTensor(), transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))]
     )
     cifar10 = datasets.CIFAR10(
         root="./data", train=True, download=True, transform=transform
