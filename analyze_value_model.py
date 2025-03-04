@@ -167,10 +167,7 @@ def analyze_value_model_predictions(
                     aligned_samples = branched_samples + velocity * dt_to_next.view(
                         -1, 1, 1, 1
                     )
-                    aligned_times = torch.full(
-                        (num_branches,), next_timestep, device=device
-                    )
-
+                    aligned_times = next_timestep
                     # Verify all branches are at the same time
                     time_diff = torch.max(torch.abs(aligned_times - next_timestep))
                     if time_diff > 1e-8:
