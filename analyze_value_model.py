@@ -228,7 +228,7 @@ def analyze_value_model_predictions(
                     while current_time < 1.0:
                         t = current_time
                         dt = base_dt
-                        t_batch = torch.full((num_branches,), t.item(), device=device)
+                        t_batch = torch.full((num_branches,), t, device=device)
 
                         velocity = sampler.flow_model(
                             t_batch, current_samples, branch_labels
