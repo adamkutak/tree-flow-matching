@@ -238,7 +238,7 @@ def analyze_value_model_predictions(
                             t_batch, current_samples, branch_labels
                         )
                         current_samples = current_samples + velocity * dt
-                        current_time = sampler.timesteps[step + 1].item()
+                        current_time += dt
 
                     # Final samples are now all in current_samples
                     final_samples = current_samples
