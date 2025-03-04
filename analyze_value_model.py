@@ -551,7 +551,7 @@ def analyze_value_model_predictions(
 
 def main():
     # Use the specified GPU device
-    device = torch.device("cuda:2" if torch.cuda.is_available() else "cpu")
+    device = torch.device("cuda:3" if torch.cuda.is_available() else "cpu")
     print(f"Using device: {device}")
 
     # Initialize sampler
