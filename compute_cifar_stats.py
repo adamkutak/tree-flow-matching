@@ -9,15 +9,38 @@ import pickle
 from tqdm import tqdm
 from pytorch_fid.inception import InceptionV3
 from collections import defaultdict
+import argparse
 
 
-def compute_cifar10_statistics():
-    """Compute and save per-class Inception feature statistics for CIFAR-10 dataset."""
+def compute_cifar10_statistics(feature_dim=64):
+    """
+    Compute and save per-class Inception feature statistics for CIFAR-10 dataset.
 
-    # Load inception model with 64-dim features
-    inception = InceptionV3(
-        [0], normalize_input=True
-    )  # Block index 2 gives 64-dim features
+    Args:
+        feature_dim (int): Dimension of features to extract. Options are:
+            - 64: First layer features (block idx 0)
+            - 192: Second layer features (block idx 1)
+            - 768: Third layer features (block idx 2)
+            - 2048: Final layer features (block idx 3)
+    """
+    # Map feature dimension to block index
+    dim_to_block = {
+        64: 0,  # First block
+        192: 1,  # Second block
+        768: 2,  # Third block
+        2048: 3,  # Final block (default for standard FID)
+    }
+
+    if feature_dim not in dim_to_block:
+        raise ValueError(
+            f"Unsupported feature dimension: {feature_dim}. "
+            f"Supported dimensions are: {list(dim_to_block.keys())}"
+        )
+
+    block_idx = dim_to_block[feature_dim]
+
+    # Load inception model with specified feature dimension
+    inception = InceptionV3([block_idx], normalize_input=True)
     inception.eval()
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -41,7 +64,7 @@ def compute_cifar10_statistics():
     # Dictionary to store features for each class
     class_features = defaultdict(list)
 
-    print("Computing 64-dim Inception features for CIFAR-10 by class...")
+    print(f"Computing {feature_dim}-dim Inception features for CIFAR-10 by class...")
 
     with torch.no_grad():
         for images, labels in tqdm(dataloader):
@@ -78,12 +101,25 @@ def compute_cifar10_statistics():
         print(f"  Mean shape: {mu.shape}")
         print(f"  Covariance shape: {sigma.shape}")
 
-    # Save statistics
-    with open("cifar10_fid_stats_64dim.pkl", "wb") as f:
+    # Save statistics with dimension in filename
+    output_file = f"cifar10_fid_stats_{feature_dim}dim.pkl"
+    with open(output_file, "wb") as f:
         pickle.dump(stats, f)
 
-    print(f"\nPer-class statistics saved to cifar10_fid_stats_64dim.pkl")
+    print(f"\nPer-class statistics saved to {output_file}")
 
 
 if __name__ == "__main__":
-    compute_cifar10_statistics()
+    parser = argparse.ArgumentParser(
+        description="Compute CIFAR-10 statistics for FID calculation"
+    )
+    parser.add_argument(
+        "--dim",
+        type=int,
+        default=64,
+        choices=[64, 192, 768, 2048],
+        help="Dimension of Inception features to extract (64, 192, 768, or 2048)",
+    )
+    args = parser.parse_args()
+
+    compute_cifar10_statistics(feature_dim=args.dim)
