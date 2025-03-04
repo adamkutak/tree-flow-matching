@@ -339,7 +339,7 @@ def main():
     analysis_results = analyze_fid_rank_consistency(
         sampler=sampler,
         device=device,
-        num_samples=100,  # Samples per class
+        num_samples=10,  # Samples per class
         num_branches=8,
         dt_std=0.1,
     )
