@@ -188,6 +188,8 @@ class MCTSFlowSampler:
         self.inception = InceptionV3([inception_layer], normalize_input=True).to(device)
         self.inception.eval()
 
+        # TODO: load stats for cifar10 depending on inception layer number
+
         # Load reference statistics for CIFAR-10
         with open("cifar10_fid_stats_64dim.pkl", "rb") as f:
             cifar_stats = pickle.load(f)
@@ -204,6 +206,10 @@ class MCTSFlowSampler:
 
         print("Initializing per-class buffers...")
         self.initialize_class_buffers(buffer_size)
+
+    def set_timesteps(self, num_timesteps):
+        self.num_timesteps = num_timesteps
+        self.timesteps = torch.linspace(0, 1, num_timesteps, device=self.device)
 
     def initialize_class_buffers(self, n_samples, batch_size=64):
         """Initialize buffers for each class with generated samples in batches to save memory."""

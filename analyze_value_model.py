@@ -192,13 +192,15 @@ def analyze_value_model_predictions(
                         aligned_times, aligned_samples, branch_labels
                     )
 
-                    # Calculate FID for intermediate aligned samples
-                    intermediate_fid_changes = []
-                    for j in range(num_branches):
-                        intermediate_fid = sampler.compute_fid_change(
-                            aligned_samples[j : j + 1], class_idx
+                    intermediate_fid_changes = (
+                        sampler.batch_compute_fid_change(
+                            aligned_samples,
+                            torch.full((num_branches,), class_idx, device=device),
                         )
-                        intermediate_fid_changes.append(intermediate_fid)
+                        .cpu()
+                        .numpy()
+                        .tolist()
+                    )
 
                     lookahead_times = torch.full((num_branches,), 1.0, device=device)
                     time_diffs = torch.abs(lookahead_times - 1.0)
@@ -208,12 +210,19 @@ def analyze_value_model_predictions(
                         )
 
                     # Calculate FID for look-ahead samples
-                    lookahead_fid_changes = []
-                    for j in range(num_branches):
-                        lookahead_fid = -1 * sampler.compute_fid_change(
-                            lookahead_samples[j : j + 1], class_idx
+                    # Use batch_compute_fid_change instead of individual calls
+                    lookahead_fid_changes = (
+                        (
+                            -1
+                            * sampler.batch_compute_fid_change(
+                                lookahead_samples,
+                                torch.full((num_branches,), class_idx, device=device),
+                            )
                         )
-                        lookahead_fid_changes.append(lookahead_fid)
+                        .cpu()
+                        .numpy()
+                        .tolist()
+                    )
 
                     # Simulate all branches to completion with batched operations
                     current_samples = aligned_samples
@@ -244,12 +253,16 @@ def analyze_value_model_predictions(
                         )
 
                     # Calculate actual FID change for each final sample
-                    actual_fid_changes = []
-                    for j in range(num_branches):
-                        fid_change = sampler.compute_fid_change(
-                            final_samples[j : j + 1], class_idx
+                    # Use batch_compute_fid_change instead of individual calls
+                    actual_fid_changes = (
+                        sampler.batch_compute_fid_change(
+                            final_samples,
+                            torch.full((num_branches,), class_idx, device=device),
                         )
-                        actual_fid_changes.append(fid_change)
+                        .cpu()
+                        .numpy()
+                        .tolist()
+                    )
 
                     # Calculate correlation between intermediate FID and final FID
                     if len(intermediate_fid_changes) > 1:
@@ -556,13 +569,13 @@ def main():
         flow_model="large_flow_model.pt",
         value_model=None,
         num_channels=256,
-        inception_layer=1,
+        inception_layer=0,
     )
     # # Run value model prediction analysis
     analysis_results = analyze_value_model_predictions(
         sampler=sampler,
         device=device,
-        num_samples=1000,
+        num_samples=200,
         num_branches=8,
         dt_std=0.1,
     )
