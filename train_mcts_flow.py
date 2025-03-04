@@ -359,7 +359,7 @@ def main():
         image_size=image_size,
         channels=channels,
         device=device,
-        num_timesteps=10,
+        num_timesteps=20,
         num_classes=num_classes,
         buffer_size=100,
         load_models=True,
