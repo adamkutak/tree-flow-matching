@@ -221,7 +221,7 @@ def analyze_value_model_predictions(
                     current_samples = aligned_samples
                     current_time = next_timestep[0].item()
                     # Simulate until completion with batched operations
-                    while current_time < (1.0 - 1e-8):
+                    while current_time < (1.0 - 1e-6):
                         t_batch = torch.full(
                             (num_branches,), current_time, device=device
                         )
@@ -237,7 +237,7 @@ def analyze_value_model_predictions(
 
                     # Verify all branches reached t=1
                     if (
-                        abs(current_time - 1.0) > 1e-8
+                        abs(current_time - 1.0) > 1e-6
                     ):  # Check if time is not approximately 1.0
                         print(
                             f"WARNING: Branches ended at time {current_time:.4f}, not t=1.0"
