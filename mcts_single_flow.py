@@ -93,6 +93,7 @@ class MCTSFlowSampler:
         load_models=True,
         flow_model="single_flow_model.pt",
         value_model="single_value_model.pt",
+        inception_layer=1,
     ):
         # Check if CUDA is available and set device
         if torch.cuda.is_available():
@@ -184,7 +185,7 @@ class MCTSFlowSampler:
                 print("No pre-trained models found, starting from scratch")
 
         # Initialize inception model for FID computation
-        self.inception = InceptionV3([0], normalize_input=True).to(device)
+        self.inception = InceptionV3([inception_layer], normalize_input=True).to(device)
         self.inception.eval()
 
         # Load reference statistics for CIFAR-10
