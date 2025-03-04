@@ -61,6 +61,8 @@ def analyze_value_model_predictions(
     lookahead_top_match_count = 0
     total_branch_points = 0
 
+    base_dt = 1.0 / sampler.num_timesteps
+
     with torch.no_grad():
         for class_idx in class_range:
             print(f"Processing class {class_idx}...")
@@ -130,7 +132,6 @@ def analyze_value_model_predictions(
                     )
 
                     # Sample different dt values for each branch
-                    base_dt = 1.0 / sampler.num_timesteps
                     dts = torch.normal(
                         mean=base_dt,
                         std=dt_std * base_dt,
