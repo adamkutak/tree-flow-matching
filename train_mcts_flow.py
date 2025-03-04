@@ -361,7 +361,7 @@ def main():
         device=device,
         num_timesteps=10,
         num_classes=num_classes,
-        buffer_size=1000,
+        buffer_size=200,
         load_models=True,
         flow_model="large_flow_model.pt",
         value_model=None,
@@ -412,7 +412,7 @@ def main():
                 num_keep,
                 device,
                 sigma=0,
-                n_samples=500,
+                n_samples=1000,
                 fid=fid,
             )
             print(f"Cycle {cycle + 1} - (branches={num_branches}, keep={num_keep}):")
