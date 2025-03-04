@@ -968,7 +968,7 @@ class MCTSFlowSampler:
             # Final selection - take best sample from each batch element's num_branches samples
             final_samples = []
 
-            if not torch.all(current_times >= 1.0 - 1e-6):
+            if not torch.all(current_times >= 1.0 - 1e-8):
                 print("WARNING: Not all samples reached t=1 after simulation")
                 print(f"Current times: {current_times}")
                 print(
