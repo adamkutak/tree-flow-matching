@@ -262,7 +262,7 @@ def analyze_fid_rank_consistency(
 
     for rank in range(1, num_branches + 1):
         # Reset FID for fake images
-        fid_metric.reset_fake_features()
+        fid_metric.reset()
 
         # Stack all final samples for this rank
         final_samples = torch.cat(rank_results[rank]["final_samples"], dim=0)
