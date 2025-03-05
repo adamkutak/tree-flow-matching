@@ -59,6 +59,7 @@ def analyze_value_model_predictions(
     value_top_match_count = 0
     intermediate_top_match_count = 0
     lookahead_top_match_count = 0
+    mahalanobis_top_match_count = 0
     total_branch_points = 0
 
     base_dt = 1.0 / sampler.num_timesteps
@@ -196,6 +197,17 @@ def analyze_value_model_predictions(
                         .tolist()
                     )
 
+                    # Calculate Mahalanobis distances for aligned samples
+                    mahalanobis_distances = (
+                        sampler.batch_compute_mahalanobis_distance(
+                            aligned_samples,
+                            torch.full((num_branches,), class_idx, device=device),
+                        )
+                        .cpu()
+                        .numpy()
+                        .tolist()
+                    )
+
                     lookahead_times = torch.full((num_branches,), 1.0, device=device)
                     time_diffs = torch.abs(lookahead_times - 1.0)
                     if torch.any(time_diffs > 1e-8):
@@ -255,6 +267,17 @@ def analyze_value_model_predictions(
                         .tolist()
                     )
 
+                    # Calculate final Mahalanobis distances
+                    final_mahalanobis_distances = (
+                        sampler.batch_compute_mahalanobis_distance(
+                            final_samples,
+                            torch.full((num_branches,), class_idx, device=device),
+                        )
+                        .cpu()
+                        .numpy()
+                        .tolist()
+                    )
+
                     # Calculate correlation between intermediate FID and final FID
                     if len(intermediate_fid_changes) > 1:
                         intermediate_final_corr, _ = spearmanr(
@@ -270,6 +293,14 @@ def analyze_value_model_predictions(
                         )
                     else:
                         lookahead_final_corr = float("nan")
+
+                    # Calculate correlation between Mahalanobis distances and final FID
+                    if len(mahalanobis_distances) > 1:
+                        mahalanobis_final_corr, _ = spearmanr(
+                            mahalanobis_distances, actual_fid_changes
+                        )
+                    else:
+                        mahalanobis_final_corr = float("nan")
 
                     # Check if top branch matches
                     if len(value_preds) > 1 and len(actual_fid_changes) > 1:
@@ -288,15 +319,24 @@ def analyze_value_model_predictions(
                         if lookahead_best_idx == final_best_idx:
                             lookahead_top_match_count += 1
 
+                        mahalanobis_best_idx = np.argmax(mahalanobis_distances)
+                        if mahalanobis_best_idx == final_best_idx:
+                            mahalanobis_top_match_count += 1
+
                     # Store data for this branch point
                     branch_data = {
                         "value_predictions": value_preds.cpu().numpy(),
                         "intermediate_fid_changes": np.array(intermediate_fid_changes),
                         "lookahead_fid_changes": np.array(lookahead_fid_changes),
+                        "mahalanobis_distances": np.array(mahalanobis_distances),
+                        "final_mahalanobis_distances": np.array(
+                            final_mahalanobis_distances
+                        ),
                         "actual_fid_changes": np.array(actual_fid_changes),
                         "timestep": branch_step,
                         "intermediate_final_corr": intermediate_final_corr,
                         "lookahead_final_corr": lookahead_final_corr,
+                        "mahalanobis_final_corr": mahalanobis_final_corr,
                     }
                     branch_point_data.append(branch_data)
                     timestep_data[branch_step].append(branch_data)
@@ -305,6 +345,7 @@ def analyze_value_model_predictions(
     branch_correlations = []
     intermediate_final_correlations = []
     lookahead_final_correlations = []
+    mahalanobis_final_correlations = []
 
     for branch_data in branch_point_data:
         # Only calculate if we have enough branches
@@ -325,6 +366,12 @@ def analyze_value_model_predictions(
             if not np.isnan(branch_data["lookahead_final_corr"]):
                 lookahead_final_correlations.append(branch_data["lookahead_final_corr"])
 
+            # Mahalanobis distance vs final FID correlation
+            if not np.isnan(branch_data["mahalanobis_final_corr"]):
+                mahalanobis_final_correlations.append(
+                    branch_data["mahalanobis_final_corr"]
+                )
+
     # Calculate average correlations
     avg_correlation = (
         np.mean(branch_correlations) if branch_correlations else float("nan")
@@ -337,6 +384,11 @@ def analyze_value_model_predictions(
     avg_lookahead_final_corr = (
         np.mean(lookahead_final_correlations)
         if lookahead_final_correlations
+        else float("nan")
+    )
+    avg_mahalanobis_final_corr = (
+        np.mean(mahalanobis_final_correlations)
+        if mahalanobis_final_correlations
         else float("nan")
     )
 
@@ -353,6 +405,11 @@ def analyze_value_model_predictions(
     )
     lookahead_top_match_pct = (
         (lookahead_top_match_count / total_branch_points * 100)
+        if total_branch_points > 0
+        else 0
+    )
+    mahalanobis_top_match_pct = (
+        (mahalanobis_top_match_count / total_branch_points * 100)
         if total_branch_points > 0
         else 0
     )
@@ -384,21 +441,33 @@ def analyze_value_model_predictions(
         f"Look-ahead FID top branch match percentage: {lookahead_top_match_pct:.2f}% ({lookahead_top_match_count}/{total_branch_points})"
     )
 
+    # Print Mahalanobis distance correlation results
+    print("\n===== Mahalanobis Distance Correlation Results =====")
+    print(
+        f"Average mahalanobis-final correlation across all branch points: {avg_mahalanobis_final_corr:.4f}"
+    )
+    print(
+        f"Mahalanobis distance top branch match percentage: {mahalanobis_top_match_pct:.2f}% ({mahalanobis_top_match_count}/{total_branch_points})"
+    )
+
     # Calculate per-timestep average correlations
     print("\n===== Per-Timestep Correlation Analysis =====")
     print("\nValue Model correlations by timestep:")
     timestep_correlations = []
     timestep_intermediate_final_correlations = []
     timestep_lookahead_final_correlations = []
+    timestep_mahalanobis_final_correlations = []
     timestep_value_match_counts = [0] * sampler.num_timesteps
     timestep_intermediate_match_counts = [0] * sampler.num_timesteps
     timestep_lookahead_match_counts = [0] * sampler.num_timesteps
+    timestep_mahalanobis_match_counts = [0] * sampler.num_timesteps
     timestep_branch_counts = [0] * sampler.num_timesteps
 
     for step in range(sampler.num_timesteps):
         step_correlations = []
         step_intermediate_final_correlations = []
         step_lookahead_final_correlations = []
+        step_mahalanobis_final_correlations = []
 
         for branch_data in timestep_data[step]:
             if len(branch_data["value_predictions"]) > 1:
@@ -420,6 +489,12 @@ def analyze_value_model_predictions(
                         branch_data["lookahead_final_corr"]
                     )
 
+                # Mahalanobis distance vs final FID correlation
+                if not np.isnan(branch_data["mahalanobis_final_corr"]):
+                    step_mahalanobis_final_correlations.append(
+                        branch_data["mahalanobis_final_corr"]
+                    )
+
                 # Count top matches for this timestep
                 timestep_branch_counts[step] += 1
 
@@ -430,6 +505,7 @@ def analyze_value_model_predictions(
                     branch_data["intermediate_fid_changes"]
                 )
                 lookahead_best_idx = np.argmax(branch_data["lookahead_fid_changes"])
+                mahalanobis_best_idx = np.argmax(branch_data["mahalanobis_distances"])
 
                 if value_best_idx == final_best_idx:
                     timestep_value_match_counts[step] += 1
@@ -439,6 +515,9 @@ def analyze_value_model_predictions(
 
                 if lookahead_best_idx == final_best_idx:
                     timestep_lookahead_match_counts[step] += 1
+
+                if mahalanobis_best_idx == final_best_idx:
+                    timestep_mahalanobis_match_counts[step] += 1
 
         if step_correlations:
             avg_step_corr = np.mean(step_correlations)
@@ -526,17 +605,55 @@ def analyze_value_model_predictions(
             timestep_lookahead_final_correlations.append(np.nan)
             print(f"  Timestep {step}: insufficient data")
 
+    print("\nMahalanobis distance correlations by timestep:")
+    for step in range(sampler.num_timesteps):
+        step_mahalanobis_final_correlations = []
+
+        for branch_data in timestep_data[step]:
+            if not np.isnan(branch_data["mahalanobis_final_corr"]):
+                step_mahalanobis_final_correlations.append(
+                    branch_data["mahalanobis_final_corr"]
+                )
+        if step_mahalanobis_final_correlations:
+            avg_step_mahalanobis_final_corr = np.mean(
+                step_mahalanobis_final_correlations
+            )
+            timestep_mahalanobis_final_correlations.append(
+                avg_step_mahalanobis_final_corr
+            )
+
+            # Calculate match percentage for this timestep
+            match_pct = (
+                (
+                    timestep_mahalanobis_match_counts[step]
+                    / timestep_branch_counts[step]
+                    * 100
+                )
+                if timestep_branch_counts[step] > 0
+                else 0
+            )
+
+            print(
+                f"  Timestep {step}: correlation={avg_step_mahalanobis_final_corr:.4f}, top match={match_pct:.1f}% ({timestep_mahalanobis_match_counts[step]}/{timestep_branch_counts[step]})"
+            )
+        else:
+            timestep_mahalanobis_final_correlations.append(np.nan)
+            print(f"  Timestep {step}: insufficient data")
+
     # Return data for potential plotting
     return {
         "overall_correlation": avg_correlation,
         "overall_intermediate_final_correlation": avg_intermediate_final_corr,
         "overall_lookahead_final_correlation": avg_lookahead_final_corr,
+        "overall_mahalanobis_final_correlation": avg_mahalanobis_final_corr,
         "timestep_correlations": timestep_correlations,
         "timestep_intermediate_final_correlations": timestep_intermediate_final_correlations,
         "timestep_lookahead_final_correlations": timestep_lookahead_final_correlations,
+        "timestep_mahalanobis_final_correlations": timestep_mahalanobis_final_correlations,
         "value_top_match_percentage": value_top_match_pct,
         "intermediate_top_match_percentage": intermediate_top_match_pct,
         "lookahead_top_match_percentage": lookahead_top_match_pct,
+        "mahalanobis_top_match_percentage": mahalanobis_top_match_pct,
         "branch_point_data": branch_point_data,
     }
 

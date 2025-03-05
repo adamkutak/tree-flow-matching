@@ -238,9 +238,60 @@ class MCTSFlowSampler:
         for class_idx in range(num_classes):
             self.fids[class_idx]["mu"] = cifar_stats[f"class_{class_idx}_mu"]
             self.fids[class_idx]["sigma"] = cifar_stats[f"class_{class_idx}_sigma"]
+            self.fids[class_idx]["sigma_inv"] = np.linalg.inv(
+                self.fids[class_idx]["sigma"]
+            )
 
         print("Initializing per-class buffers...")
         self.initialize_class_buffers(buffer_size)
+
+    def compute_mahalanobis_distance(self, features, class_idx):
+        """
+        Compute the Mahalanobis distance between a sample and a class distribution.
+
+        Args:
+            features: Feature vector of the sample (numpy array)
+            class_idx: Class index to compare against
+
+        Returns:
+            Mahalanobis distance (lower is better, closer to the class distribution)
+        """
+        mu = self.fids[class_idx]["mu"]
+        sigma_inv = self.fids[class_idx]["sigma_inv"]
+
+        # Compute Mahalanobis distance: sqrt((x-μ)ᵀ Σ⁻¹ (x-μ))
+        diff = features - mu
+        mahalanobis = np.sqrt(diff.dot(sigma_inv).dot(diff))
+
+        return mahalanobis
+
+    def batch_compute_mahalanobis_distance(self, images, class_indices):
+        """
+        Compute Mahalanobis distance for a batch of images.
+
+        Args:
+            images: Tensor of shape [batch_size, C, H, W]
+            class_indices: Tensor or list of class indices for each image
+
+        Returns:
+            Tensor of negative Mahalanobis distances (higher is better)
+        """
+        # Extract features for all images in one batch
+        features = self.extract_inception_features(images)
+
+        # Convert class_indices to list if it's a tensor
+        if torch.is_tensor(class_indices):
+            class_indices = class_indices.cpu().tolist()
+
+        # Calculate Mahalanobis distances for each image
+        mahalanobis_distances = []
+
+        for i, (feature, class_idx) in enumerate(zip(features, class_indices)):
+            distance = self.compute_mahalanobis_distance(feature, class_idx)
+            # Return negative distance so higher values are better (consistent with FID change)
+            mahalanobis_distances.append(-distance)
+
+        return torch.tensor(mahalanobis_distances, device=images.device)
 
     def _load_or_fit_pca(self):
         """Load or fit a PCA model for dimensionality reduction."""
