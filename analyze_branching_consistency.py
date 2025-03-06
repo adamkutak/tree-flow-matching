@@ -595,7 +595,7 @@ def analyze_mahalanobis_rank_consistency(
 
     # Initialize FID metric
     fid_metric = FID.FrechetInceptionDistance(
-        normalize=True, reset_real_features=False
+        feature=64, normalize=True, reset_real_features=False
     ).to(device)
 
     # Process real images
@@ -680,7 +680,7 @@ def main():
         image_size=32,
         channels=3,
         device=device,
-        num_timesteps=20,
+        num_timesteps=10,
         num_classes=10,
         buffer_size=100,
         flow_model="large_flow_model.pt",
