@@ -364,6 +364,53 @@ class MCTSFlowSampler:
 
         return torch.tensor(mahalanobis_distances, device=images.device)
 
+    def compute_global_mean_difference(self, features):
+        """
+        Compute the Euclidean distance between a sample and the global distribution mean.
+
+        Args:
+            features: Feature vector of the sample (numpy array)
+
+        Returns:
+            Euclidean distance to the mean (lower is better, closer to the global mean)
+        """
+        if not self.has_global_stats:
+            raise ValueError("Global statistics not available")
+
+        mu = self.global_fid["mu"]
+
+        # Compute Euclidean distance: ||x-μ||
+        diff = features - mu
+        distance = np.sqrt(np.sum(diff**2))
+
+        return distance
+
+    def batch_compute_global_mean_difference(self, images):
+        """
+        Compute global mean difference for a batch of images.
+
+        Args:
+            images: Tensor of shape [batch_size, C, H, W]
+
+        Returns:
+            Tensor of negative mean differences (higher is better)
+        """
+        if not self.has_global_stats:
+            raise ValueError("Global statistics not available")
+
+        # Extract features for all images in one batch
+        features = self.extract_inception_features(images)
+
+        # Calculate mean differences for each image
+        mean_differences = []
+
+        for feature in features:
+            distance = self.compute_global_mean_difference(feature)
+            # Return negative distance so higher values are better (consistent with other metrics)
+            mean_differences.append(-distance)
+
+        return torch.tensor(mean_differences, device=images.device)
+
     def _load_or_fit_pca(self):
         """Load or fit a PCA model for dimensionality reduction."""
         import pickle
