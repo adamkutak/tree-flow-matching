@@ -1044,7 +1044,7 @@ def analyze_mahalanobis_rank_consistency_global(
 
     # Initialize FID metric
     fid_metric = FID.FrechetInceptionDistance(
-        feature=64, normalize=True, reset_real_features=False
+        feature=2048, normalize=True, reset_real_features=False
     ).to(device)
 
     # Process real images
@@ -1237,7 +1237,7 @@ def main():
         flow_model="large_flow_model.pt",
         value_model="value_model.pt",  # Still needed for sampler initialization
         num_channels=256,
-        inception_layer=0,
+        inception_layer=3,
         pca_dim=None,
     )
 
