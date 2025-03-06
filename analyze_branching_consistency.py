@@ -771,7 +771,7 @@ def main():
         device=device,
         num_timesteps=10,
         num_classes=10,
-        buffer_size=100,
+        buffer_size=10,
         flow_model="large_flow_model.pt",
         value_model="value_model.pt",  # Still needed for sampler initialization
         num_channels=256,
