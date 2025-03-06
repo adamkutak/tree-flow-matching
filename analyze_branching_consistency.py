@@ -907,7 +907,7 @@ def analyze_mahalanobis_rank_consistency_global(
                             # Calculate intermediate global Mahalanobis distances for all aligned branches
                             mahalanobis_distances = (
                                 sampler.batch_compute_mean_difference(
-                                    aligned_samples, class_idx
+                                    aligned_samples, branch_labels
                                 )
                             )
 
@@ -940,7 +940,7 @@ def analyze_mahalanobis_rank_consistency_global(
 
                     # Calculate global Mahalanobis distance for the final sample
                     mahalanobis_score = sampler.batch_compute_mean_difference(
-                        x, class_idx
+                        x, branch_labels
                     ).item()
 
                     # Store results
