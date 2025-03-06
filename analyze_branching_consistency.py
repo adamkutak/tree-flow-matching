@@ -1056,21 +1056,20 @@ def analyze_mahalanobis_rank_consistency_per_class(
 
         real_images = torch.stack([cifar10[i][0] for i in class_indices]).to(device)
 
-        # Reset FID metric for this class
-        fid_metric.reset()
-
-        # Process real images in batches
-        real_batch_size = 100
-        print(f"Processing {len(real_images)} real images for class {class_idx}...")
-        for i in range(0, len(real_images), real_batch_size):
-            batch = real_images[i : i + real_batch_size]
-            fid_metric.update(batch, real=True)
-            torch.cuda.empty_cache()
-
         # Calculate real FID for each rank for this class
         for rank in range(1, num_branches + 1):
-            # Reset FID for fake images but keep real features
+            # Reset FID metric completely for each rank and class
             fid_metric.reset()
+
+            # First process real images in batches
+            real_batch_size = 100
+            print(
+                f"Processing {len(real_images)} real images for class {class_idx}, rank {rank}..."
+            )
+            for i in range(0, len(real_images), real_batch_size):
+                batch = real_images[i : i + real_batch_size]
+                fid_metric.update(batch, real=True)
+                torch.cuda.empty_cache()
 
             # Get all final samples for this rank and class
             final_samples = torch.cat(
@@ -1089,7 +1088,6 @@ def analyze_mahalanobis_rank_consistency_per_class(
             real_fid_score = fid_metric.compute().item()
             real_fid_scores_by_class[class_idx][rank] = real_fid_score
             print(f"  Class {class_idx}, Rank {rank} real FID: {real_fid_score:.4f}")
-
     # Calculate average FID across classes for each rank
     avg_real_fid_scores = {}
     for rank in range(1, num_branches + 1):
