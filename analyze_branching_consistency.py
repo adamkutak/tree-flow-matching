@@ -652,7 +652,7 @@ def analyze_mahalanobis_rank_consistency(
 
     for rank in range(1, num_branches + 1):
         # Reset FID for fake images but keep real features
-        fid_metric.reset(reset_real_features=False)
+        fid_metric.reset()
 
         # Stack all final samples for this rank
         final_samples = torch.cat(rank_results[rank]["final_samples"], dim=0)
