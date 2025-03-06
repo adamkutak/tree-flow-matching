@@ -906,7 +906,7 @@ def analyze_mahalanobis_rank_consistency_global(
 
                             # Calculate intermediate global Mahalanobis distances for all aligned branches
                             mahalanobis_distances = (
-                                sampler.batch_compute_global_mahalanobis_distance(
+                                sampler.batch_compute_global_mean_difference(
                                     aligned_samples
                                 )
                             )
@@ -939,9 +939,9 @@ def analyze_mahalanobis_rank_consistency_global(
                     fid_score = sampler.batch_compute_global_fid_change(x).item()
 
                     # Calculate global Mahalanobis distance for the final sample
-                    mahalanobis_score = (
-                        sampler.batch_compute_global_mahalanobis_distance(x).item()
-                    )
+                    mahalanobis_score = sampler.batch_compute_global_mean_difference(
+                        x
+                    ).item()
 
                     # Store results
                     rank_results[rank]["fid_scores"].append(fid_score)
@@ -1044,7 +1044,7 @@ def analyze_mahalanobis_rank_consistency_global(
 
     # Initialize FID metric
     fid_metric = FID.FrechetInceptionDistance(
-        feature=2048, normalize=True, reset_real_features=False
+        feature=64, normalize=True, reset_real_features=False
     ).to(device)
 
     # Process real images
@@ -1237,7 +1237,7 @@ def main():
         flow_model="large_flow_model.pt",
         value_model="value_model.pt",  # Still needed for sampler initialization
         num_channels=256,
-        inception_layer=3,
+        inception_layer=0,
         pca_dim=None,
     )
 
