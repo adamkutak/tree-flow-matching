@@ -1247,7 +1247,7 @@ def main():
         device=device,
         num_samples=250,
         num_branches=8,
-        dt_std=0.1,
+        dt_std=0.3,
     )
 
 
