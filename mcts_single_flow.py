@@ -411,6 +411,53 @@ class MCTSFlowSampler:
 
         return torch.tensor(mean_differences, device=images.device)
 
+    def compute_mean_difference(self, features, class_idx):
+        """
+        Compute the Euclidean distance between a sample and a class distribution mean.
+
+        Args:
+            features: Feature vector of the sample (numpy array)
+            class_idx: Class index to compare against
+
+        Returns:
+            Euclidean distance to the class mean (lower is better, closer to the class mean)
+        """
+        mu = self.fids[class_idx]["mu"]
+
+        # Compute Euclidean distance: ||x-μ||
+        diff = features - mu
+        distance = np.sqrt(np.sum(diff**2))
+
+        return distance
+
+    def batch_compute_mean_difference(self, images, class_indices):
+        """
+        Compute mean difference for a batch of images per class.
+
+        Args:
+            images: Tensor of shape [batch_size, C, H, W]
+            class_indices: Tensor or list of class indices for each image
+
+        Returns:
+            Tensor of negative mean differences (higher is better)
+        """
+        # Extract features for all images in one batch
+        features = self.extract_inception_features(images)
+
+        # Convert class_indices to list if it's a tensor
+        if torch.is_tensor(class_indices):
+            class_indices = class_indices.cpu().tolist()
+
+        # Calculate mean differences for each image
+        mean_differences = []
+
+        for i, (feature, class_idx) in enumerate(zip(features, class_indices)):
+            distance = self.compute_mean_difference(feature, class_idx)
+            # Return negative distance so higher values are better (consistent with other metrics)
+            mean_differences.append(-distance)
+
+        return torch.tensor(mean_differences, device=images.device)
+
     def _load_or_fit_pca(self):
         """Load or fit a PCA model for dimensionality reduction."""
         import pickle
