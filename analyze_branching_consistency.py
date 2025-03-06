@@ -674,19 +674,30 @@ def analyze_mahalanobis_rank_consistency(
         # Calculate mean component: ||μ_real - μ_fake||²
         mean_diff = torch.norm(real_mean - fake_mean) ** 2
 
-        # Calculate covariance component: Tr(Σ_real + Σ_fake - 2√(Σ_real·Σ_fake))
-        # First compute the matrix square root term
-        sqrt_term = torch.matrix_power(
-            torch.matmul(torch.matmul(real_cov, fake_cov), real_cov), 0.5
-        )
-        cov_component = torch.trace(real_cov + fake_cov - 2 * sqrt_term)
+        real_cov_np = real_cov.cpu().numpy()
+        fake_cov_np = fake_cov.cpu().numpy()
+
+        # Calculate sqrt(Σ_real·Σ_fake) using scipy
+        from scipy import linalg
+
+        sqrt_cov_product = linalg.sqrtm(np.matmul(real_cov_np, fake_cov_np))
+
+        # Handle potential complex numbers (should be real but might have small imaginary parts due to numerical issues)
+        if np.iscomplexobj(sqrt_cov_product):
+            sqrt_cov_product = sqrt_cov_product.real
+
+        # Convert back to tensor and calculate trace
+        sqrt_cov_product_tensor = torch.from_numpy(sqrt_cov_product).to(device)
+        cov_component = torch.trace(
+            real_cov + fake_cov - 2 * sqrt_cov_product_tensor
+        ).item()
 
         # Store components
         fid_mean_components[rank] = mean_diff.item()
-        fid_cov_components[rank] = cov_component.item()
+        fid_cov_components[rank] = cov_component
 
         print(
-            f"  Rank {rank} FID components - Mean: {mean_diff.item():.4f}, Covariance: {cov_component.item():.4f}"
+            f"  Rank {rank} FID components - Mean: {mean_diff.item():.4f}, Covariance: {cov_component:.4f}"
         )
 
     # Calculate correlations for components
