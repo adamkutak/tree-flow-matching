@@ -703,7 +703,7 @@ def main():
         sampler=sampler,
         device=device,
         num_samples=50,  # Samples per class
-        num_branches=16,
+        num_branches=8,
         dt_std=0.1,
     )
 
