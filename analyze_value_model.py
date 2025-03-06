@@ -200,7 +200,7 @@ def analyze_value_model_predictions(
 
                     # Calculate Mahalanobis distances for aligned samples
                     mahalanobis_distances = (
-                        sampler.batch_compute_mahalanobis_distance(
+                        sampler.batch_compute_mean_difference(
                             aligned_samples,
                             torch.full((num_branches,), class_idx, device=device),
                         )
@@ -232,7 +232,7 @@ def analyze_value_model_predictions(
 
                     # Calculate Mahalanobis distances for lookahead samples
                     lookahead_mahalanobis_distances = (
-                        sampler.batch_compute_mahalanobis_distance(
+                        sampler.batch_compute_mean_difference(
                             lookahead_samples,
                             torch.full((num_branches,), class_idx, device=device),
                         )
@@ -281,7 +281,7 @@ def analyze_value_model_predictions(
 
                     # Calculate final Mahalanobis distances
                     final_mahalanobis_distances = (
-                        sampler.batch_compute_mahalanobis_distance(
+                        sampler.batch_compute_mean_difference(
                             final_samples,
                             torch.full((num_branches,), class_idx, device=device),
                         )
