@@ -680,7 +680,7 @@ def main():
         image_size=32,
         channels=3,
         device=device,
-        num_timesteps=10,
+        num_timesteps=20,
         num_classes=10,
         buffer_size=100,
         flow_model="large_flow_model.pt",
