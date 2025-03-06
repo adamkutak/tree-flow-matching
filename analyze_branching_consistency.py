@@ -640,22 +640,96 @@ def analyze_mahalanobis_rank_consistency(
     else:
         real_fid_correlation, real_p_value = float("nan"), float("nan")
 
-    print("\n===== Real FID Rank Correlation =====")
+    print("\n===== FID Components Analysis =====")
+
+    # Get the real statistics from the FID metric
+    real_mean = fid_metric.real_features_sum / fid_metric.real_features_num_samples
+    real_cov = fid_metric.real_features_cov_sum / fid_metric.real_features_num_samples
+
+    # Calculate FID components for each rank
+    fid_mean_components = {}
+    fid_cov_components = {}
+
+    for rank in range(1, num_branches + 1):
+        # Reset FID for fake images but keep real features
+        fid_metric.reset(reset_real_features=False)
+
+        # Stack all final samples for this rank
+        final_samples = torch.cat(rank_results[rank]["final_samples"], dim=0)
+
+        # Process in batches
+        batch_size = 64
+        print(f"Processing rank {rank} samples for FID components...")
+        for i in range(0, len(final_samples), batch_size):
+            batch = final_samples[i : i + batch_size].to(device)
+            fid_metric.update(batch, real=False)
+            torch.cuda.empty_cache()
+
+        # Get fake statistics
+        fake_mean = fid_metric.fake_features_sum / fid_metric.fake_features_num_samples
+        fake_cov = (
+            fid_metric.fake_features_cov_sum / fid_metric.fake_features_num_samples
+        )
+
+        # Calculate mean component: ||μ_real - μ_fake||²
+        mean_diff = torch.norm(real_mean - fake_mean) ** 2
+
+        # Calculate covariance component: Tr(Σ_real + Σ_fake - 2√(Σ_real·Σ_fake))
+        # First compute the matrix square root term
+        sqrt_term = torch.matrix_power(
+            torch.matmul(torch.matmul(real_cov, fake_cov), real_cov), 0.5
+        )
+        cov_component = torch.trace(real_cov + fake_cov - 2 * sqrt_term)
+
+        # Store components
+        fid_mean_components[rank] = mean_diff.item()
+        fid_cov_components[rank] = cov_component.item()
+
+        print(
+            f"  Rank {rank} FID components - Mean: {mean_diff.item():.4f}, Covariance: {cov_component.item():.4f}"
+        )
+
+    # Calculate correlations for components
+    mean_component_values = [fid_mean_components[r] for r in ranks]
+    cov_component_values = [fid_cov_components[r] for r in ranks]
+
+    if len(ranks) > 1:
+        mean_correlation, mean_p_value = spearmanr(ranks, mean_component_values)
+        cov_correlation, cov_p_value = spearmanr(ranks, cov_component_values)
+    else:
+        mean_correlation, mean_p_value = float("nan"), float("nan")
+        cov_correlation, cov_p_value = float("nan"), float("nan")
+
+    print("\n===== FID Components Correlation =====")
     print(
-        f"Correlation between rank and real FID: {real_fid_correlation:.4f} (p-value: {real_p_value:.4f})"
+        f"Correlation between rank and mean component: {mean_correlation:.4f} (p-value: {mean_p_value:.4f})"
+    )
+    print(
+        f"Correlation between rank and covariance component: {cov_correlation:.4f} (p-value: {cov_p_value:.4f})"
     )
 
-    # Plot real FID results
-    plt.figure(figsize=(10, 6))
-    plt.plot(ranks, real_fid_values, "o-")
+    # Plot FID components
+    plt.figure(figsize=(12, 6))
+
+    plt.subplot(1, 2, 1)
+    plt.plot(ranks, mean_component_values, "o-", color="blue")
     plt.xlabel("Branch Rank by Intermediate Mahalanobis Distance (1 = best)")
-    plt.ylabel("Real FID Score (lower is better)")
-    plt.title("Real FID Score by Consistently Selected Branch Rank (Mahalanobis)")
+    plt.ylabel("Mean Component (lower is better)")
+    plt.title("FID Mean Component by Branch Rank")
     plt.grid(True)
-    plt.savefig("real_fid_mahalanobis_rank_consistency.png")
+
+    plt.subplot(1, 2, 2)
+    plt.plot(ranks, cov_component_values, "o-", color="red")
+    plt.xlabel("Branch Rank by Intermediate Mahalanobis Distance (1 = best)")
+    plt.ylabel("Covariance Component (lower is better)")
+    plt.title("FID Covariance Component by Branch Rank")
+    plt.grid(True)
+
+    plt.tight_layout()
+    plt.savefig("fid_components_by_rank.png")
     plt.close()
 
-    # Return results
+    # Return results with added components
     return {
         "intermediate_mahalanobis_correlation": rank_fid_correlation,
         "intermediate_mahalanobis_p_value": p_value,
@@ -666,6 +740,10 @@ def analyze_mahalanobis_rank_consistency(
         "real_fid_scores": real_fid_scores,
         "real_fid_correlation": real_fid_correlation,
         "real_fid_p_value": real_p_value,
+        "fid_mean_components": fid_mean_components,
+        "fid_cov_components": fid_cov_components,
+        "mean_component_correlation": mean_correlation,
+        "cov_component_correlation": cov_correlation,
         "rank_results": rank_results,
     }
 
