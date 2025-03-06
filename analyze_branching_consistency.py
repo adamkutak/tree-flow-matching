@@ -1037,7 +1037,7 @@ def analyze_mahalanobis_rank_consistency_per_class(
 
     # Initialize FID metric
     fid_metric = FID.FrechetInceptionDistance(
-        feature=64, normalize=True, reset_real_features=False
+        feature=64, normalize=True, reset_real_features=True
     ).to(device)
 
     # Store per-class real FID scores
@@ -1057,7 +1057,7 @@ def analyze_mahalanobis_rank_consistency_per_class(
         real_images = torch.stack([cifar10[i][0] for i in class_indices]).to(device)
 
         # Reset FID metric for this class
-        fid_metric.reset_real_features()
+        fid_metric.reset()
 
         # Process real images in batches
         real_batch_size = 100
@@ -1188,7 +1188,7 @@ def main():
         flow_model="large_flow_model.pt",
         value_model="value_model.pt",  # Still needed for sampler initialization
         num_channels=256,
-        inception_layer=3,
+        inception_layer=0,
         pca_dim=None,
     )
 
