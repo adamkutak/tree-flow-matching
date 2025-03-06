@@ -783,14 +783,14 @@ def main():
         flow_model="large_flow_model.pt",
         value_model=None,
         num_channels=256,
-        inception_layer=3,
+        inception_layer=0,
         pca_dim=128,
     )
     # # Run value model prediction analysis
     analysis_results = analyze_value_model_predictions(
         sampler=sampler,
         device=device,
-        num_samples=250,
+        num_samples=500,
         num_branches=8,
         dt_std=0.1,
     )
