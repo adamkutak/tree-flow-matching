@@ -702,7 +702,7 @@ def main():
     mahalanobis_analysis_results = analyze_mahalanobis_rank_consistency(
         sampler=sampler,
         device=device,
-        num_samples=500,  # Samples per class
+        num_samples=250,  # Samples per class
         num_branches=8,
         dt_std=0.1,
     )
