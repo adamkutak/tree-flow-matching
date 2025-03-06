@@ -15,7 +15,7 @@ from sklearn.decomposition import PCA
 
 def compute_cifar10_statistics(feature_dim=64, pca_dim=None):
     """
-    Compute and save per-class Inception feature statistics for CIFAR-10 dataset.
+    Compute and save Inception feature statistics for CIFAR-10 dataset.
 
     Args:
         feature_dim (int): Dimension of features to extract. Options are:
@@ -73,8 +73,10 @@ def compute_cifar10_statistics(feature_dim=64, pca_dim=None):
 
     # Dictionary to store features for each class
     class_features = defaultdict(list)
+    # List to store all features for global statistics
+    all_features_list = []
 
-    print(f"Computing {feature_dim}-dim Inception features for CIFAR-10 by class...")
+    print(f"Computing {feature_dim}-dim Inception features for CIFAR-10...")
 
     with torch.no_grad():
         for images, labels in tqdm(dataloader):
@@ -89,18 +91,19 @@ def compute_cifar10_statistics(feature_dim=64, pca_dim=None):
                 features = features.mean([2, 3])
             features = features.cpu().numpy()
 
-            # Store features by class
+            # Store features by class for per-class statistics
             for feat, label in zip(features, labels):
                 class_features[label.item()].append(feat)
+
+            # Store all features for global statistics
+            all_features_list.extend(features)
 
     # Fit PCA if requested
     pca_model = None
     if use_pca:
         print(f"Fitting PCA to reduce from {feature_dim} to {pca_dim} dimensions...")
         # Collect all features for PCA fitting
-        all_features = np.vstack(
-            [feat for feats in class_features.values() for feat in feats]
-        )
+        all_features = np.vstack(all_features_list)
 
         # Fit PCA
         pca_model = PCA(n_components=pca_dim, random_state=42)
@@ -112,29 +115,50 @@ def compute_cifar10_statistics(feature_dim=64, pca_dim=None):
             pickle.dump(pca_model, f)
         print(f"Saved PCA model to {pca_file}")
 
-        # Transform all features using PCA
+        # Transform features using PCA
         for class_idx in range(10):
-            class_features[class_idx] = [
-                pca_model.transform([feat])[0] for feat in class_features[class_idx]
-            ]
+            if class_idx in class_features:
+                class_features[class_idx] = [
+                    pca_model.transform([feat])[0] for feat in class_features[class_idx]
+                ]
 
-    # Compute statistics for each class
+        all_features_list = [
+            pca_model.transform([feat])[0] for feat in all_features_list
+        ]
+
     stats = {}
+
+    # Compute per-class statistics
     print("\nComputing statistics for each class...")
-
     for class_idx in range(10):
-        features = np.stack(class_features[class_idx])
-        mu = np.mean(features, axis=0)
-        sigma = np.cov(features, rowvar=False)
+        if class_idx in class_features and len(class_features[class_idx]) > 0:
+            features = np.stack(class_features[class_idx])
+            mu = np.mean(features, axis=0)
+            sigma = np.cov(features, rowvar=False)
 
-        stats[f"class_{class_idx}_mu"] = mu
-        stats[f"class_{class_idx}_sigma"] = sigma
+            stats[f"class_{class_idx}_mu"] = mu
+            stats[f"class_{class_idx}_sigma"] = sigma
 
-        print(f"Class {class_idx}:")
-        print(f"  Number of samples: {len(features)}")
-        print(f"  Feature dimension: {features.shape[1]}")
-        print(f"  Mean shape: {mu.shape}")
-        print(f"  Covariance shape: {sigma.shape}")
+            print(f"Class {class_idx}:")
+            print(f"  Number of samples: {len(features)}")
+            print(f"  Feature dimension: {features.shape[1]}")
+            print(f"  Mean shape: {mu.shape}")
+            print(f"  Covariance shape: {sigma.shape}")
+
+    # Compute global statistics
+    print("\nComputing global statistics...")
+    all_features = np.stack(all_features_list)
+    global_mu = np.mean(all_features, axis=0)
+    global_sigma = np.cov(all_features, rowvar=False)
+
+    stats["global_mu"] = global_mu
+    stats["global_sigma"] = global_sigma
+
+    print(f"Global statistics:")
+    print(f"  Number of samples: {len(all_features)}")
+    print(f"  Feature dimension: {all_features.shape[1]}")
+    print(f"  Mean shape: {global_mu.shape}")
+    print(f"  Covariance shape: {global_sigma.shape}")
 
     # Save statistics with dimension in filename
     if use_pca:
@@ -145,7 +169,12 @@ def compute_cifar10_statistics(feature_dim=64, pca_dim=None):
     with open(output_file, "wb") as f:
         pickle.dump(stats, f)
 
-    print(f"\nPer-class statistics saved to {output_file}")
+    print(f"\nStatistics saved to {output_file}")
+
+    # Print what was saved in the file
+    print("\nSaved statistics:")
+    for key in stats.keys():
+        print(f"  - {key}")
 
 
 if __name__ == "__main__":
@@ -167,4 +196,7 @@ if __name__ == "__main__":
     )
     args = parser.parse_args()
 
-    compute_cifar10_statistics(feature_dim=args.dim, pca_dim=args.pca_dim)
+    compute_cifar10_statistics(
+        feature_dim=args.dim,
+        pca_dim=args.pca_dim,
+    )
