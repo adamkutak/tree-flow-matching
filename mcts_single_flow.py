@@ -94,7 +94,7 @@ class MCTSFlowSampler:
         flow_model="single_flow_model.pt",
         value_model="single_value_model.pt",
         inception_layer=3,
-        pca_dim=128,
+        pca_dim=None,
     ):
         # Check if CUDA is available and set device
         if torch.cuda.is_available():
@@ -199,7 +199,9 @@ class MCTSFlowSampler:
 
         self.feature_dim = layer_to_dim[inception_layer]
         self.inception_layer = inception_layer
-        self.use_pca = inception_layer == 3  # Only use PCA for layer 3
+        self.use_pca = (
+            inception_layer == 3 and pca_dim is not None
+        )  # Only use PCA for layer 3
         self.pca_dim = pca_dim if self.use_pca else self.feature_dim
 
         if self.use_pca:

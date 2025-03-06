@@ -775,7 +775,8 @@ def main():
         flow_model="large_flow_model.pt",
         value_model="value_model.pt",  # Still needed for sampler initialization
         num_channels=256,
-        inception_layer=0,
+        inception_layer=3,
+        pca_dim=None,
     )
 
     # # Run FID rank consistency analysis
