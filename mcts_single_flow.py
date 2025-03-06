@@ -237,12 +237,33 @@ class MCTSFlowSampler:
             for i in range(num_classes)
         }
 
+        # Initialize global FID metrics and buffer
+        self.global_fid = {
+            "mu": None,
+            "sigma": None,
+            "sigma_inv": None,
+            "features": deque(maxlen=buffer_size),
+            "baseline_fid": None,
+        }
+
+        # Load per-class statistics
         for class_idx in range(num_classes):
             self.fids[class_idx]["mu"] = cifar_stats[f"class_{class_idx}_mu"]
             self.fids[class_idx]["sigma"] = cifar_stats[f"class_{class_idx}_sigma"]
             self.fids[class_idx]["sigma_inv"] = np.linalg.inv(
                 self.fids[class_idx]["sigma"]
             )
+
+        # Load global statistics if available
+        if "global_mu" in cifar_stats and "global_sigma" in cifar_stats:
+            print("Global FID statistics found, loading...")
+            self.global_fid["mu"] = cifar_stats["global_mu"]
+            self.global_fid["sigma"] = cifar_stats["global_sigma"]
+            self.global_fid["sigma_inv"] = np.linalg.inv(self.global_fid["sigma"])
+            self.has_global_stats = True
+        else:
+            print("No global FID statistics found in the loaded file")
+            self.has_global_stats = False
 
         print("Initializing per-class buffers...")
         self.initialize_class_buffers(buffer_size)
@@ -260,6 +281,28 @@ class MCTSFlowSampler:
         """
         mu = self.fids[class_idx]["mu"]
         sigma_inv = self.fids[class_idx]["sigma_inv"]
+
+        # Compute Mahalanobis distance: sqrt((x-μ)ᵀ Σ⁻¹ (x-μ))
+        diff = features - mu
+        mahalanobis = np.sqrt(diff.dot(sigma_inv).dot(diff))
+
+        return mahalanobis
+
+    def compute_global_mahalanobis_distance(self, features):
+        """
+        Compute the Mahalanobis distance between a sample and the global distribution.
+
+        Args:
+            features: Feature vector of the sample (numpy array)
+
+        Returns:
+            Mahalanobis distance (lower is better, closer to the global distribution)
+        """
+        if not self.has_global_stats:
+            raise ValueError("Global statistics not available")
+
+        mu = self.global_fid["mu"]
+        sigma_inv = self.global_fid["sigma_inv"]
 
         # Compute Mahalanobis distance: sqrt((x-μ)ᵀ Σ⁻¹ (x-μ))
         diff = features - mu
@@ -295,6 +338,32 @@ class MCTSFlowSampler:
 
         return torch.tensor(mahalanobis_distances, device=images.device)
 
+    def batch_compute_global_mahalanobis_distance(self, images):
+        """
+        Compute global Mahalanobis distance for a batch of images.
+
+        Args:
+            images: Tensor of shape [batch_size, C, H, W]
+
+        Returns:
+            Tensor of negative Mahalanobis distances (higher is better)
+        """
+        if not self.has_global_stats:
+            raise ValueError("Global statistics not available")
+
+        # Extract features for all images in one batch
+        features = self.extract_inception_features(images)
+
+        # Calculate Mahalanobis distances for each image
+        mahalanobis_distances = []
+
+        for feature in features:
+            distance = self.compute_global_mahalanobis_distance(feature)
+            # Return negative distance so higher values are better (consistent with FID change)
+            mahalanobis_distances.append(-distance)
+
+        return torch.tensor(mahalanobis_distances, device=images.device)
+
     def _load_or_fit_pca(self):
         """Load or fit a PCA model for dimensionality reduction."""
         import pickle
@@ -323,6 +392,8 @@ class MCTSFlowSampler:
         self.flow_model.eval()
         with torch.no_grad():
             samples_per_class = n_samples
+            all_global_features = []  # For global buffer
+
             for class_idx in range(self.num_classes):
                 # Process in batches
                 remaining = samples_per_class
@@ -358,6 +429,10 @@ class MCTSFlowSampler:
                     features = self.extract_inception_features(x)
                     all_features.extend(list(features))
 
+                    # Also add to global features if global stats are available
+                    if self.has_global_stats:
+                        all_global_features.extend(list(features))
+
                     # Update remaining count
                     remaining -= current_batch_size
 
@@ -365,6 +440,19 @@ class MCTSFlowSampler:
                 self.fids[class_idx]["features"].extend(all_features)
                 print(
                     f"Class {class_idx} initialized with {len(self.fids[class_idx]['features'])} samples"
+                )
+
+            # Initialize global buffer if global stats are available
+            if self.has_global_stats:
+                # Take a random subset if we have too many features
+                if len(all_global_features) > n_samples:
+                    import random
+
+                    all_global_features = random.sample(all_global_features, n_samples)
+
+                self.global_fid["features"].extend(all_global_features)
+                print(
+                    f"Global buffer initialized with {len(self.global_fid['features'])} samples"
                 )
 
         print("Computing baseline FID scores for each class...")
@@ -377,6 +465,18 @@ class MCTSFlowSampler:
             )
             self.fids[class_idx]["baseline_fid"] = baseline_fid
             print(f"Class {class_idx} baseline FID: {baseline_fid:.4f}")
+
+        # Compute global baseline FID if global stats are available
+        if self.has_global_stats:
+            print("Computing global baseline FID score...")
+            global_feats = np.array(list(self.global_fid["features"]))
+            global_mu = np.mean(global_feats, axis=0)
+            global_sigma = np.cov(global_feats, rowvar=False)
+            global_baseline_fid = self.calculate_frechet_distance(
+                global_mu, global_sigma, self.global_fid["mu"], self.global_fid["sigma"]
+            )
+            self.global_fid["baseline_fid"] = global_baseline_fid
+            print(f"Global baseline FID: {global_baseline_fid:.4f}")
 
     def extract_inception_features(self, images):
         """Extract inception features using pytorch-fid with optional PCA reduction."""
@@ -435,6 +535,37 @@ class MCTSFlowSampler:
         # The reward is the negative change in FID multiplied by a factor (here, 100)
         return -(new_fid - baseline_fid) * 100
 
+    def compute_global_fid_change(self, image):
+        """
+        Compute how much an image would change the global FID score.
+
+        Similar to compute_fid_change but uses global statistics.
+
+        Returns:
+            The negative change in global FID times 100 as the reward.
+        """
+        if not self.has_global_stats:
+            raise ValueError("Global statistics not available")
+
+        # Extract features from the new image
+        features = self.extract_inception_features(image)  # shape: (1, feat_dim)
+
+        # Create a candidate set from the global buffer
+        new_features = list(self.global_fid["features"])
+        # Replace the last feature with the new image's feature
+        new_features[-1] = features[0]
+        new_features = np.array(new_features)
+
+        mu_new = np.mean(new_features, axis=0)
+        sigma_new = np.cov(new_features, rowvar=False)
+        new_fid = self.calculate_frechet_distance(
+            mu_new, sigma_new, self.global_fid["mu"], self.global_fid["sigma"]
+        )
+
+        baseline_fid = self.global_fid["baseline_fid"]
+        # The reward is the negative change in FID multiplied by a factor
+        return -(new_fid - baseline_fid) * 100
+
     def batch_compute_fid_change(self, images, class_indices):
         """
         Compute FID change for a batch of images in a more efficient way.
@@ -479,6 +610,44 @@ class MCTSFlowSampler:
 
         return torch.tensor(fid_changes, device=images.device)
 
+    def batch_compute_global_fid_change(self, images):
+        """
+        Compute global FID change for a batch of images.
+
+        Args:
+            images: Tensor of shape [batch_size, C, H, W]
+
+        Returns:
+            Tensor of global FID change scores (higher is better)
+        """
+        if not self.has_global_stats:
+            raise ValueError("Global statistics not available")
+
+        # Extract features for all images in one batch
+        features = self.extract_inception_features(images)
+
+        # Calculate global FID changes for each image
+        fid_changes = []
+
+        for feature in features:
+            # Create a candidate set from the global buffer
+            new_features = list(self.global_fid["features"])
+            # Replace the last feature with the new image's feature
+            new_features[-1] = feature
+            new_features = np.array(new_features)
+
+            mu_new = np.mean(new_features, axis=0)
+            sigma_new = np.cov(new_features, rowvar=False)
+            new_fid = self.calculate_frechet_distance(
+                mu_new, sigma_new, self.global_fid["mu"], self.global_fid["sigma"]
+            )
+
+            baseline_fid = self.global_fid["baseline_fid"]
+            # The reward is the negative change in FID multiplied by a factor
+            fid_changes.append(-(new_fid - baseline_fid) * 100)
+
+        return torch.tensor(fid_changes, device=images.device)
+
     def calculate_frechet_distance(self, mu1, sigma1, mu2, sigma2):
         """Calculate the Frechet distance between two distributions."""
         diff = mu1 - mu2
@@ -496,6 +665,18 @@ class MCTSFlowSampler:
             rewards = []
             for sample, label in zip(samples, target_labels):
                 reward = self.compute_fid_change(sample.unsqueeze(0), label.item())
+                rewards.append(reward)
+            return torch.tensor(rewards, dtype=torch.float32, device=self.device)
+
+    def compute_global_sample_quality(self, samples):
+        """Compute quality score using global FID change."""
+        if not self.has_global_stats:
+            raise ValueError("Global statistics not available")
+
+        with torch.no_grad():
+            rewards = []
+            for sample in samples:
+                reward = self.compute_global_fid_change(sample.unsqueeze(0))
                 rewards.append(reward)
             return torch.tensor(rewards, dtype=torch.float32, device=self.device)
 
