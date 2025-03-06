@@ -1245,7 +1245,7 @@ def main():
     mahalanobis_analysis_results = analyze_mahalanobis_rank_consistency_global(
         sampler=sampler,
         device=device,
-        num_samples=500,
+        num_samples=250,
         num_branches=8,
         dt_std=0.1,
     )
