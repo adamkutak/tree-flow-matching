@@ -801,14 +801,15 @@ def analyze_mahalanobis_rank_consistency_per_class(
     base_dt = 1.0 / sampler.num_timesteps
 
     # Store results for each rank and class
-    rank_results = {}
-    for rank in range(1, num_branches + 1):
-        rank_results[rank] = {
+    rank_results = {
+        rank: {
             "fid_scores": [],
             "mahalanobis_scores": [],
             "trajectories": [],
             "final_samples_by_class": {c: [] for c in class_range},  # Organize by class
         }
+        for rank in range(1, num_branches + 1)
+    }
 
     with torch.no_grad():
         for class_idx in class_range:
@@ -1037,11 +1038,14 @@ def analyze_mahalanobis_rank_consistency_per_class(
 
     # Initialize FID metric
     fid_metric = FID.FrechetInceptionDistance(
-        feature=64, normalize=True, reset_real_features=True
+        feature=64, normalize=True, reset_real_features=False
     ).to(device)
 
-    # Store per-class real FID scores
-    real_fid_scores_by_class = {c: {} for c in class_range}
+    # Store real FID scores by class and rank
+    real_fid_scores_by_class = {
+        class_idx: {rank: 0.0 for rank in range(1, num_branches + 1)}
+        for class_idx in class_range
+    }
 
     # Process each class separately
     for class_idx in class_range:
@@ -1063,9 +1067,6 @@ def analyze_mahalanobis_rank_consistency_per_class(
 
             # First process real images in batches
             real_batch_size = 100
-            print(
-                f"Processing {len(real_images)} real images for class {class_idx}, rank {rank}..."
-            )
             for i in range(0, len(real_images), real_batch_size):
                 batch = real_images[i : i + real_batch_size]
                 fid_metric.update(batch, real=True)
@@ -1078,7 +1079,6 @@ def analyze_mahalanobis_rank_consistency_per_class(
 
             # Process in batches
             batch_size = 64
-            print(f"Processing rank {rank} samples for class {class_idx} real FID...")
             for i in range(0, len(final_samples), batch_size):
                 batch = final_samples[i : i + batch_size].to(device)
                 fid_metric.update(batch, real=False)
@@ -1087,15 +1087,18 @@ def analyze_mahalanobis_rank_consistency_per_class(
             # Compute FID score
             real_fid_score = fid_metric.compute().item()
             real_fid_scores_by_class[class_idx][rank] = real_fid_score
-            print(f"  Class {class_idx}, Rank {rank} real FID: {real_fid_score:.4f}")
-    # Calculate average FID across classes for each rank
+
+    # Calculate average and std dev of FID across classes for each rank
     avg_real_fid_scores = {}
+    std_real_fid_scores = {}
+
     for rank in range(1, num_branches + 1):
-        avg_real_fid_scores[rank] = np.mean(
-            [real_fid_scores_by_class[c][rank] for c in class_range]
-        )
+        class_fid_values = [real_fid_scores_by_class[c][rank] for c in class_range]
+        avg_real_fid_scores[rank] = np.mean(class_fid_values)
+        std_real_fid_scores[rank] = np.std(class_fid_values)
 
     # Calculate correlation between rank and average real FID
+    ranks = list(range(1, num_branches + 1))
     real_fid_values = [avg_real_fid_scores[r] for r in ranks]
 
     if len(ranks) > 1:
@@ -1107,31 +1110,27 @@ def analyze_mahalanobis_rank_consistency_per_class(
     print(
         f"Correlation between rank and average real FID: {real_fid_correlation:.4f} (p-value: {real_p_value:.4f})"
     )
+    print("\nAverage real FID by rank:")
+    for rank in range(1, num_branches + 1):
+        print(
+            f"  Rank {rank}: {avg_real_fid_scores[rank]:.4f} ± {std_real_fid_scores[rank]:.4f}"
+        )
 
-    # Plot average real FID results
+    # Plot average real FID results with error bars
     plt.figure(figsize=(10, 6))
-    plt.plot(ranks, real_fid_values, "o-")
+    plt.errorbar(
+        ranks,
+        real_fid_values,
+        yerr=[std_real_fid_scores[r] for r in ranks],
+        fmt="o-",
+        capsize=5,
+    )
     plt.xlabel("Branch Rank by Intermediate Mahalanobis Distance (1 = best)")
     plt.ylabel("Average Real FID Score (lower is better)")
     plt.title("Average Real FID Score by Consistently Selected Branch Rank")
     plt.grid(True)
     plt.savefig("avg_real_fid_rank_consistency.png")
     plt.close()
-
-    # Plot per-class real FID results
-    plt.figure(figsize=(12, 8))
-    for class_idx in class_range:
-        class_fid_values = [real_fid_scores_by_class[class_idx][r] for r in ranks]
-        plt.plot(ranks, class_fid_values, "o-", label=f"Class {class_idx}")
-
-    plt.xlabel("Branch Rank by Intermediate Mahalanobis Distance (1 = best)")
-    plt.ylabel("Real FID Score (lower is better)")
-    plt.title("Per-Class Real FID Score by Consistently Selected Branch Rank")
-    plt.legend()
-    plt.grid(True)
-    plt.savefig("per_class_real_fid_rank_consistency.png")
-    plt.close()
-
     # Calculate per-class correlations
     class_correlations = {}
     class_p_values = {}
