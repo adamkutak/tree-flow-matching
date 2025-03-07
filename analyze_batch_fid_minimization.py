@@ -1000,7 +1000,7 @@ def main():
         sampler=sampler,
         device=device,
         num_samples=1024,
-        num_branches=8,
+        num_branches=4,
         dt_std=0.25,
         batch_size=64,
         base_dt=0.1,
