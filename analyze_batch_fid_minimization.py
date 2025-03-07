@@ -25,15 +25,16 @@ def analyze_batch_fid_rank_consistency(
     """
     Analyze how consistently selecting the nth-ranked branch by batch FID affects final FID.
 
-    This function generates trajectories where at each possible branching point, we consistently
-    select the branch ranked n (where n=1 is best, n=2 is second-best, etc.) according
-    to the intermediate batch FID calculation. We then measure the final FID of these trajectories.
+    This function generates trajectories where at each possible branching point, we create
+    num_branches different versions of the entire batch, compute FID for each branched batch,
+    and consistently select the branch ranked n (where n=1 is best, n=2 is second-best, etc.)
+    according to the batch FID calculation.
 
     Args:
         sampler: The MCTSFlowSampler instance
         device: The device to run computations on
         num_samples: Total number of samples to analyze
-        num_branches: Number of branches to create at each branch point (also determines max rank)
+        num_branches: Number of branches to create at each branch point
         dt_std: Standard deviation for dt variation when branching
         batch_size: Size of batches for batch FID calculation
         base_dt: Base step size for flow matching
@@ -162,23 +163,32 @@ def analyze_batch_fid_rank_consistency(
         batch = real_images[i : i + batch_size_ref]
         with torch.no_grad():
             features = extract_features(batch)
-            ref_features_list.append(features)
+            ref_features_list.append(features.cpu())  # Move to CPU to save GPU memory
 
-    ref_features = torch.cat(ref_features_list, dim=0)
+        # Clear GPU memory
+        del batch, features
+        torch.cuda.empty_cache()
+
+    # Compute reference statistics
+    ref_features = torch.cat([f.to(device) for f in ref_features_list], dim=0)
     ref_mean = torch.mean(ref_features, dim=0)
     centered_features = ref_features - ref_mean.unsqueeze(0)
     ref_cov = torch.mm(centered_features.t(), centered_features) / (
         ref_features.size(0) - 1
     )
 
-    print(f"Reference statistics computed from {ref_features.size(0)} real images")
+    # Clear GPU memory
+    del ref_features, centered_features, ref_features_list
+    torch.cuda.empty_cache()
+
+    print(f"Reference statistics computed from {real_images.size(0)} real images")
 
     # Initialize running statistics with 1024 samples for each rank
     print("\nInitializing running statistics with 1024 samples...")
 
     # Generate 1024 samples using standard flow matching up to branch_start_t
-    init_samples_count = 256
-    init_batch_size = 16  # Process in smaller batches
+    init_samples_count = 1024
+    init_batch_size = 32  # Process in smaller batches
 
     # Create initial noise and labels for initialization
     init_noises = []
@@ -201,40 +211,30 @@ def analyze_batch_fid_rank_consistency(
     # Process initialization samples in batches
     init_features_list = []  # Store features instead of samples
 
-    for i in tqdm(range(0, len(init_noises), init_batch_size)):
-        batch_noises = init_noises[i : i + init_batch_size]
-        batch_labels = init_labels[i : i + init_batch_size]
+    for i in tqdm(range(0, len(init_noises), init_batch_size), desc="Initializing"):
+        batch_noises = torch.cat(init_noises[i : i + init_batch_size], dim=0)
+        batch_labels = torch.cat(init_labels[i : i + init_batch_size], dim=0)
 
-        # Process each sample to branch_start_t
-        batch_samples = []
+        # Standard flow matching until branch_start_t
+        x = batch_noises
+        t = 0.0
 
-        for j in range(len(batch_noises)):
-            x = batch_noises[j].clone()
-            label = batch_labels[j]
-            t = 0.0
-
-            # Standard flow matching until branch_start_t
-            while t < branch_start_t - 1e-6:
-                t_batch = torch.full((1,), t, device=device)
-                velocity = sampler.flow_model(t_batch, x, label)
-                dt = min(base_dt, branch_start_t - t)
-                x = x + velocity * dt
-                t += dt
-
-            batch_samples.append(x)
-
-        # Concatenate batch samples
-        batch_samples = torch.cat(batch_samples, dim=0)
+        while t < branch_start_t - 1e-6:
+            t_batch = torch.full((batch_noises.size(0),), t, device=device)
+            velocity = sampler.flow_model(t_batch, x, batch_labels)
+            dt = min(base_dt, branch_start_t - t)
+            x = x + velocity * dt
+            t += dt
 
         # Extract features directly and move to CPU
-        features = extract_features(batch_samples)
+        features = extract_features(x)
         init_features_list.append(features.cpu())
 
         # Clear GPU memory
-        del batch_samples
+        del x, batch_noises, batch_labels, features
         torch.cuda.empty_cache()
 
-    # Compute statistics from features (on CPU first, then move result to GPU)
+    # Compute statistics from features
     all_features = torch.cat([f.to(device) for f in init_features_list], dim=0)
     init_mean = torch.mean(all_features, dim=0)
     centered_features = all_features - init_mean.unsqueeze(0)
@@ -244,7 +244,7 @@ def analyze_batch_fid_rank_consistency(
     init_count = all_features.size(0)
 
     # Clear more GPU memory
-    del all_features, centered_features
+    del all_features, centered_features, init_features_list
     torch.cuda.empty_cache()
 
     # Initialize running statistics for each rank
@@ -260,189 +260,123 @@ def analyze_batch_fid_rank_consistency(
         for rank in range(1, num_branches + 1):
             print(f"\nProcessing rank {rank}...")
 
-            # Initialize with random noise samples
-            initial_noises = []
-            labels = []
-
-            # Create initial noise and labels
-            for class_idx in class_range:
-                samples_this_class = (
-                    samples_per_class if class_label is None else num_samples
-                )
-                for _ in range(samples_this_class // sampler.num_classes):
-                    initial_noises.append(
-                        torch.randn(
-                            1,
-                            sampler.channels,
-                            sampler.image_size,
-                            sampler.image_size,
-                            device=device,
-                        )
-                    )
-                    labels.append(torch.full((1,), class_idx, device=device))
-
-            # Process in batches
-            num_batches = len(initial_noises) // batch_size
+            # Number of batches to process for this rank
+            num_batches = num_samples // batch_size
 
             for batch_idx in range(num_batches):
                 print(f"Processing batch {batch_idx+1}/{num_batches} for rank {rank}")
 
-                # Get batch of initial noises and labels
-                batch_start = batch_idx * batch_size
-                batch_end = batch_start + batch_size
+                # Create a batch of random noise
+                batch_noise = torch.randn(
+                    batch_size,
+                    sampler.channels,
+                    sampler.image_size,
+                    sampler.image_size,
+                    device=device,
+                )
 
-                batch_noises = initial_noises[batch_start:batch_end]
-                batch_labels = labels[batch_start:batch_end]
+                # Create labels (distributed across classes)
+                if class_label is None:
+                    # Distribute across all classes
+                    batch_labels = torch.cat(
+                        [
+                            torch.full(
+                                (batch_size // sampler.num_classes,), c, device=device
+                            )
+                            for c in range(sampler.num_classes)
+                        ]
+                    )
+                else:
+                    # Use specified class
+                    batch_labels = torch.full((batch_size,), class_label, device=device)
 
-                # Initialize batch samples
-                batch_samples = [noise.clone() for noise in batch_noises]
-                batch_times = [0.0] * batch_size
+                # Start with noise
+                x = batch_noise
+                t = 0.0
 
-                # Track if each sample is still being processed
-                active_samples = [True] * batch_size
+                # Standard flow matching until branch_start_t
+                while t < branch_start_t - 1e-6:
+                    t_batch = torch.full((batch_size,), t, device=device)
+                    velocity = sampler.flow_model(t_batch, x, batch_labels)
+                    dt = min(base_dt, branch_start_t - t)
+                    x = x + velocity * dt
+                    t += dt
 
-                # First, do standard flow matching until branch_start_t
-                for i in range(batch_size):
-                    x = batch_samples[i]
-                    label = batch_labels[i]
-                    t = 0.0
+                # Now do branching flow matching until t=1.0
+                while t < 1.0 - 1e-6:
+                    # Check if we can branch (at least one more step remaining)
+                    can_branch = t < 1.0 - base_dt
 
-                    # Standard flow matching until branch_start_t
-                    while t < branch_start_t - 1e-6:
-                        t_batch = torch.full((1,), t, device=device)
-                        velocity = sampler.flow_model(t_batch, x, label)
-                        dt = min(base_dt, branch_start_t - t)
+                    if can_branch:
+                        # Create num_branches different versions of the entire batch
+                        branched_batches = []
+                        branched_times = []
+
+                        for branch_idx in range(num_branches):
+                            # Clone the current batch
+                            branched_batch = x.clone()
+
+                            # Sample different dt for this branch
+                            branch_dt = torch.normal(
+                                mean=base_dt,
+                                std=dt_std * base_dt,
+                                size=(1,),
+                                device=device,
+                            ).item()
+
+                            # Clamp dt to ensure we don't go beyond t=1.0
+                            branch_dt = min(branch_dt, 1.0 - t)
+
+                            # Apply flow model to get velocity
+                            t_batch = torch.full((batch_size,), t, device=device)
+                            velocity = sampler.flow_model(
+                                t_batch, branched_batch, batch_labels
+                            )
+
+                            # Apply step
+                            branched_batch = branched_batch + velocity * branch_dt
+                            branch_time = t + branch_dt
+
+                            branched_batches.append(branched_batch)
+                            branched_times.append(branch_time)
+
+                        # Compute FID for each branched batch
+                        branch_fids = []
+
+                        for branch_idx in range(num_branches):
+                            branch_mean, branch_cov, _ = compute_batch_statistics(
+                                branched_batches[branch_idx]
+                            )
+                            branch_fid = compute_fid(
+                                branch_mean, branch_cov, ref_mean, ref_cov
+                            )
+                            branch_fids.append(branch_fid)
+
+                        # Sort branches by FID (ascending, as lower FID is better)
+                        sorted_indices = torch.argsort(torch.tensor(branch_fids))
+
+                        # Select the branch with the specified rank
+                        selected_idx = sorted_indices[rank - 1]
+
+                        # Continue with the selected branch
+                        x = branched_batches[selected_idx]
+                        t = branched_times[selected_idx]
+
+                        print(
+                            f"  Branch point at t={t:.4f}, selected rank {rank} with FID {branch_fids[selected_idx]:.4f}"
+                        )
+                    else:
+                        # Regular step (no branching) for the final step
+                        t_batch = torch.full((batch_size,), t, device=device)
+                        velocity = sampler.flow_model(t_batch, x, batch_labels)
+                        dt = min(base_dt, 1.0 - t)
                         x = x + velocity * dt
                         t += dt
 
-                    batch_samples[i] = x
-                    batch_times[i] = t
+                # Compute batch statistics for final samples
+                batch_mean, batch_cov, batch_count = compute_batch_statistics(x)
 
-                # Process until all samples reach t=1.0
-                while any(active_samples):
-                    # Process each sample in the batch
-                    for i in range(batch_size):
-                        if not active_samples[i]:
-                            continue
-
-                        # Current sample and time
-                        x = batch_samples[i]
-                        t = batch_times[i]
-                        label = batch_labels[i]
-
-                        # Check if we can branch (at least 2 more steps remaining)
-                        can_branch = t < 1.0 - 2 * base_dt
-
-                        if can_branch:
-                            # Create branches
-                            branches = x.repeat(num_branches, 1, 1, 1)
-                            branch_labels = label.repeat(num_branches)
-                            branch_times = torch.full((num_branches,), t, device=device)
-
-                            # Sample different dt values for each branch
-                            dts = torch.normal(
-                                mean=base_dt,
-                                std=dt_std * base_dt,
-                                size=(num_branches,),
-                                device=device,
-                            )
-                            dts = torch.clamp(
-                                dts,
-                                min=torch.tensor(0.0, device=device),
-                                max=1.0 - branch_times,
-                            )
-
-                            # Get velocity for all branches
-                            velocity = sampler.flow_model(
-                                branch_times, branches, branch_labels
-                            )
-
-                            # Apply different step sizes to create branches
-                            branched_samples = branches + velocity * dts.view(
-                                -1, 1, 1, 1
-                            )
-                            new_times = branch_times + dts
-
-                            # Now simulate all branches forward one more step to a common time point
-                            next_timestep = t + 2 * base_dt  # Always advance 2 steps
-
-                            # Calculate dt to reach the next common timestep for each branch
-                            dt_to_next = next_timestep - new_times
-
-                            # Get velocity for all branches
-                            velocity = sampler.flow_model(
-                                new_times, branched_samples, branch_labels
-                            )
-
-                            # Apply the step to all branches
-                            aligned_samples = (
-                                branched_samples
-                                + velocity * dt_to_next.view(-1, 1, 1, 1)
-                            )
-
-                            # Calculate intermediate FID for all aligned branches
-                            # For batch-wise selection, we'll collect features for each branch
-                            branch_features_list = []
-
-                            for branch_idx in range(num_branches):
-                                branch_sample = aligned_samples[
-                                    branch_idx : branch_idx + 1
-                                ]
-                                branch_features = extract_features(branch_sample)
-                                branch_features_list.append(branch_features)
-
-                            # Calculate FID for each branch compared to reference
-                            branch_fids = []
-
-                            for branch_idx in range(num_branches):
-                                branch_features = branch_features_list[branch_idx]
-                                branch_mean = torch.mean(branch_features, dim=0)
-
-                                # For single sample, covariance is not well-defined
-                                # We'll use a small identity matrix as a placeholder
-                                branch_cov = (
-                                    torch.eye(branch_mean.size(0), device=device) * 1e-6
-                                )
-
-                                # Compute FID with reference statistics
-                                branch_fid = compute_fid(
-                                    branch_mean, branch_cov, ref_mean, ref_cov
-                                )
-                                branch_fids.append(branch_fid)
-
-                            # Sort branches by FID (ascending, as lower FID is better)
-                            sorted_indices = torch.argsort(torch.tensor(branch_fids))
-
-                            # Select the branch with the specified rank (rank 1 = best, rank num_branches = worst)
-                            selected_idx = sorted_indices[rank - 1]
-                            batch_samples[i] = aligned_samples[
-                                selected_idx : selected_idx + 1
-                            ]
-
-                            # Update time
-                            batch_times[i] = next_timestep
-
-                        else:
-                            # Regular step (no branching) for the final steps
-                            t_batch = torch.full((1,), t, device=device)
-                            velocity = sampler.flow_model(t_batch, x, label)
-                            dt = min(base_dt, 1.0 - t)
-                            batch_samples[i] = x + velocity * dt
-                            batch_times[i] += dt
-
-                        # Check if this sample is done
-                        if batch_times[i] >= 1.0 - 1e-6:
-                            active_samples[i] = False
-
-                # Collect final samples for this batch
-                final_batch_samples = torch.cat(batch_samples, dim=0)
-
-                # Compute batch statistics
-                batch_mean, batch_cov, batch_count = compute_batch_statistics(
-                    final_batch_samples
-                )
-
-                # Update running statistics with dynamic alpha based on sample counts
+                # Update running statistics
                 (
                     rank_results[rank]["running_mean"],
                     rank_results[rank]["running_cov"],
@@ -461,9 +395,13 @@ def analyze_batch_fid_rank_consistency(
                 rank_results[rank]["batch_fid_scores"].append(batch_fid)
 
                 # Store final samples for later analysis
-                rank_results[rank]["final_samples"].append(final_batch_samples.cpu())
+                rank_results[rank]["final_samples"].append(x.cpu())
 
-                print(f"  Batch {batch_idx+1} FID: {batch_fid:.4f}")
+                print(f"  Batch {batch_idx+1} final FID: {batch_fid:.4f}")
+
+                # Clear GPU memory
+                del x
+                torch.cuda.empty_cache()
 
             # Compute overall FID for this rank using running statistics
             overall_fid = compute_fid(
