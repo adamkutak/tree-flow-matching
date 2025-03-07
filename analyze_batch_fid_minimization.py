@@ -69,9 +69,17 @@ def analyze_batch_fid_rank_consistency(
         for rank in range(1, num_branches + 1)
     }
 
+    def extract_features(images):
+        with torch.no_grad():
+            features = sampler.extract_inception_features(images)
+            # Convert to tensor if it's a numpy array
+            if isinstance(features, np.ndarray):
+                features = torch.from_numpy(features).to(device)
+            return features
+
     # Function to compute batch statistics using sampler's inception model
     def compute_batch_statistics(samples):
-        features = sampler.extract_inception_features(samples)
+        features = extract_features(samples)
         mean = torch.mean(features, dim=0)
         # Center the features before computing covariance
         centered_features = features - mean.unsqueeze(0)
@@ -150,7 +158,7 @@ def analyze_batch_fid_rank_consistency(
     for i in range(0, len(real_images), batch_size_ref):
         batch = real_images[i : i + batch_size_ref]
         with torch.no_grad():
-            features = sampler.extract_inception_features(batch)
+            features = extract_features(batch)
             ref_features_list.append(features)
 
     ref_features = torch.cat(ref_features_list, dim=0)
@@ -278,9 +286,7 @@ def analyze_batch_fid_rank_consistency(
                                 branch_sample = aligned_samples[
                                     branch_idx : branch_idx + 1
                                 ]
-                                branch_features = sampler.extract_inception_features(
-                                    branch_sample
-                                )
+                                branch_features = extract_features(branch_sample)
                                 branch_features_list.append(branch_features)
 
                             # Calculate FID for each branch compared to reference
