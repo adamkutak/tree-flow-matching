@@ -1032,7 +1032,7 @@ def main():
         dt_std=0.25,
         batch_size=64,
         base_dt=0.04,
-        branch_start_t=0.5,
+        branch_start_t=0.7,
     )
 
     # # Run batch FID rank consistency analysis
