@@ -999,7 +999,7 @@ def main():
     batch_fid_correlation_results = analyze_batch_fid_correlation(
         sampler=sampler,
         device=device,
-        num_samples=128,
+        num_samples=1024,
         num_branches=8,
         dt_std=0.25,
         batch_size=64,
