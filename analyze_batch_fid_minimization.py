@@ -1031,7 +1031,7 @@ def main():
         num_branches=4,
         dt_std=0.25,
         batch_size=64,
-        base_dt=0.1,
+        base_dt=0.04,
         branch_start_t=0.5,
     )
 
