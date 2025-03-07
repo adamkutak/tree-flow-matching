@@ -523,9 +523,9 @@ def main():
         sampler=sampler,
         device=device,
         num_samples=256,  # Use a larger number of samples for batch analysis
-        num_branches=16,
+        num_branches=4,
         dt_std=0.25,
-        batch_size=16,
+        batch_size=64,
         base_dt=0.1,
         branch_start_t=0.5,  # Start branching immediately
     )
