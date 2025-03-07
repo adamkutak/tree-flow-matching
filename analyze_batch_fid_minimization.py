@@ -1002,7 +1002,7 @@ def main():
         num_samples=128,
         num_branches=8,
         dt_std=0.25,
-        batch_size=16,
+        batch_size=64,
         base_dt=0.1,
         branch_start_t=0.5,
     )
