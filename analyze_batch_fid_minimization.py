@@ -349,17 +349,30 @@ def analyze_batch_fid_rank_consistency(
 
                         # Sort branches by FID (ascending, as lower FID is better)
                         sorted_indices = torch.argsort(torch.tensor(branch_fids))
+                        sorted_fids = [branch_fids[i] for i in sorted_indices]
 
                         # Select the branch with the specified rank
                         selected_idx = sorted_indices[rank - 1]
+                        selected_fid = branch_fids[selected_idx]
+
+                        # Format all FIDs for printing, highlighting the selected one
+                        all_fids_str = (
+                            ", ".join(
+                                [
+                                    f"[{i+1}: {fid:.4f}{'*' if i == rank-1 else ''}"
+                                    for i, fid in enumerate(sorted_fids)
+                                ]
+                            )
+                            + "]"
+                        )
+
+                        print(
+                            f"  Branch point at t={t:.4f}, selected rank {rank} with FID {selected_fid:.4f} (all FIDs: {all_fids_str})"
+                        )
 
                         # Continue with the selected branch
                         x = branched_batches[selected_idx]
                         t = branched_times[selected_idx]
-
-                        print(
-                            f"  Branch point at t={t:.4f}, selected rank {rank} with FID {branch_fids[selected_idx]:.4f}"
-                        )
                     else:
                         # Regular step (no branching) for the final step
                         t_batch = torch.full((batch_size,), t, device=device)
@@ -525,7 +538,7 @@ def main():
         num_samples=256,  # Use a larger number of samples for batch analysis
         num_branches=4,
         dt_std=0.25,
-        batch_size=64,
+        batch_size=128,
         base_dt=0.1,
         branch_start_t=0.5,  # Start branching immediately
     )
