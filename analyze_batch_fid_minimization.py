@@ -199,7 +199,7 @@ def analyze_batch_fid_rank_consistency(
             init_labels.append(torch.full((1,), class_idx, device=device))
 
     # Process initialization samples in batches
-    init_samples_list = []
+    init_features_list = []  # Store features instead of samples
 
     for i in range(0, len(init_noises), init_batch_size):
         batch_noises = init_noises[i : i + init_batch_size]
@@ -225,13 +225,27 @@ def analyze_batch_fid_rank_consistency(
 
         # Concatenate batch samples
         batch_samples = torch.cat(batch_samples, dim=0)
-        init_samples_list.append(batch_samples)
 
-    # Concatenate all initialization samples
-    init_samples = torch.cat(init_samples_list, dim=0)
+        # Extract features directly and move to CPU
+        features = extract_features(batch_samples)
+        init_features_list.append(features.cpu())
 
-    # Compute statistics for initialization samples
-    init_mean, init_cov, init_count = compute_batch_statistics(init_samples)
+        # Clear GPU memory
+        del batch_samples
+        torch.cuda.empty_cache()
+
+    # Compute statistics from features (on CPU first, then move result to GPU)
+    all_features = torch.cat([f.to(device) for f in init_features_list], dim=0)
+    init_mean = torch.mean(all_features, dim=0)
+    centered_features = all_features - init_mean.unsqueeze(0)
+    init_cov = torch.mm(centered_features.t(), centered_features) / (
+        all_features.size(0) - 1
+    )
+    init_count = all_features.size(0)
+
+    # Clear more GPU memory
+    del all_features, centered_features
+    torch.cuda.empty_cache()
 
     # Initialize running statistics for each rank
     for rank in range(1, num_branches + 1):
