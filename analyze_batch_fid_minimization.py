@@ -201,7 +201,7 @@ def analyze_batch_fid_rank_consistency(
     # Process initialization samples in batches
     init_features_list = []  # Store features instead of samples
 
-    for i in range(0, len(init_noises), init_batch_size):
+    for i in tqdm(range(0, len(init_noises), init_batch_size)):
         batch_noises = init_noises[i : i + init_batch_size]
         batch_labels = init_labels[i : i + init_batch_size]
 
