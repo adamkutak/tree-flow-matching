@@ -363,6 +363,7 @@ def analyze_batch_fid_rank_consistency(
                 print(f"  Batch {batch_idx+1} FID: {batch_fid:.4f}")
 
             # Compute overall FID for this rank using running statistics
+            breakpoint()
             overall_fid = compute_fid(
                 rank_results[rank]["running_mean"],
                 rank_results[rank]["running_cov"],
