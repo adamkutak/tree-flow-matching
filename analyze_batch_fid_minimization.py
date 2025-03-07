@@ -275,16 +275,11 @@ def analyze_batch_fid_rank_consistency(
                     device=device,
                 )
 
-                # Create labels (distributed across classes)
+                # Create labels (randomly sampled classes)
                 if class_label is None:
-                    # Distribute across all classes
-                    batch_labels = torch.cat(
-                        [
-                            torch.full(
-                                (batch_size // sampler.num_classes,), c, device=device
-                            )
-                            for c in range(sampler.num_classes)
-                        ]
+                    # Randomly sample classes
+                    batch_labels = torch.randint(
+                        0, sampler.num_classes, (batch_size,), device=device
                     )
                 else:
                     # Use specified class
@@ -528,7 +523,7 @@ def main():
         sampler=sampler,
         device=device,
         num_samples=256,  # Use a larger number of samples for batch analysis
-        num_branches=4,
+        num_branches=16,
         dt_std=0.25,
         batch_size=16,
         base_dt=0.1,
