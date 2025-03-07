@@ -739,27 +739,54 @@ def analyze_batch_fid_correlation(
                         branched_batches.append(branched_batch)
                         branched_times.append(branch_time)
 
-                    # Compute batch FID for each branched batch
+                    # Now align all branches to a common timepoint
+                    # Use the next timestep in the schedule after the branch point
+                    next_timestep = t + 2 * base_dt
+                    next_timestep = min(
+                        next_timestep, 1.0
+                    )  # Ensure we don't go beyond t=1.0
+
+                    aligned_batches = []
+
+                    for branch_idx in range(num_branches):
+                        branch_x = branched_batches[branch_idx]
+                        branch_t = branched_times[branch_idx]
+
+                        # Calculate dt to reach the next common timestep
+                        dt_to_next = next_timestep - branch_t
+
+                        if dt_to_next > 1e-6:  # Only step forward if needed
+                            # Apply flow model to get velocity
+                            branch_t_batch = torch.full(
+                                (batch_size,), branch_t, device=device
+                            )
+                            branch_velocity = sampler.flow_model(
+                                branch_t_batch, branch_x, batch_labels
+                            )
+
+                            # Apply step to align to common timepoint
+                            branch_x = branch_x + branch_velocity * dt_to_next
+
+                        aligned_batches.append(branch_x)
+
+                    # Compute batch FID for each aligned batch
                     batch_fids = []
 
                     for branch_idx in range(num_branches):
                         branch_mean, branch_cov, _ = compute_batch_statistics(
-                            branched_batches[branch_idx]
+                            aligned_batches[branch_idx]
                         )
                         branch_fid = compute_fid(
                             branch_mean, branch_cov, ref_mean, ref_cov
                         )
                         batch_fids.append(branch_fid)
 
-                    # Now, instead of selecting a specific rank, we'll simulate all branches to completion
-                    # to analyze correlation between batch FID and final FID
-
                     # For each branch, simulate to completion
                     final_batches = []
 
                     for branch_idx in range(num_branches):
-                        branch_x = branched_batches[branch_idx]
-                        branch_t = branched_times[branch_idx]
+                        branch_x = aligned_batches[branch_idx]
+                        branch_t = next_timestep
 
                         # Continue simulation until t=1.0
                         while branch_t < 1.0 - 1e-6:
@@ -809,6 +836,7 @@ def analyze_batch_fid_correlation(
                     # Store data for this branch point
                     branch_data = {
                         "time": t,
+                        "aligned_time": next_timestep,
                         "batch_fids": np.array(batch_fids),
                         "final_fids": np.array(final_fids),
                         "batch_final_corr": batch_final_corr,
@@ -831,7 +859,7 @@ def analyze_batch_fid_correlation(
                     final_fids_str = ", ".join([f"{fid:.4f}" for fid in final_fids])
 
                     print(
-                        f"  Branch point at t={t:.4f}, correlation={batch_final_corr:.4f}"
+                        f"  Branch point at t={t:.4f}, aligned to t={next_timestep:.4f}, correlation={batch_final_corr:.4f}"
                     )
                     print(f"    Batch FIDs: [{batch_fids_str}]")
                     print(f"    Final FIDs: [{final_fids_str}]")
