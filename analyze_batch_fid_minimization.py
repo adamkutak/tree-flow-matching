@@ -177,7 +177,7 @@ def analyze_batch_fid_rank_consistency(
     print("\nInitializing running statistics with 1024 samples...")
 
     # Generate 1024 samples using standard flow matching up to branch_start_t
-    init_samples_count = 1024
+    init_samples_count = 256
     init_batch_size = 16  # Process in smaller batches
 
     # Create initial noise and labels for initialization
