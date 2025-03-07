@@ -593,7 +593,7 @@ def main():
         num_branches=4,
         dt_std=0.25,
         batch_size=16,
-        base_dt=0.05,
+        base_dt=0.1,
         branch_start_t=0.5,  # Start branching immediately
     )
 
