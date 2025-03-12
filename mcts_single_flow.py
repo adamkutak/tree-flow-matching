@@ -399,22 +399,28 @@ class MCTSFlowSampler:
 
         return torch.tensor(avg_distance, device=images.device)
 
-    def batch_compute_global_mahalanobis_distance(self, images):
+    def compute_global_distribution_mahalanobis_distance(self, images):
         """
-        Compute global Mahalanobis distance for a batch of images.
+        Compute global Mahalanobis distance for a distribution of images.
+
+        This calculates how far the distribution of generated samples is from
+        the global reference distribution, rather than averaging individual distances.
 
         Args:
             images: Tensor of shape [batch_size, C, H, W]
 
         Returns:
-            Tensor of negative Mahalanobis distances (higher is better)
+            Tensor of negative Mahalanobis distance (higher is better)
         """
         if not self.has_global_stats:
             raise ValueError("Global statistics not available")
 
+        # Ensure images are on the same device as the inception model
+        inception_device = next(self.inception.parameters()).device
+        images = images.to(inception_device)
+
         # Extract features for all images in one batch
         features = self.extract_inception_features(images)
-
         # Calculate Mahalanobis distances for each image
         mahalanobis_distances = []
 
