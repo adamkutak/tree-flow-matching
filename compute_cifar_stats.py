@@ -74,12 +74,12 @@ def compute_cifar10_statistics(feature_dim=64, pca_dim=None):
     with torch.no_grad():
         for images, labels in tqdm(dataloader):
             images = images.to(device)
+            breakpoint()
             # Scale images to [0, 1] range as expected by the NoTrainInceptionV3
             if images.max() > 1.0:
                 images = images / 255.0
 
             # Get features
-            breakpoint()
             features = inception(images)
             features = features.cpu().numpy()
 
