@@ -1130,7 +1130,7 @@ def analyze_mahalanobis_rank_consistency_global(
 
     # Process real images
     real_batch_size = 100
-    indices = np.random.choice(len(cifar10), 5000, replace=False)
+    indices = np.random.choice(len(cifar10), 20000, replace=False)
     real_images = torch.stack([cifar10[i][0] for i in indices]).to(device)
 
     print("Processing real images...")
