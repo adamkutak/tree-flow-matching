@@ -80,8 +80,11 @@ def analyze_early_quality_prediction(
                     # Check if this is an evaluation time
                     if rounded_t in rounded_eval_times:
                         # Calculate global mean difference
+                        class_idx_tensor = torch.full(
+                            (x.size(0),), class_idx, device=device
+                        )
                         mean_diff = sampler.batch_compute_mean_difference(
-                            x, class_idx
+                            x, class_idx_tensor
                         ).item()
                         quality_metrics[rounded_t].append(mean_diff)
 
