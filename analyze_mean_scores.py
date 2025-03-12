@@ -200,14 +200,56 @@ def analyze_early_quality_prediction(
 
             # Compute FID score
             fid_score = fid_metric.compute().item()
+
+            # Get the real statistics from the FID metric
+            real_mean = (
+                fid_metric.real_features_sum / fid_metric.real_features_num_samples
+            )
+            real_cov = (
+                fid_metric.real_features_cov_sum / fid_metric.real_features_num_samples
+            )
+
+            # Get fake statistics
+            fake_mean = (
+                fid_metric.fake_features_sum / fid_metric.fake_features_num_samples
+            )
+            fake_cov = (
+                fid_metric.fake_features_cov_sum / fid_metric.fake_features_num_samples
+            )
+
+            # Calculate mean component: ||μ_real - μ_fake||²
+            mean_diff = torch.norm(real_mean - fake_mean) ** 2
+
+            real_cov_np = real_cov.cpu().numpy()
+            fake_cov_np = fake_cov.cpu().numpy()
+
+            # Calculate sqrt(Σ_real·Σ_fake) using scipy
+            from scipy import linalg
+
+            sqrt_cov_product = linalg.sqrtm(np.matmul(real_cov_np, fake_cov_np))
+
+            # Handle potential complex numbers (should be real but might have small imaginary parts due to numerical issues)
+            if np.iscomplexobj(sqrt_cov_product):
+                sqrt_cov_product = sqrt_cov_product.real
+
+            # Convert back to tensor and calculate trace
+            sqrt_cov_product_tensor = torch.from_numpy(sqrt_cov_product).to(device)
+            cov_component = torch.trace(
+                real_cov + fake_cov - 2 * sqrt_cov_product_tensor
+            ).item()
+
+            # Store components along with the FID score
             group_fid_scores[group_idx] = {
                 "fid": fid_score,
+                "mean_component": mean_diff.item(),
+                "cov_component": cov_component,
                 "avg_metric": avg_metric,
                 "num_samples": len(group_samples),
             }
 
             print(
-                f"  Group {group_idx+1} (top {(group_idx+1)*100/num_groups:.0f}%): FID = {fid_score:.4f}"
+                f"  Group {group_idx+1} (top {(group_idx+1)*100/num_groups:.0f}%): FID = {fid_score:.4f}, "
+                f"Mean Component = {mean_diff.item():.4f}, Covariance Component = {cov_component:.4f}"
             )
 
         # Calculate correlation between group quality and FID
