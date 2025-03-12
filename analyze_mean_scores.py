@@ -80,8 +80,8 @@ def analyze_early_quality_prediction(
                     # Check if this is an evaluation time
                     if rounded_t in rounded_eval_times:
                         # Calculate global mean difference
-                        mean_diff = sampler.batch_compute_global_mean_difference(
-                            x
+                        mean_diff = sampler.batch_compute_mean_difference(
+                            x, class_idx
                         ).item()
                         quality_metrics[rounded_t].append(mean_diff)
 
@@ -340,7 +340,7 @@ def main():
     early_quality_results = analyze_early_quality_prediction(
         sampler=sampler,
         device=device,
-        num_samples_per_class=100,
+        num_samples_per_class=200,
         evaluation_times=[0.5, 0.7, 0.9, 1.0],
         num_groups=4,
     )
