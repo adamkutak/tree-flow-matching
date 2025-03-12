@@ -79,6 +79,7 @@ def compute_cifar10_statistics(feature_dim=64, pca_dim=None):
                 images = images / 255.0
 
             # Get features
+            breakpoint()
             features = inception(images)
             features = features.cpu().numpy()
 
