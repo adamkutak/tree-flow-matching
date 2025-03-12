@@ -1,16 +1,15 @@
 import torch
 import torch.nn as nn
-import torchvision.models as models
 import torchvision.transforms as transforms
 from torch.utils.data import DataLoader
 from torchvision.datasets import CIFAR10
 import numpy as np
 import pickle
 from tqdm import tqdm
-from pytorch_fid.inception import InceptionV3
 from collections import defaultdict
 import argparse
 from sklearn.decomposition import PCA
+from torchmetrics.image.fid import NoTrainInceptionV3
 
 
 def compute_cifar10_statistics(feature_dim=64, pca_dim=None):
@@ -19,28 +18,20 @@ def compute_cifar10_statistics(feature_dim=64, pca_dim=None):
 
     Args:
         feature_dim (int): Dimension of features to extract. Options are:
-            - 64: First layer features (block idx 0)
-            - 192: Second layer features (block idx 1)
-            - 768: Third layer features (block idx 2)
-            - 2048: Final layer features (block idx 3)
+            - 64: First layer features
+            - 192: Second layer features
+            - 768: Third layer features
+            - 2048: Final layer features
         pca_dim (int, optional): If provided, reduce feature dimension to this size using PCA.
                                 Only applicable when feature_dim=2048.
     """
-    # Map feature dimension to block index
-    dim_to_block = {
-        64: 0,  # First block
-        192: 1,  # Second block
-        768: 2,  # Third block
-        2048: 3,  # Final block (default for standard FID)
-    }
-
-    if feature_dim not in dim_to_block:
+    # Validate feature dimension
+    valid_dims = [64, 192, 768, 2048]
+    if feature_dim not in valid_dims:
         raise ValueError(
             f"Unsupported feature dimension: {feature_dim}. "
-            f"Supported dimensions are: {list(dim_to_block.keys())}"
+            f"Supported dimensions are: {valid_dims}"
         )
-
-    block_idx = dim_to_block[feature_dim]
 
     # Validate PCA dimension
     use_pca = pca_dim is not None
@@ -49,8 +40,10 @@ def compute_cifar10_statistics(feature_dim=64, pca_dim=None):
         print("Ignoring PCA dimension for non-2048 feature extraction.")
         use_pca = False
 
-    # Load inception model with specified feature dimension
-    inception = InceptionV3([block_idx], normalize_input=True)
+    # Load inception model from torchmetrics (same as used in FID calculation)
+    inception = NoTrainInceptionV3(
+        name="inception-v3-compat", features_list=[str(feature_dim)]
+    )
     inception.eval()
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -81,14 +74,12 @@ def compute_cifar10_statistics(feature_dim=64, pca_dim=None):
     with torch.no_grad():
         for images, labels in tqdm(dataloader):
             images = images.to(device)
-            # Scale images to [-1, 1] range
-            images = images * 2 - 1
+            # Scale images to [0, 1] range as expected by the NoTrainInceptionV3
+            if images.max() > 1.0:
+                images = images / 255.0
 
             # Get features
-            features = inception(images)[0]
-            # Global average pooling if features have spatial dimensions
-            if len(features.shape) > 2:
-                features = features.mean([2, 3])
+            features = inception(images)
             features = features.cpu().numpy()
 
             # Store features by class for per-class statistics
