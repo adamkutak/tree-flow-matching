@@ -101,6 +101,17 @@ def analyze_early_quality_prediction(
     # Group samples by quality at each evaluation time
     results = {}
 
+    # Setup CIFAR-10 dataset for real FID calculation
+    transform = transforms.Compose(
+        [
+            transforms.ToTensor(),
+            transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
+        ]
+    )
+    cifar10 = datasets.CIFAR10(
+        root="./data", train=True, download=True, transform=transform
+    )
+
     # Initialize FID metric
     fid_metric = FID.FrechetInceptionDistance(
         feature=64, normalize=True, reset_real_features=False
@@ -182,18 +193,6 @@ def analyze_early_quality_prediction(
         # Calculate FID for each quality group
         group_fid_scores = {}
 
-        # Setup CIFAR-10 dataset for real FID calculation
-        transform = transforms.Compose(
-            [
-                transforms.ToTensor(),
-                transforms.Normalize(
-                    mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]
-                ),
-            ]
-        )
-        cifar10 = datasets.CIFAR10(
-            root="./data", train=True, download=True, transform=transform
-        )
         # Calculate FID for each quality group
         for group_idx in range(num_groups):
             # Reset FID for fake images
