@@ -334,7 +334,7 @@ class MCTSFlowSampler:
         for i, (feature, class_idx) in enumerate(zip(features, class_indices)):
             distance = self.compute_mahalanobis_distance(feature, class_idx)
             # Return negative distance so higher values are better (consistent with FID change)
-            mahalanobis_distances.append(distance)
+            mahalanobis_distances.append(-distance)
 
         return torch.tensor(mahalanobis_distances, device=images.device)
 
