@@ -508,6 +508,8 @@ def analyze_mahalanobis_rank_consistency(
     rank_avg_mahalanobis = {}
     rank_std_mahalanobis = {}
 
+    distribution_mahalanobis = {}
+
     for rank in range(1, num_branches + 1):
         fid_scores = rank_results[rank]["fid_scores"]
         rank_avg_fid[rank] = np.mean(fid_scores)
@@ -517,19 +519,66 @@ def analyze_mahalanobis_rank_consistency(
         rank_avg_mahalanobis[rank] = np.mean(mahalanobis_scores)
         rank_std_mahalanobis[rank] = np.std(mahalanobis_scores)
 
+        # Calculate distribution-level Mahalanobis distance per class
+        class_distribution_scores = {}
+
+        for class_idx in class_range:
+            # Get all final samples for this rank and class
+            class_samples = []
+            class_labels = []
+
+            for i, label in enumerate(class_range):
+                sample_indices = range(
+                    i * samples_per_class, (i + 1) * samples_per_class
+                )
+                if label == class_idx:
+                    for idx in sample_indices:
+                        if idx < len(rank_results[rank]["final_samples"]):
+                            class_samples.append(
+                                rank_results[rank]["final_samples"][idx]
+                            )
+                            class_labels.append(label)
+
+            if class_samples:
+                # Stack samples and calculate distribution-level Mahalanobis distance
+                stacked_samples = torch.cat(class_samples, dim=0)
+                stacked_labels = torch.tensor(class_labels, device=device)
+
+                # Calculate distribution-level Mahalanobis distance
+                dist_mahalanobis = sampler.compute_distribution_mahalanobis_distance(
+                    stacked_samples, stacked_labels
+                ).item()
+
+                class_distribution_scores[class_idx] = dist_mahalanobis
+
+        # Average across classes
+        if class_distribution_scores:
+            distribution_mahalanobis[rank] = np.mean(
+                list(class_distribution_scores.values())
+            )
+        else:
+            distribution_mahalanobis[rank] = float("nan")
+
     # Calculate correlation between rank and average final FID change
     ranks = list(range(1, num_branches + 1))
     avg_fids = [rank_avg_fid[r] for r in ranks]
     avg_mahalanobis = [rank_avg_mahalanobis[r] for r in ranks]
+    dist_mahalanobis = [distribution_mahalanobis[r] for r in ranks]
 
     if len(ranks) > 1:
         rank_fid_correlation, p_value = spearmanr(ranks, avg_fids)
         rank_mahalanobis_correlation, mahalanobis_p_value = spearmanr(
             ranks, avg_mahalanobis
         )
+        dist_mahalanobis_correlation, dist_mahalanobis_p_value = spearmanr(
+            ranks, dist_mahalanobis
+        )
     else:
         rank_fid_correlation, p_value = float("nan"), float("nan")
         rank_mahalanobis_correlation, mahalanobis_p_value = float("nan"), float("nan")
+        dist_mahalanobis_correlation, dist_mahalanobis_p_value = float("nan"), float(
+            "nan"
+        )
 
     # Print results for final FID change
     print("\n===== Final FID Change Rank Consistency Results =====")
@@ -550,6 +599,15 @@ def analyze_mahalanobis_rank_consistency(
         print(
             f"  Rank {rank}: {rank_avg_mahalanobis[rank]:.4f} ± {rank_std_mahalanobis[rank]:.4f}"
         )
+
+    # Print results for distribution-level Mahalanobis distance
+    print("\n===== Distribution-Level Mahalanobis Distance Results =====")
+    print(
+        f"Correlation between rank and distribution Mahalanobis distance: {dist_mahalanobis_correlation:.4f} (p-value: {dist_mahalanobis_p_value:.4f})"
+    )
+    print("\nDistribution Mahalanobis distance by rank:")
+    for rank in range(1, num_branches + 1):
+        print(f"  Rank {rank}: {distribution_mahalanobis[rank]:.4f}")
 
     # Plot results for final FID change
     plt.figure(figsize=(10, 6))
