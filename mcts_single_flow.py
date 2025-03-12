@@ -352,6 +352,7 @@ class MCTSFlowSampler:
         Returns:
             Tensor of negative Mahalanobis distances (higher is better)
         """
+        # Ensure images are on the same device as the inception model
         inception_device = next(self.inception.parameters()).device
         images = images.to(inception_device)
 
@@ -374,22 +375,20 @@ class MCTSFlowSampler:
 
         for class_idx, feat_list in class_features.items():
             # Calculate mean of generated features for this class
-            features_tensor = torch.stack(feat_list)
-            generated_mean = torch.mean(features_tensor, dim=0)
+            features_array = np.stack(feat_list)
+            generated_mean = np.mean(features_array, axis=0)
 
             # Get reference statistics for this class
-            if class_idx in self.class_statistics:
-                ref_mean = self.class_statistics[class_idx]["mean"]
-                ref_cov_inv = self.class_statistics[class_idx]["cov_inv"]
+            if class_idx in self.fids:
+                mu = self.fids[class_idx]["mu"]
+                sigma_inv = self.fids[class_idx]["sigma_inv"]
 
                 # Calculate Mahalanobis distance between generated mean and reference distribution
-                diff = generated_mean - ref_mean
-                mahalanobis_dist = torch.sqrt(
-                    torch.dot(torch.matmul(diff, ref_cov_inv), diff)
-                )
+                diff = generated_mean - mu
+                mahalanobis_dist = np.sqrt(diff.dot(sigma_inv).dot(diff))
 
                 # Return negative distance so higher values are better (consistent with FID change)
-                distribution_distances.append(-mahalanobis_dist.item())
+                distribution_distances.append(-mahalanobis_dist)
             else:
                 # If no statistics for this class, use a placeholder value
                 distribution_distances.append(float("-inf"))
@@ -426,19 +425,19 @@ class MCTSFlowSampler:
         features = self.extract_inception_features(images)
 
         # Calculate mean of generated features
-        features_tensor = torch.stack(features)
-        generated_mean = torch.mean(features_tensor, dim=0)
+        features_array = np.stack(features)
+        generated_mean = np.mean(features_array, axis=0)
 
         # Get global reference statistics
-        ref_mean = self.global_mean
-        ref_cov_inv = self.global_cov_inv
+        mu = self.global_fid["mu"]
+        sigma_inv = self.global_fid["sigma_inv"]
 
         # Calculate Mahalanobis distance between generated mean and reference distribution
-        diff = generated_mean - ref_mean
-        mahalanobis_dist = torch.sqrt(torch.dot(torch.matmul(diff, ref_cov_inv), diff))
+        diff = generated_mean - mu
+        mahalanobis_dist = np.sqrt(diff.dot(sigma_inv).dot(diff))
 
         # Return negative distance so higher values are better (consistent with FID change)
-        return torch.tensor(-mahalanobis_dist.item(), device=images.device)
+        return torch.tensor(-mahalanobis_dist, device=images.device)
 
     def batch_compute_global_mahalanobis_distance(self, images):
         """
