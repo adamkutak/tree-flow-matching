@@ -1323,7 +1323,7 @@ def main():
     )
 
     # Run Mahalanobis distance rank consistency analysis
-    mahalanobis_analysis_results = analyze_mahalanobis_rank_consistency(
+    mahalanobis_analysis_results = analyze_mahalanobis_rank_consistency_global(
         sampler=sampler,
         device=device,
         num_samples=500,
