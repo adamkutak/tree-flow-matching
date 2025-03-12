@@ -35,14 +35,6 @@ def analyze_early_quality_prediction(
     Returns:
         Dictionary containing results for analysis
     """
-    print("\n===== Early Quality Prediction Analysis =====")
-
-    # Check if global stats are available
-    if not hasattr(sampler, "has_global_stats") or not sampler.has_global_stats:
-        raise ValueError(
-            "Global statistics not available in the sampler. Please initialize with global statistics."
-        )
-
     sampler.flow_model.eval()
 
     # Total number of samples
