@@ -101,6 +101,42 @@ def analyze_early_quality_prediction(
     # Group samples by quality at each evaluation time
     results = {}
 
+    # Initialize FID metric
+    fid_metric = FID.FrechetInceptionDistance(
+        feature=64, normalize=True, reset_real_features=False
+    ).to(device)
+    # Process real images
+    real_batch_size = 100
+    indices = np.random.choice(len(cifar10), 50000, replace=False)
+    real_images = torch.stack([cifar10[i][0] for i in indices]).to(device)
+    print("Processing real images for FID calculation...")
+    for i in range(0, len(real_images), real_batch_size):
+        batch = real_images[i : i + real_batch_size]
+        fid_metric.update(batch, real=True)
+        torch.cuda.empty_cache()
+    # Print and compare the global means
+    print("\n===== Comparing Global Means =====")
+    # Get the FID module's computed mean
+    fid_real_mean = fid_metric.real_features_sum / fid_metric.real_features_num_samples
+    # Get the sampler's global mean
+    sampler_global_mean = torch.from_numpy(sampler.global_fid["mu"]).to(device)
+    print(f"FID module real mean shape: {fid_real_mean.shape}")
+    print(f"Sampler global mean shape: {sampler_global_mean.shape}")
+    # Calculate the difference between the means
+    if fid_real_mean.shape == sampler_global_mean.shape:
+        mean_diff_norm = torch.norm(fid_real_mean - sampler_global_mean).item()
+        print(f"L2 norm of difference between means: {mean_diff_norm:.6f}")
+        # Print the first few elements of each mean for comparison
+        num_elements = min(10, fid_real_mean.shape[0])
+        print(f"\nFirst {num_elements} elements of FID module mean:")
+        print(fid_real_mean[:num_elements].cpu().numpy())
+        print(f"\nFirst {num_elements} elements of sampler global mean:")
+        print(sampler_global_mean[:num_elements].cpu().numpy())
+    else:
+        print(
+            f"WARNING: Mean shapes don't match - FID: {fid_real_mean.shape}, Sampler: {sampler_global_mean.shape}"
+        )
+
     for eval_time in evaluation_times:
         print(f"\n===== Analyzing samples grouped by quality at t={eval_time} =====")
 
@@ -158,23 +194,6 @@ def analyze_early_quality_prediction(
         cifar10 = datasets.CIFAR10(
             root="./data", train=True, download=True, transform=transform
         )
-
-        # Initialize FID metric
-        fid_metric = FID.FrechetInceptionDistance(
-            feature=64, normalize=True, reset_real_features=False
-        ).to(device)
-
-        # Process real images
-        real_batch_size = 100
-        indices = np.random.choice(len(cifar10), 50000, replace=False)
-        real_images = torch.stack([cifar10[i][0] for i in indices]).to(device)
-
-        print("Processing real images for FID calculation...")
-        for i in range(0, len(real_images), real_batch_size):
-            batch = real_images[i : i + real_batch_size]
-            fid_metric.update(batch, real=True)
-            torch.cuda.empty_cache()
-
         # Calculate FID for each quality group
         for group_idx in range(num_groups):
             # Reset FID for fake images
