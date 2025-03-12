@@ -418,6 +418,10 @@ class MCTSFlowSampler:
         if not self.has_global_stats:
             raise ValueError("Global statistics not available")
 
+        # Ensure images are on the same device as the inception model
+        inception_device = next(self.inception.parameters()).device
+        images = images.to(inception_device)
+
         # Extract features for all images in one batch
         features = self.extract_inception_features(images)
 
