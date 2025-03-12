@@ -24,25 +24,24 @@ def analyze_early_quality_prediction(
     This function generates samples with regular flow matching, measuring the global mean
     difference at specified timesteps. It then groups samples by their quality at each
     timestep and evaluates the final FID of each group.
-
-    Args:
-        sampler: The MCTSFlowSampler instance
-        device: The device to run computations on
-        num_samples_per_class: Number of samples to generate per class
-        evaluation_times: List of timesteps at which to evaluate quality
-        num_groups: Number of quality groups to divide samples into
-
-    Returns:
-        Dictionary containing results for analysis
     """
+    print("\n===== Early Quality Prediction Analysis =====")
+
+    # Check if global stats are available
+    if not hasattr(sampler, "has_global_stats") or not sampler.has_global_stats:
+        raise ValueError(
+            "Global statistics not available in the sampler. Please initialize with global statistics."
+        )
+
     sampler.flow_model.eval()
 
     # Total number of samples
     total_samples = num_samples_per_class * sampler.num_classes
 
-    # Store all samples and their metrics
+    # Store all samples and their metrics - use rounded evaluation times as keys
+    rounded_eval_times = [round(t, 1) for t in evaluation_times]
+    quality_metrics = {t: [] for t in rounded_eval_times}
     all_samples = []
-    quality_metrics = {t: [] for t in evaluation_times}
     class_labels = []
 
     # Generate samples
@@ -74,20 +73,19 @@ def analyze_early_quality_prediction(
                     t_batch = torch.full((1,), t, device=device)
                     velocity = sampler.flow_model(t_batch, x, label)
                     x = x + velocity * base_dt
-                    t += base_dt
 
-                    # Evaluate quality at specified timesteps
-                    if (
-                        abs(t - evaluation_times[0]) < 1e-6
-                        or abs(t - evaluation_times[1]) < 1e-6
-                        or abs(t - evaluation_times[2]) < 1e-6
-                        or abs(t - evaluation_times[3]) < 1e-6
-                    ):
+                    # Round the time to 1 decimal place for comparison
+                    rounded_t = round(t + base_dt, 1)
+
+                    # Check if this is an evaluation time
+                    if rounded_t in rounded_eval_times:
                         # Calculate global mean difference
                         mean_diff = sampler.batch_compute_global_mean_difference(
                             x
                         ).item()
-                        quality_metrics[t].append(mean_diff)
+                        quality_metrics[rounded_t].append(mean_diff)
+
+                    t += base_dt
 
                 # Store the final sample
                 all_samples.append(x.cpu())
