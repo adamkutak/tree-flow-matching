@@ -502,13 +502,13 @@ def analyze_mahalanobis_rank_consistency(
                         x.cpu()
                     )  # Store for real FID calculation
 
-    # Calculate statistics for final FID change scores
     rank_avg_fid = {}
     rank_std_fid = {}
     rank_avg_mahalanobis = {}
     rank_std_mahalanobis = {}
 
     distribution_mahalanobis = {}
+    global_distribution_mahalanobis = {}
 
     for rank in range(1, num_branches + 1):
         fid_scores = rank_results[rank]["fid_scores"]
@@ -559,11 +559,19 @@ def analyze_mahalanobis_rank_consistency(
         else:
             distribution_mahalanobis[rank] = float("nan")
 
+        # Calculate global distribution Mahalanobis distance
+        all_samples = torch.cat(rank_results[rank]["final_samples"], dim=0)
+        global_dist_mahalanobis = (
+            sampler.compute_global_distribution_mahalanobis_distance(all_samples).item()
+        )
+        global_distribution_mahalanobis[rank] = global_dist_mahalanobis
+
     # Calculate correlation between rank and average final FID change
     ranks = list(range(1, num_branches + 1))
     avg_fids = [rank_avg_fid[r] for r in ranks]
     avg_mahalanobis = [rank_avg_mahalanobis[r] for r in ranks]
     dist_mahalanobis = [distribution_mahalanobis[r] for r in ranks]
+    global_dist_mahalanobis = [global_distribution_mahalanobis[r] for r in ranks]
 
     if len(ranks) > 1:
         rank_fid_correlation, p_value = spearmanr(ranks, avg_fids)
@@ -573,12 +581,18 @@ def analyze_mahalanobis_rank_consistency(
         dist_mahalanobis_correlation, dist_mahalanobis_p_value = spearmanr(
             ranks, dist_mahalanobis
         )
+        global_dist_mahalanobis_correlation, global_dist_mahalanobis_p_value = (
+            spearmanr(ranks, global_dist_mahalanobis)
+        )
     else:
         rank_fid_correlation, p_value = float("nan"), float("nan")
         rank_mahalanobis_correlation, mahalanobis_p_value = float("nan"), float("nan")
         dist_mahalanobis_correlation, dist_mahalanobis_p_value = float("nan"), float(
             "nan"
         )
+        global_dist_mahalanobis_correlation, global_dist_mahalanobis_p_value = float(
+            "nan"
+        ), float("nan")
 
     # Print results for final FID change
     print("\n===== Final FID Change Rank Consistency Results =====")
@@ -608,6 +622,15 @@ def analyze_mahalanobis_rank_consistency(
     print("\nDistribution Mahalanobis distance by rank:")
     for rank in range(1, num_branches + 1):
         print(f"  Rank {rank}: {distribution_mahalanobis[rank]:.4f}")
+
+    # Print results for global distribution-level Mahalanobis distance
+    print("\n===== Global Distribution-Level Mahalanobis Distance Results =====")
+    print(
+        f"Correlation between rank and global distribution Mahalanobis distance: {global_dist_mahalanobis_correlation:.4f} (p-value: {global_dist_mahalanobis_p_value:.4f})"
+    )
+    print("\nGlobal distribution Mahalanobis distance by rank:")
+    for rank in range(1, num_branches + 1):
+        print(f"  Rank {rank}: {global_distribution_mahalanobis[rank]:.4f}")
 
     # Plot results for final FID change
     plt.figure(figsize=(10, 6))
@@ -1303,9 +1326,9 @@ def main():
     mahalanobis_analysis_results = analyze_mahalanobis_rank_consistency(
         sampler=sampler,
         device=device,
-        num_samples=250,
-        num_branches=8,
-        dt_std=0.25,
+        num_samples=100,
+        num_branches=4,
+        dt_std=0.1,
     )
 
 

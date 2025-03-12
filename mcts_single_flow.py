@@ -338,6 +338,67 @@ class MCTSFlowSampler:
 
         return torch.tensor(mahalanobis_distances, device=images.device)
 
+    def compute_distribution_mahalanobis_distance(self, images, class_indices):
+        """
+        Compute Mahalanobis distance for a distribution of images.
+
+        This calculates how far the distribution of generated samples is from
+        the reference distribution, rather than averaging individual distances.
+
+        Args:
+            images: Tensor of shape [batch_size, C, H, W]
+            class_indices: Tensor or list of class indices for each image
+
+        Returns:
+            Tensor of negative Mahalanobis distances (higher is better)
+        """
+        # Extract features for all images in one batch
+        features = self.extract_inception_features(images)
+
+        # Convert class_indices to list if it's a tensor
+        if torch.is_tensor(class_indices):
+            class_indices = class_indices.cpu().tolist()
+
+        # Group features by class
+        class_features = {}
+        for feature, class_idx in zip(features, class_indices):
+            if class_idx not in class_features:
+                class_features[class_idx] = []
+            class_features[class_idx].append(feature)
+
+        # Calculate distribution Mahalanobis distance for each class
+        distribution_distances = []
+
+        for class_idx, feat_list in class_features.items():
+            # Calculate mean of generated features for this class
+            features_tensor = torch.stack(feat_list)
+            generated_mean = torch.mean(features_tensor, dim=0)
+
+            # Get reference statistics for this class
+            if class_idx in self.class_statistics:
+                ref_mean = self.class_statistics[class_idx]["mean"]
+                ref_cov_inv = self.class_statistics[class_idx]["cov_inv"]
+
+                # Calculate Mahalanobis distance between generated mean and reference distribution
+                diff = generated_mean - ref_mean
+                mahalanobis_dist = torch.sqrt(
+                    torch.dot(torch.matmul(diff, ref_cov_inv), diff)
+                )
+
+                # Return negative distance so higher values are better (consistent with FID change)
+                distribution_distances.append(-mahalanobis_dist.item())
+            else:
+                # If no statistics for this class, use a placeholder value
+                distribution_distances.append(float("-inf"))
+
+        # Average the distances across classes
+        if distribution_distances:
+            avg_distance = sum(distribution_distances) / len(distribution_distances)
+        else:
+            avg_distance = float("-inf")
+
+        return torch.tensor(avg_distance, device=images.device)
+
     def batch_compute_global_mahalanobis_distance(self, images):
         """
         Compute global Mahalanobis distance for a batch of images.
