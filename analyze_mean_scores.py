@@ -361,7 +361,7 @@ def main():
     early_quality_results = analyze_early_quality_prediction(
         sampler=sampler,
         device=device,
-        num_samples_per_class=10,
+        num_samples_per_class=20,
         evaluation_times=[0.5, 0.7, 0.9, 1.0],
         num_groups=4,
     )
