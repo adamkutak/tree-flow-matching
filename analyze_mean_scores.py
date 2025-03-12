@@ -163,7 +163,7 @@ def analyze_early_quality_prediction(
 
         # Process real images
         real_batch_size = 100
-        indices = np.random.choice(len(cifar10), 10000, replace=False)
+        indices = np.random.choice(len(cifar10), 50000, replace=False)
         real_images = torch.stack([cifar10[i][0] for i in indices]).to(device)
 
         print("Processing real images for FID calculation...")
@@ -340,7 +340,7 @@ def main():
     early_quality_results = analyze_early_quality_prediction(
         sampler=sampler,
         device=device,
-        num_samples_per_class=200,
+        num_samples_per_class=500,
         evaluation_times=[0.5, 0.7, 0.9, 1.0],
         num_groups=4,
     )
