@@ -83,8 +83,8 @@ def analyze_early_quality_prediction(
                         class_idx_tensor = torch.full(
                             (x.size(0),), class_idx, device=device
                         )
-                        mean_diff = sampler.batch_compute_mean_difference(
-                            x, class_idx_tensor
+                        mean_diff = sampler.batch_compute_global_mean_difference(
+                            x
                         ).item()
                         quality_metrics[rounded_t].append(mean_diff)
 
