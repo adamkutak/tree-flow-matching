@@ -52,7 +52,6 @@ def compute_cifar10_statistics(feature_dim=64, pca_dim=None):
     # Transform for CIFAR-10
     transform = transforms.Compose(
         [
-            transforms.Resize((299, 299)),
             transforms.ToTensor(),
         ]
     )
