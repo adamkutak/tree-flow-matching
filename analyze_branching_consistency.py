@@ -457,7 +457,7 @@ def analyze_mahalanobis_rank_consistency(
 
                             # Calculate intermediate Mahalanobis distances for all aligned branches
                             mahalanobis_distances = (
-                                sampler.batch_compute_mahalanobis_distance(
+                                sampler.batch_compute_mean_difference(
                                     aligned_samples, branch_labels
                                 )
                             )
@@ -490,7 +490,7 @@ def analyze_mahalanobis_rank_consistency(
                     fid_score = sampler.batch_compute_fid_change(x, label).item()
 
                     # Calculate Mahalanobis distance for the final sample
-                    mahalanobis_score = sampler.batch_compute_mahalanobis_distance(
+                    mahalanobis_score = sampler.batch_compute_mean_difference(
                         x, label
                     ).item()
 
@@ -987,7 +987,7 @@ def analyze_mahalanobis_rank_consistency_global(
 
                             # Calculate intermediate global Mahalanobis distances for all aligned branches
                             mahalanobis_distances = (
-                                sampler.batch_compute_global_mahalanobis_distance(
+                                sampler.batch_compute_global_mean_difference(
                                     aligned_samples
                                 )
                             )
@@ -1020,9 +1020,9 @@ def analyze_mahalanobis_rank_consistency_global(
                     fid_score = sampler.batch_compute_global_fid_change(x).item()
 
                     # Calculate global Mahalanobis distance for the final sample
-                    mahalanobis_score = (
-                        sampler.batch_compute_global_mahalanobis_distance(x).item()
-                    )
+                    mahalanobis_score = sampler.batch_compute_global_mean_difference(
+                        x
+                    ).item()
 
                     # Store results
                     rank_results[rank]["fid_scores"].append(fid_score)
