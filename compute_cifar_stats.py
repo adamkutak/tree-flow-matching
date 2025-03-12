@@ -40,7 +40,7 @@ def compute_cifar10_statistics(feature_dim=64, pca_dim=None):
         print("Ignoring PCA dimension for non-2048 feature extraction.")
         use_pca = False
 
-    # Load inception model from torchmetrics (same as used in FID calculation)
+    # Load inception model from torchmetrics implementation
     inception = NoTrainInceptionV3(
         name="inception-v3-compat", features_list=[str(feature_dim)]
     )
@@ -74,10 +74,9 @@ def compute_cifar10_statistics(feature_dim=64, pca_dim=None):
     with torch.no_grad():
         for images, labels in tqdm(dataloader):
             images = images.to(device)
-            breakpoint()
-            # Scale images to [0, 1] range as expected by the NoTrainInceptionV3
-            if images.max() > 1.0:
-                images = images / 255.0
+            # Scale images to [0, 255] range as uint8 as expected by torchmetrics implementation
+            # This matches how FID.FrechetInceptionDistance processes images when normalize=True
+            images = (images * 255).byte()
 
             # Get features
             features = inception(images)
