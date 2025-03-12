@@ -304,3 +304,7 @@ def main():
         evaluation_times=[0.5, 0.7, 0.9, 1.0],
         num_groups=4,
     )
+
+
+if __name__ == "__main__":
+    main()
