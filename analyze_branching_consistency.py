@@ -1016,6 +1016,7 @@ def analyze_mahalanobis_rank_consistency_global(
                         # Add to trajectory
                         trajectory.append(x.cpu().numpy())
 
+                    breakpoint()
                     # Calculate global FID change for the final sample
                     fid_score = sampler.batch_compute_global_fid_change(x).item()
 
