@@ -352,6 +352,9 @@ class MCTSFlowSampler:
         Returns:
             Tensor of negative Mahalanobis distances (higher is better)
         """
+        inception_device = next(self.inception.parameters()).device
+        images = images.to(inception_device)
+
         # Extract features for all images in one batch
         features = self.extract_inception_features(images)
 
@@ -415,12 +418,40 @@ class MCTSFlowSampler:
         if not self.has_global_stats:
             raise ValueError("Global statistics not available")
 
-        # Ensure images are on the same device as the inception model
-        inception_device = next(self.inception.parameters()).device
-        images = images.to(inception_device)
+        # Extract features for all images in one batch
+        features = self.extract_inception_features(images)
+
+        # Calculate mean of generated features
+        features_tensor = torch.stack(features)
+        generated_mean = torch.mean(features_tensor, dim=0)
+
+        # Get global reference statistics
+        ref_mean = self.global_mean
+        ref_cov_inv = self.global_cov_inv
+
+        # Calculate Mahalanobis distance between generated mean and reference distribution
+        diff = generated_mean - ref_mean
+        mahalanobis_dist = torch.sqrt(torch.dot(torch.matmul(diff, ref_cov_inv), diff))
+
+        # Return negative distance so higher values are better (consistent with FID change)
+        return torch.tensor(-mahalanobis_dist.item(), device=images.device)
+
+    def batch_compute_global_mahalanobis_distance(self, images):
+        """
+        Compute global Mahalanobis distance for a batch of images.
+
+        Args:
+            images: Tensor of shape [batch_size, C, H, W]
+
+        Returns:
+            Tensor of negative Mahalanobis distances (higher is better)
+        """
+        if not self.has_global_stats:
+            raise ValueError("Global statistics not available")
 
         # Extract features for all images in one batch
         features = self.extract_inception_features(images)
+
         # Calculate Mahalanobis distances for each image
         mahalanobis_distances = []
 
