@@ -21,6 +21,7 @@ import pickle
 from scipy.linalg import sqrtm
 from pytorch_fid import fid_score
 from pytorch_fid.inception import InceptionV3
+from torchmetrics.image.fid import NoTrainInceptionV3
 
 
 class TrajectoryBuffer:
@@ -185,7 +186,9 @@ class MCTSFlowSampler:
             else:
                 print("No pre-trained models found, starting from scratch")
 
-        self.inception = InceptionV3([inception_layer], normalize_input=True).to(device)
+        self.inception = NoTrainInceptionV3(
+            name="inception-v3-compat", features_list=[str(inception_layer)]
+        ).to(device)
         self.inception.eval()
 
         # Map inception layer to feature dimension
@@ -674,21 +677,14 @@ class MCTSFlowSampler:
             print(f"Global baseline FID: {global_baseline_fid:.4f}")
 
     def extract_inception_features(self, images):
-        """Extract inception features using pytorch-fid with optional PCA reduction."""
-        images = F.interpolate(
-            images, size=(299, 299), mode="bilinear", align_corners=False
-        )
-
-        # Move images to [-1, 1] range as expected by inception
-        images = images * 2 - 1
+        """Extract inception features using torchmetrics InceptionV3 with optional PCA reduction."""
+        # Convert to byte tensor in range [0, 255] as expected by torchmetrics implementation
+        images = (images * 255).byte()
 
         with torch.no_grad():
-            features = self.inception(images)[0]
-            # Global average pooling if features have spatial dimensions
-            if len(features.shape) > 2:
-                features = features.mean([2, 3])
+            features = self.inception(images)
 
-            # Apply PCA reduction if using layer 3
+            # Apply PCA reduction if configured
             if self.use_pca:
                 features_np = features.cpu().numpy()
                 features_reduced = self.pca.transform(features_np)
