@@ -186,13 +186,13 @@ class MCTSFlowSampler:
             else:
                 print("No pre-trained models found, starting from scratch")
 
+        layer_to_dim = {0: 64, 1: 192, 2: 768, 3: 2048}
+
         self.inception = NoTrainInceptionV3(
-            name="inception-v3-compat", features_list=[str(inception_layer)]
+            name="inception-v3-compat",
+            features_list=[str(layer_to_dim[inception_layer])],
         ).to(device)
         self.inception.eval()
-
-        # Map inception layer to feature dimension
-        layer_to_dim = {0: 64, 1: 192, 2: 768, 3: 2048}
 
         if inception_layer not in layer_to_dim:
             raise ValueError(
