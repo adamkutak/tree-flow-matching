@@ -316,30 +316,6 @@ def analyze_early_quality_prediction(
             "mahalanobis_p_value": mahalanobis_p_value,
         }
 
-    # Compare correlations across different evaluation times
-    eval_times_list = list(results.keys())
-    correlations = [results[t]["correlation"] for t in eval_times_list]
-
-    plt.figure(figsize=(10, 6))
-    plt.plot(eval_times_list, correlations, "o-", linewidth=2)
-    plt.xlabel("Evaluation Time")
-    plt.ylabel("Correlation with Final FID")
-    plt.title("Predictive Power of Quality Metric at Different Times")
-    plt.grid(True)
-    plt.savefig("quality_prediction_correlation_by_time.png")
-    plt.close()
-
-    print("\n===== Summary of Quality Prediction Analysis =====")
-    print("Correlations at different evaluation times:")
-    for t in eval_times_list:
-        print(f"\nt={t:.1f}:")
-        print(
-            f"  FID correlation: {results[t]['fid_correlation']:.4f} (p-value: {results[t]['fid_p_value']:.4f})"
-        )
-        print(
-            f"  Mahalanobis correlation: {results[t]['mahalanobis_correlation']:.4f} (p-value: {results[t]['mahalanobis_p_value']:.4f})"
-        )
-
     return results
 
 
