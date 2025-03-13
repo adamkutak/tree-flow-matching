@@ -208,10 +208,19 @@ def analyze_early_quality_prediction(
             ]
             avg_metric = np.mean(group_metrics)
 
-            # Process in batches
+            # Calculate global distributional Mahalanobis distance for the entire group
+            global_mahalanobis = (
+                sampler.compute_global_distribution_mahalanobis_distance(
+                    group_samples_tensor.to(device)
+                ).item()
+            )
+
+            # Process in batches for FID
             batch_size = 64
             print(
-                f"Processing quality group {group_idx+1}/{num_groups} (avg metric: {avg_metric:.4f})..."
+                f"Processing quality group {group_idx+1}/{num_groups} "
+                f"(avg metric: {avg_metric:.4f}, "
+                f"global Mahalanobis: {global_mahalanobis:.4f})..."
             )
 
             for i in range(0, len(group_samples_tensor), batch_size):
@@ -259,59 +268,52 @@ def analyze_early_quality_prediction(
                 real_cov + fake_cov - 2 * sqrt_cov_product_tensor
             ).item()
 
-            # Store components along with the FID score
             group_fid_scores[group_idx] = {
                 "fid": fid_score,
                 "mean_component": mean_diff.item(),
                 "cov_component": cov_component,
                 "avg_metric": avg_metric,
+                "global_mahalanobis": global_mahalanobis,
                 "num_samples": len(group_samples),
             }
 
             print(
-                f"  Group {group_idx+1} (top {(group_idx+1)*100/num_groups:.0f}%): FID = {fid_score:.4f}, "
-                f"Mean Component = {mean_diff.item():.4f}, Covariance Component = {cov_component:.4f}"
+                f"  Group {group_idx+1} (top {(group_idx+1)*100/num_groups:.0f}%): "
+                f"FID = {fid_score:.4f}, "
+                f"Mean Component = {mean_diff.item():.4f}, "
+                f"Covariance Component = {cov_component:.4f}, "
+                f"Global Mahalanobis = {global_mahalanobis:.4f}"
             )
 
         # Calculate correlation between group quality and FID
         group_metrics = [group_fid_scores[g]["avg_metric"] for g in range(num_groups)]
         group_fids = [group_fid_scores[g]["fid"] for g in range(num_groups)]
+        group_mahalanobis = [
+            group_fid_scores[g]["global_mahalanobis"] for g in range(num_groups)
+        ]
 
         if len(group_metrics) > 1:
-            correlation, p_value = spearmanr(group_metrics, group_fids)
+            fid_correlation, fid_p_value = spearmanr(group_metrics, group_fids)
+            mahalanobis_correlation, mahalanobis_p_value = spearmanr(
+                group_metrics, group_mahalanobis
+            )
         else:
-            correlation, p_value = float("nan"), float("nan")
+            fid_correlation = mahalanobis_correlation = float("nan")
+            fid_p_value = mahalanobis_p_value = float("nan")
 
         print(
-            f"\nCorrelation between t={eval_time} quality metric and final FID: {correlation:.4f} (p-value: {p_value:.4f})"
+            f"\nCorrelations at t={eval_time}:"
+            f"\n  Quality metric vs FID: {fid_correlation:.4f} (p-value: {fid_p_value:.4f})"
+            f"\n  Quality metric vs Mahalanobis: {mahalanobis_correlation:.4f} (p-value: {mahalanobis_p_value:.4f})"
         )
-
-        # Plot results
-        plt.figure(figsize=(10, 6))
-        plt.scatter(group_metrics, group_fids, s=100)
-
-        # Add group labels
-        for i in range(num_groups):
-            plt.annotate(
-                f"Group {i+1}",
-                (group_metrics[i], group_fids[i]),
-                textcoords="offset points",
-                xytext=(0, 10),
-                ha="center",
-            )
-
-        plt.xlabel(f"Average Quality Metric at t={eval_time} (higher is better)")
-        plt.ylabel("FID Score (lower is better)")
-        plt.title(f"Relationship Between t={eval_time} Quality and Final FID")
-        plt.grid(True)
-        plt.savefig(f"quality_prediction_t{eval_time:.1f}.png")
-        plt.close()
 
         # Store results
         results[eval_time] = {
             "group_fid_scores": group_fid_scores,
-            "correlation": correlation,
-            "p_value": p_value,
+            "fid_correlation": fid_correlation,
+            "fid_p_value": fid_p_value,
+            "mahalanobis_correlation": mahalanobis_correlation,
+            "mahalanobis_p_value": mahalanobis_p_value,
         }
 
     # Compare correlations across different evaluation times
@@ -328,10 +330,14 @@ def analyze_early_quality_prediction(
     plt.close()
 
     print("\n===== Summary of Quality Prediction Analysis =====")
-    print("Correlation between quality metric and final FID at different times:")
+    print("Correlations at different evaluation times:")
     for t in eval_times_list:
+        print(f"\nt={t:.1f}:")
         print(
-            f"  t={t:.1f}: {results[t]['correlation']:.4f} (p-value: {results[t]['p_value']:.4f})"
+            f"  FID correlation: {results[t]['fid_correlation']:.4f} (p-value: {results[t]['fid_p_value']:.4f})"
+        )
+        print(
+            f"  Mahalanobis correlation: {results[t]['mahalanobis_correlation']:.4f} (p-value: {results[t]['mahalanobis_p_value']:.4f})"
         )
 
     return results
