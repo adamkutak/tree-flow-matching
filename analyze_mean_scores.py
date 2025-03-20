@@ -319,6 +319,161 @@ def analyze_early_quality_prediction(
     return results
 
 
+def analyze_fid_progression(
+    sampler,
+    device,
+    num_batches=20,
+    batch_size=100,
+    evaluation_times=[0.5, 0.7, 0.9, 1.0],
+):
+    """
+    Analyze how intermediate FID scores correlate with final FID scores.
+
+    Args:
+        sampler: The flow sampler instance
+        device: The device to run computations on
+        num_batches: Number of batches to generate and analyze
+        batch_size: Size of each batch
+        evaluation_times: List of times at which to evaluate metrics
+
+    Returns:
+        Dictionary containing correlation results and metrics for each batch
+    """
+    print("\n===== FID Progression Analysis =====")
+
+    # Initialize FID metric
+    fid_metric = FID.FrechetInceptionDistance(
+        feature=64, normalize=True, reset_real_features=False
+    ).to(device)
+
+    # Setup CIFAR-10 dataset and process real images (similar to previous function)
+    transform = transforms.Compose(
+        [
+            transforms.ToTensor(),
+            transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
+        ]
+    )
+    cifar10 = datasets.CIFAR10(
+        root="./data", train=True, download=True, transform=transform
+    )
+
+    # Process real images
+    print("Processing real images for FID calculation...")
+    indices = np.random.choice(len(cifar10), 50000, replace=False)
+    real_images = torch.stack([cifar10[i][0] for i in indices]).to(device)
+    for i in range(0, len(real_images), batch_size):
+        batch = real_images[i : i + batch_size]
+        fid_metric.update(batch, real=True)
+        torch.cuda.empty_cache()
+
+    # Store metrics for each batch
+    batch_metrics = {t: [] for t in evaluation_times}
+
+    # Generate batches and compute metrics
+    with torch.no_grad():
+        for batch_idx in range(num_batches):
+            print(f"\nProcessing batch {batch_idx + 1}/{num_batches}")
+
+            # Initialize batch with random noise
+            x = torch.randn(
+                batch_size,
+                sampler.channels,
+                sampler.image_size,
+                sampler.image_size,
+                device=device,
+            )
+            labels = torch.randint(0, sampler.num_classes, (batch_size,), device=device)
+
+            t = 0.0
+            base_dt = 1.0 / sampler.num_timesteps
+
+            batch_results = {t: {} for t in evaluation_times}
+
+            while t < 1.0 - 1e-6:
+                t_batch = torch.full((batch_size,), t, device=device)
+                velocity = sampler.flow_model(t_batch, x, labels)
+                x = x + velocity * base_dt
+
+                rounded_t = round(t + base_dt, 1)
+                if rounded_t in evaluation_times:
+                    # Reset FID metric for fake images
+                    fid_metric.reset()
+
+                    # Compute FID
+                    fid_metric.update(x, real=False)
+                    fid_score = fid_metric.compute().item()
+
+                    # Compute global Mahalanobis distance
+                    mahalanobis_dist = (
+                        sampler.compute_global_distribution_mahalanobis_distance(
+                            x
+                        ).item()
+                    )
+
+                    # Compute mean difference
+                    mean_diff = sampler.batch_compute_global_mean_difference(x).item()
+
+                    batch_results[rounded_t] = {
+                        "fid": fid_score,
+                        "mahalanobis": mahalanobis_dist,
+                        "mean_diff": mean_diff,
+                    }
+
+                    print(
+                        f"t={rounded_t}: FID={fid_score:.4f}, "
+                        f"Mahalanobis={mahalanobis_dist:.4f}, "
+                        f"Mean_diff={mean_diff:.4f}"
+                    )
+
+                t += base_dt
+
+            # Store metrics for this batch
+            for eval_time in evaluation_times:
+                batch_metrics[eval_time].append(batch_results[eval_time])
+
+    # Compute correlations
+    results = {}
+    final_fids = [metrics["fid"] for metrics in batch_metrics[1.0]]
+
+    for t in evaluation_times[
+        :-1
+    ]:  # Exclude t=1.0 as we don't need to correlate with itself
+        early_fids = [metrics["fid"] for metrics in batch_metrics[t]]
+        early_mahalanobis = [metrics["mahalanobis"] for metrics in batch_metrics[t]]
+        early_mean_diffs = [metrics["mean_diff"] for metrics in batch_metrics[t]]
+
+        fid_correlation, fid_p_value = spearmanr(early_fids, final_fids)
+        mahalanobis_correlation, mahalanobis_p_value = spearmanr(
+            early_mahalanobis, final_fids
+        )
+        mean_diff_correlation, mean_diff_p_value = spearmanr(
+            early_mean_diffs, final_fids
+        )
+
+        print(f"\nCorrelations at t={t} with final FID:")
+        print(
+            f"  Early FID correlation: {fid_correlation:.4f} (p-value: {fid_p_value:.4f})"
+        )
+        print(
+            f"  Mahalanobis correlation: {mahalanobis_correlation:.4f} (p-value: {mahalanobis_p_value:.4f})"
+        )
+        print(
+            f"  Mean diff correlation: {mean_diff_correlation:.4f} (p-value: {mean_diff_p_value:.4f})"
+        )
+
+        results[t] = {
+            "fid_correlation": fid_correlation,
+            "fid_p_value": fid_p_value,
+            "mahalanobis_correlation": mahalanobis_correlation,
+            "mahalanobis_p_value": mahalanobis_p_value,
+            "mean_diff_correlation": mean_diff_correlation,
+            "mean_diff_p_value": mean_diff_p_value,
+            "batch_metrics": batch_metrics[t],
+        }
+
+    return results
+
+
 def main():
     # Use the specified GPU device
     device = torch.device("cuda:1" if torch.cuda.is_available() else "cpu")
@@ -340,12 +495,20 @@ def main():
     )
 
     # Run early quality prediction analysis
-    early_quality_results = analyze_early_quality_prediction(
+    # early_quality_results = analyze_early_quality_prediction(
+    #     sampler=sampler,
+    #     device=device,
+    #     num_samples_per_class=100,
+    #     evaluation_times=[0.1, 0.3, 0.5, 0.7, 0.9, 1.0],
+    #     num_groups=4,
+    # )
+
+    fid_progression_results = analyze_fid_progression(
         sampler=sampler,
         device=device,
-        num_samples_per_class=100,
-        evaluation_times=[0.5, 0.7, 0.9, 1.0],
-        num_groups=4,
+        num_batches=8,
+        batch_size=128,
+        evaluation_times=[0.1, 0.3, 0.5, 0.7, 0.9, 1.0],
     )
 
 
