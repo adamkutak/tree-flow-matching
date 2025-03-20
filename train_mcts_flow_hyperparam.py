@@ -114,7 +114,7 @@ def main():
     branch_keep_pairs = [(1, 1), (4, 1), (8, 4), (16, 4)]
     selectors = ["fid", "mahalanobis", "mean"]
     global_options = [False, True]
-    branch_start_times = [0.3, 0.5, 0.7, 0.9]
+    branch_start_times = [0.1, 0.3, 0.5, 0.7, 0.9]
 
     # Initialize metrics
     fid = FID.FrechetInceptionDistance(normalize=True, reset_real_features=False).to(
