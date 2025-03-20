@@ -306,12 +306,15 @@ def calculate_metrics(
 
         # Generate full batches
         for _ in range(num_batches):
-            sample = sampler.batch_sample_wdt_intermediate_fid(
+            sample = sampler.batch_sample_wdt_selector(
                 class_label=class_label,
                 batch_size=generation_batch_size,
                 num_branches=num_branches,
                 num_keep=num_keep,
                 dt_std=0.1,
+                selector="mahalanobis",
+                use_global=False,
+                branch_start_time=0.3,
             )
             generated_samples.extend(sample.cpu())
 
