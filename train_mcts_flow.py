@@ -311,7 +311,7 @@ def calculate_metrics(
                 batch_size=generation_batch_size,
                 num_branches=num_branches,
                 num_keep=num_keep,
-                dt_std=0.2,
+                dt_std=0.1,
             )
             generated_samples.extend(sample.cpu())
 
@@ -366,13 +366,13 @@ def main():
         flow_model="large_flow_model.pt",
         value_model=None,
         num_channels=256,
-        inception_layer=0,
+        inception_layer=3,
     )
 
     # Training configuration
     n_epochs_per_cycle = 1
     n_training_cycles = 100
-    branch_keep_pairs = [(1, 1), (4, 1), (8, 1), (16, 1)]
+    branch_keep_pairs = [(1, 1), (4, 1), (8, 1)]
 
     # Initialize metrics
     fid = FID.FrechetInceptionDistance(normalize=True, reset_real_features=False).to(
@@ -413,7 +413,7 @@ def main():
                 num_keep,
                 device,
                 sigma=0,
-                n_samples=2000,
+                n_samples=500,
                 fid=fid,
             )
             print(f"Cycle {cycle + 1} - (branches={num_branches}, keep={num_keep}):")
