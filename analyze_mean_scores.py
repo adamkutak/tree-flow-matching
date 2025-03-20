@@ -329,7 +329,7 @@ def analyze_fid_progression(
     evaluation_times=[0.5, 0.7, 0.9, 1.0],
 ):
     """
-    Analyze how intermediate FID scores correlate with final FID scores.
+    Analyze how intermediate quality metrics correlate with final FID scores.
 
     Args:
         sampler: The flow sampler instance
@@ -341,14 +341,14 @@ def analyze_fid_progression(
     Returns:
         Dictionary containing correlation results and metrics for each batch
     """
-    print("\n===== FID Progression Analysis =====")
+    print("\n===== Quality Metrics Progression Analysis =====")
 
     # Initialize FID metric
     fid_metric = FID.FrechetInceptionDistance(
         feature=2048, normalize=True, reset_real_features=False
     ).to(device)
 
-    # Setup CIFAR-10 dataset and process real images (similar to previous function)
+    # Setup CIFAR-10 dataset and process real images
     transform = transforms.Compose(
         [
             transforms.ToTensor(),
@@ -370,6 +370,7 @@ def analyze_fid_progression(
 
     # Store metrics for each batch
     batch_metrics = {t: [] for t in evaluation_times}
+    final_samples = []
 
     # Generate batches and compute metrics
     with torch.no_grad():
@@ -398,13 +399,6 @@ def analyze_fid_progression(
 
                 rounded_t = round(t + base_dt, 1)
                 if rounded_t in evaluation_times:
-                    # Reset FID metric for fake images
-                    fid_metric.reset()
-
-                    # Compute FID
-                    fid_metric.update(x, real=False)
-                    fid_score = fid_metric.compute().item()
-
                     # Compute global Mahalanobis distance
                     mahalanobis_dist = (
                         sampler.compute_global_distribution_mahalanobis_distance(
@@ -418,16 +412,17 @@ def analyze_fid_progression(
                     )
 
                     batch_results[rounded_t] = {
-                        "fid": fid_score,
                         "mahalanobis": mahalanobis_dist,
                         "mean_diff": mean_diff,
                     }
 
                     print(
-                        f"t={rounded_t}: FID={fid_score:.4f}, "
-                        f"Mahalanobis={mahalanobis_dist:.4f}, "
-                        f"Mean_diff={mean_diff:.4f}"
+                        f"t={rounded_t}: Mahalanobis={mahalanobis_dist:.4f}, Mean_diff={mean_diff:.4f}"
                     )
+
+                    # Store final samples for FID calculation
+                    if rounded_t == 1.0:
+                        final_samples.append(x)
 
                 t += base_dt
 
@@ -435,18 +430,25 @@ def analyze_fid_progression(
             for eval_time in evaluation_times:
                 batch_metrics[eval_time].append(batch_results[eval_time])
 
+    # Calculate final FID scores for all batches
+    print("\nCalculating final FID scores...")
+    final_fids = []
+    final_samples_tensor = torch.cat(final_samples, dim=0)
+
+    # Process in batches for FID calculation
+    fid_metric.reset()
+    for i in range(0, len(final_samples_tensor), batch_size):
+        batch = final_samples_tensor[i : i + batch_size]
+        fid_metric.update(batch, real=False)
+    final_fid = fid_metric.compute().item()
+
     # Compute correlations
     results = {}
-    final_fids = [metrics["fid"] for metrics in batch_metrics[1.0]]
 
-    for t in evaluation_times[
-        :-1
-    ]:  # Exclude t=1.0 as we don't need to correlate with itself
-        early_fids = [metrics["fid"] for metrics in batch_metrics[t]]
+    for t in evaluation_times[:-1]:  # Exclude t=1.0
         early_mahalanobis = [metrics["mahalanobis"] for metrics in batch_metrics[t]]
         early_mean_diffs = [metrics["mean_diff"] for metrics in batch_metrics[t]]
 
-        fid_correlation, fid_p_value = spearmanr(early_fids, final_fids)
         mahalanobis_correlation, mahalanobis_p_value = spearmanr(
             early_mahalanobis, final_fids
         )
@@ -456,9 +458,6 @@ def analyze_fid_progression(
 
         print(f"\nCorrelations at t={t} with final FID:")
         print(
-            f"  Early FID correlation: {fid_correlation:.4f} (p-value: {fid_p_value:.4f})"
-        )
-        print(
             f"  Mahalanobis correlation: {mahalanobis_correlation:.4f} (p-value: {mahalanobis_p_value:.4f})"
         )
         print(
@@ -466,13 +465,12 @@ def analyze_fid_progression(
         )
 
         results[t] = {
-            "fid_correlation": fid_correlation,
-            "fid_p_value": fid_p_value,
             "mahalanobis_correlation": mahalanobis_correlation,
             "mahalanobis_p_value": mahalanobis_p_value,
             "mean_diff_correlation": mean_diff_correlation,
             "mean_diff_p_value": mean_diff_p_value,
             "batch_metrics": batch_metrics[t],
+            "final_fid": final_fid,
         }
 
     return results
@@ -494,7 +492,7 @@ def main():
         flow_model="large_flow_model.pt",
         value_model="value_model.pt",  # Still needed for sampler initialization
         num_channels=256,
-        inception_layer=3,
+        inception_layer=0,
         pca_dim=None,
     )
 
