@@ -799,6 +799,7 @@ class MCTSFlowSampler:
             # The reward is the negative change in FID multiplied by a factor
             fid_changes.append(-100 * (new_fid - baseline_fid))
 
+        breakpoint()
         return torch.tensor(fid_changes, device=images.device)
 
     def batch_compute_global_fid_change(self, images):
