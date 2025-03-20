@@ -312,9 +312,9 @@ def calculate_metrics(
                 num_branches=num_branches,
                 num_keep=num_keep,
                 dt_std=0.1,
-                selector="mahalanobis",
+                selector="fid",
                 use_global=False,
-                branch_start_time=0.3,
+                branch_start_time=0,
             )
             generated_samples.extend(sample.cpu())
 
