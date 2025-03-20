@@ -366,6 +366,7 @@ def main():
         flow_model="large_flow_model.pt",
         value_model=None,
         num_channels=256,
+        inception_layer=0,
     )
 
     # Training configuration
