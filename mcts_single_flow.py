@@ -1429,6 +1429,7 @@ class MCTSFlowSampler:
                     )
 
                 # Calculate intermediate FID scores for all aligned samples
+                print("time:", current_times)
                 fid_scores = self.batch_compute_fid_change(
                     aligned_samples, current_label
                 )
