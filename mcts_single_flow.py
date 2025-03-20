@@ -797,7 +797,7 @@ class MCTSFlowSampler:
 
             baseline_fid = class_fid["baseline_fid"]
             # The reward is the negative change in FID multiplied by a factor
-            fid_changes.append(-(new_fid - baseline_fid) * 100)
+            fid_changes.append((new_fid - baseline_fid) * 100)
 
         return torch.tensor(fid_changes, device=images.device)
 
