@@ -30,7 +30,7 @@ def calculate_metrics(
 
     # Generate samples evenly across all classes
     samples_per_class = n_samples // sampler.num_classes
-    generation_batch_size = 16
+    generation_batch_size = 32
     metric_batch_size = 64
     generated_samples = []
 
