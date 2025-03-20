@@ -1665,12 +1665,9 @@ class MCTSFlowSampler:
                     batch_times = aligned_times[batch_mask]
 
                     # Select top num_keep samples
-                    # top_k_values, top_k_indices = torch.topk(
-                    #     batch_scores, k=min(num_keep, len(batch_scores)), dim=0
-                    # )
-                    num_to_keep = min(num_keep, len(batch_scores))
-                    top_k_indices = torch.randperm(len(batch_scores))[:num_to_keep]
-                    top_k_values = batch_scores[top_k_indices]
+                    top_k_values, top_k_indices = torch.topk(
+                        batch_scores, k=min(num_keep, len(batch_scores)), dim=0
+                    )
 
                     selected_samples.append(batch_samples[top_k_indices])
                     selected_times.append(batch_times[top_k_indices])
