@@ -318,8 +318,6 @@ def calculate_metrics(
             )
             generated_samples.extend(sample.cpu())
 
-    breakpoint()
-
     # Process generated samples in batches for metrics
     generated_tensor = torch.stack(generated_samples)
     for i in range(0, len(generated_tensor), metric_batch_size):
