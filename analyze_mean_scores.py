@@ -490,8 +490,8 @@ def main():
     fid_progression_results = analyze_fid_progression(
         sampler=sampler,
         device=device,
-        num_batches=4,
-        batch_size=16,
+        num_batches=16,
+        batch_size=256,
         evaluation_times=[0.1, 0.3, 0.5, 0.7, 0.9, 1.0],
     )
 
