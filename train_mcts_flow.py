@@ -318,6 +318,8 @@ def calculate_metrics(
             )
             generated_samples.extend(sample.cpu())
 
+    breakpoint()
+
     # Process generated samples in batches for metrics
     generated_tensor = torch.stack(generated_samples)
     for i in range(0, len(generated_tensor), metric_batch_size):
@@ -416,7 +418,7 @@ def main():
                 num_keep,
                 device,
                 sigma=0,
-                n_samples=500,
+                n_samples=100,
                 fid=fid,
             )
             print(f"Cycle {cycle + 1} - (branches={num_branches}, keep={num_keep}):")
