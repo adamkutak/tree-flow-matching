@@ -116,7 +116,7 @@ def analyze_early_quality_prediction(
 
     # Initialize FID metric
     fid_metric = FID.FrechetInceptionDistance(
-        feature=64, normalize=True, reset_real_features=False
+        feature=2048, normalize=True, reset_real_features=False
     ).to(device)
     # Process real images
     real_batch_size = 100
@@ -345,7 +345,7 @@ def analyze_fid_progression(
 
     # Initialize FID metric
     fid_metric = FID.FrechetInceptionDistance(
-        feature=64, normalize=True, reset_real_features=False
+        feature=2048, normalize=True, reset_real_features=False
     ).to(device)
 
     # Setup CIFAR-10 dataset and process real images (similar to previous function)
