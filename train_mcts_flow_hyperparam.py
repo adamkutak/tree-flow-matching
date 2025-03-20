@@ -111,7 +111,7 @@ def main():
     )
 
     # Hyperparameter search space
-    branch_keep_pairs = [(1, 1), (4, 1), (8, 4), (16, 4)]
+    branch_keep_pairs = [(1, 1), (4, 1), (8, 1), (16, 2)]
     selectors = ["fid", "mahalanobis", "mean"]
     global_options = [False, True]
     branch_start_times = [0.1, 0.3, 0.5, 0.7, 0.9]
@@ -138,14 +138,18 @@ def main():
     results = {}
 
     # Hyperparameter search
-    for num_branches, num_keep in branch_keep_pairs:
-        for selector in selectors:
-            for use_global in global_options:
-                for branch_start_time in branch_start_times:
-                    # Skip global option for FID as it's not meaningful
-                    if selector == "fid" and use_global:
-                        continue
+    for selector in selectors:
+        for use_global in global_options:
+            for branch_start_time in branch_start_times:
+                # Skip global option for FID as it's not meaningful
+                if selector == "fid" and use_global:
+                    continue
 
+                print(f"\nTesting configurations for:")
+                print(f"  selector={selector}, global={use_global}")
+                print(f"  branch_start_time={branch_start_time:.1f}")
+
+                for num_branches, num_keep in branch_keep_pairs:
                     config_key = (
                         f"b{num_branches}_k{num_keep}_"
                         f"{selector}_{'global' if use_global else 'class'}_"
@@ -173,13 +177,12 @@ def main():
                             "selector": selector,
                             "global": use_global,
                             "branch_start_time": branch_start_time,
-                            "fid_score": float(
-                                fid_score
-                            ),  # Convert to Python float for JSON
+                            "fid_score": float(fid_score),
                         }
 
-                        print(f"Configuration: {config_key}")
-                        print(f"FID Score: {fid_score:.4f}")
+                        print(
+                            f"  branches={num_branches}, keep={num_keep}: FID={fid_score:.4f}"
+                        )
 
                         # Save results after each configuration
                         with open(f"{results_dir}/results.json", "w") as f:
