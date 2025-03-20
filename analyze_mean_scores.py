@@ -330,16 +330,6 @@ def analyze_fid_progression(
 ):
     """
     Analyze how intermediate quality metrics correlate with final FID scores.
-
-    Args:
-        sampler: The flow sampler instance
-        device: The device to run computations on
-        num_batches: Number of batches to generate and analyze
-        batch_size: Size of each batch
-        evaluation_times: List of times at which to evaluate metrics
-
-    Returns:
-        Dictionary containing correlation results and metrics for each batch
     """
     print("\n===== Quality Metrics Progression Analysis =====")
 
@@ -370,7 +360,7 @@ def analyze_fid_progression(
 
     # Store metrics for each batch
     batch_metrics = {t: [] for t in evaluation_times}
-    final_samples = []
+    final_fids = []
 
     # Generate batches and compute metrics
     with torch.no_grad():
@@ -420,27 +410,19 @@ def analyze_fid_progression(
                         f"t={rounded_t}: Mahalanobis={mahalanobis_dist:.4f}, Mean_diff={mean_diff:.4f}"
                     )
 
-                    # Store final samples for FID calculation
+                    # Calculate FID for final samples
                     if rounded_t == 1.0:
-                        final_samples.append(x)
+                        fid_metric.reset()
+                        fid_metric.update(x, real=False)
+                        batch_fid = fid_metric.compute().item()
+                        final_fids.append(batch_fid)
+                        print(f"Batch FID: {batch_fid:.4f}")
 
                 t += base_dt
 
             # Store metrics for this batch
             for eval_time in evaluation_times:
                 batch_metrics[eval_time].append(batch_results[eval_time])
-
-    # Calculate final FID scores for all batches
-    print("\nCalculating final FID scores...")
-    final_fids = []
-    final_samples_tensor = torch.cat(final_samples, dim=0)
-
-    # Process in batches for FID calculation
-    fid_metric.reset()
-    for i in range(0, len(final_samples_tensor), batch_size):
-        batch = final_samples_tensor[i : i + batch_size]
-        fid_metric.update(batch, real=False)
-    final_fid = fid_metric.compute().item()
 
     # Compute correlations
     results = {}
@@ -470,7 +452,7 @@ def analyze_fid_progression(
             "mean_diff_correlation": mean_diff_correlation,
             "mean_diff_p_value": mean_diff_p_value,
             "batch_metrics": batch_metrics[t],
-            "final_fid": final_fid,
+            "final_fids": final_fids,
         }
 
     return results
