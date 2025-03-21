@@ -693,7 +693,7 @@ def main():
         num_batches=10,
         batch_size=64,
         t_start=0.9,
-        t_backward=0.5,
+        t_backward=0.7,
         t_step=0.02,
         num_branches=4,
     )
