@@ -116,7 +116,7 @@ def analyze_early_quality_prediction(
 
     # Initialize FID metric
     fid_metric = FID.FrechetInceptionDistance(
-        feature=2048, normalize=True, reset_real_features=False
+        feature=64, normalize=True, reset_real_features=False
     ).to(device)
     # Process real images
     real_batch_size = 100
