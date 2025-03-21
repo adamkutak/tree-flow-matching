@@ -314,8 +314,8 @@ def calculate_metrics(
                 dt_std=0.1,
                 selector="mahalanobis",
                 use_global=True,
-                branch_start_time=0.3,
-                branch_dt=None,
+                branch_start_time=0.8,
+                branch_dt=0.02,
             )
             generated_samples.extend(sample.cpu())
 
@@ -376,7 +376,7 @@ def main():
     # Training configuration
     n_epochs_per_cycle = 1
     n_training_cycles = 100
-    branch_keep_pairs = [(1, 1), (2, 1), (4, 1), (8, 1)]
+    branch_keep_pairs = [(1, 1), (4, 1), (8, 1)]
 
     # Initialize metrics
     fid = FID.FrechetInceptionDistance(normalize=True, reset_real_features=False).to(
