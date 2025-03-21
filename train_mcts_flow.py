@@ -312,9 +312,9 @@ def calculate_metrics(
                 num_branches=num_branches,
                 num_keep=num_keep,
                 dt_std=0.1,
-                selector="fid",
-                use_global=False,
-                branch_start_time=0,
+                selector="mahalanobis",
+                use_global=True,
+                branch_start_time=0.3,
             )
             generated_samples.extend(sample.cpu())
 
@@ -416,7 +416,7 @@ def main():
                 num_keep,
                 device,
                 sigma=0,
-                n_samples=500,
+                n_samples=1000,
                 fid=fid,
             )
             print(f"Cycle {cycle + 1} - (branches={num_branches}, keep={num_keep}):")
