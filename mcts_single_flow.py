@@ -1529,8 +1529,8 @@ class MCTSFlowSampler:
         Returns:
             Tensor of shape [batch_size, C, H, W]
         """
-        # if num_branches == 1 and num_keep == 1:
-        #     return self.regular_batch_sample(class_label, batch_size)
+        if num_branches == 1 and num_keep == 1:
+            return self.regular_batch_sample(class_label, batch_size)
 
         assert (
             num_branches % num_keep == 0
