@@ -563,17 +563,45 @@ def analyze_branching_fid(
                 f"Initial batch - Mahalanobis at t={t_start}: {mahalanobis_t_start:.4f}, FID: {initial_fid:.4f}"
             )
 
-            # Branching phase
             expanded_batch_size = batch_size * num_branches
             x_branched = x_backward.repeat_interleave(num_branches, dim=0)
             labels_branched = labels_backward.repeat_interleave(num_branches)
 
-            # Add small random perturbations to create branches
-            noise_scale = 0.1  # Adjust this to control branch diversity
-            x_branched += noise_scale * torch.randn_like(x_branched)
+            # Get base velocity at t_backward
+            t_batch = torch.full((expanded_batch_size,), t_backward, device=device)
+            base_velocity = sampler.flow_model(t_batch, x_branched, labels_branched)
 
-            # Simulate branched batch from t_backward to 1.0
-            t = t_backward
+            # Sample different timesteps for each branch
+            timestep_std = t_step * 0.1  # Adjust this to control branch diversity
+            branch_timesteps = torch.normal(
+                mean=t_step,
+                std=timestep_std,
+                size=(expanded_batch_size,),
+                device=device,
+            ).abs()  # Use abs to ensure positive timesteps
+
+            # Apply different timesteps to create branches
+            x_branched = x_branched + base_velocity * branch_timesteps.view(-1, 1, 1, 1)
+
+            # Calculate mean timestep for equalization
+            mean_timestep = t_step
+
+            # Get new velocities at branched positions
+            t_batch = torch.full(
+                (expanded_batch_size,), t_backward + mean_timestep, device=device
+            )
+            equalization_velocity = sampler.flow_model(
+                t_batch, x_branched, labels_branched
+            )
+
+            # Equalize all branches to same timestep
+            time_differences = mean_timestep - branch_timesteps
+            x_branched = x_branched + equalization_velocity * time_differences.view(
+                -1, 1, 1, 1
+            )
+
+            # Continue simulation from t_backward + t_step to 1.0
+            t = t_backward + t_step
             while t < 1.0:
                 t_batch = torch.full((expanded_batch_size,), t, device=device)
                 velocity = sampler.flow_model(t_batch, x_branched, labels_branched)
@@ -665,7 +693,7 @@ def main():
         num_batches=10,
         batch_size=64,
         t_start=0.9,
-        t_backward=0.1,
+        t_backward=0.5,
         t_step=0.02,
         num_branches=4,
     )
