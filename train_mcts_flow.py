@@ -314,7 +314,8 @@ def calculate_metrics(
                 dt_std=0.1,
                 selector="mahalanobis",
                 use_global=True,
-                branch_start_time=0.3,
+                branch_start_time=0.85,
+                branch_dt=0.02,
             )
             generated_samples.extend(sample.cpu())
 
