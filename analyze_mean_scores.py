@@ -458,6 +458,170 @@ def analyze_fid_progression(
     return results
 
 
+def analyze_branching_fid(
+    sampler,
+    device,
+    num_batches=10,
+    batch_size=64,
+    t_start=0.9,
+    t_backward=0.1,
+    t_step=0.02,
+    num_branches=4,
+):
+    """
+    Analyze how branching at t_backward affects final FID scores, given quality metrics at t_start.
+
+    Args:
+        sampler: The flow sampler
+        device: Computation device
+        num_batches: Number of initial batches to process
+        batch_size: Size of each initial batch
+        t_start: Time to evaluate initial batch quality (default: 0.9)
+        t_backward: Time to start branching from (default: 0.8)
+        t_step: Time step for final phase (default: 0.02)
+        num_branches: Number of branches per sample (default: 4)
+    """
+    print("\n===== Branching FID Analysis =====")
+
+    # Initialize FID metric and process real images (similar to analyze_fid_progression)
+    fid_metric = FID.FrechetInceptionDistance(
+        feature=2048, normalize=True, reset_real_features=False
+    ).to(device)
+
+    # Setup and process real CIFAR-10 images
+    transform = transforms.Compose(
+        [
+            transforms.ToTensor(),
+            transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
+        ]
+    )
+    cifar10 = datasets.CIFAR10(
+        root="./data", train=True, download=True, transform=transform
+    )
+
+    print("Processing real images for FID calculation...")
+    indices = np.random.choice(len(cifar10), 50000, replace=False)
+    real_images = torch.stack([cifar10[i][0] for i in indices]).to(device)
+    for i in range(0, len(real_images), batch_size):
+        batch = real_images[i : i + batch_size]
+        fid_metric.update(batch, real=True)
+        torch.cuda.empty_cache()
+
+    results = []
+
+    with torch.no_grad():
+        for batch_idx in range(num_batches):
+            print(f"\nProcessing batch {batch_idx + 1}/{num_batches}")
+
+            # Initialize batch
+            x = torch.randn(
+                batch_size,
+                sampler.channels,
+                sampler.image_size,
+                sampler.image_size,
+                device=device,
+            )
+            labels = torch.randint(0, sampler.num_classes, (batch_size,), device=device)
+
+            # Store for branching
+            x_backward = None
+            labels_backward = labels.clone()
+
+            # Initial simulation up to t_start
+            t = 0.0
+            base_dt = 1.0 / sampler.num_timesteps
+
+            while t < t_start + base_dt:
+                t_batch = torch.full((batch_size,), t, device=device)
+                velocity = sampler.flow_model(t_batch, x, labels)
+                x = x + velocity * base_dt
+
+                # Store state at t_backward for later branching
+                if abs(t + base_dt - t_backward) < 1e-6:
+                    x_backward = x.clone()
+
+                t += base_dt
+
+            # Evaluate quality at t_start
+            mahalanobis_t_start = (
+                sampler.compute_global_distribution_mahalanobis_distance(x).item()
+            )
+
+            # Continue to t=1.0 for initial batch
+            while t < 1.0:
+                t_batch = torch.full((batch_size,), t, device=device)
+                velocity = sampler.flow_model(t_batch, x, labels)
+                x = x + velocity * base_dt
+                t += base_dt
+
+            # Calculate FID for initial batch
+            fid_metric.reset()
+            fid_metric.update(x, real=False)
+            initial_fid = fid_metric.compute().item()
+
+            print(
+                f"Initial batch - Mahalanobis at t={t_start}: {mahalanobis_t_start:.4f}, FID: {initial_fid:.4f}"
+            )
+
+            # Branching phase
+            expanded_batch_size = batch_size * num_branches
+            x_branched = x_backward.repeat_interleave(num_branches, dim=0)
+            labels_branched = labels_backward.repeat_interleave(num_branches)
+
+            # Add small random perturbations to create branches
+            noise_scale = 0.1  # Adjust this to control branch diversity
+            x_branched += noise_scale * torch.randn_like(x_branched)
+
+            # Simulate branched batch from t_backward to 1.0
+            t = t_backward
+            while t < 1.0:
+                t_batch = torch.full((expanded_batch_size,), t, device=device)
+                velocity = sampler.flow_model(t_batch, x_branched, labels_branched)
+                x_branched = x_branched + velocity * t_step
+                t += t_step
+
+            # Calculate FID for branched batch
+            fid_metric.reset()
+            fid_metric.update(x_branched, real=False)
+            branched_fid = fid_metric.compute().item()
+
+            print(f"Branched batch FID: {branched_fid:.4f}")
+
+            results.append(
+                {
+                    "mahalanobis_t_start": mahalanobis_t_start,
+                    "initial_fid": initial_fid,
+                    "branched_fid": branched_fid,
+                }
+            )
+
+    # Calculate correlations
+    mahalanobis_scores = [r["mahalanobis_t_start"] for r in results]
+    initial_fids = [r["initial_fid"] for r in results]
+    branched_fids = [r["branched_fid"] for r in results]
+
+    mahalanobis_correlation, mahalanobis_p_value = spearmanr(
+        mahalanobis_scores, branched_fids
+    )
+    fid_correlation, fid_p_value = spearmanr(initial_fids, branched_fids)
+
+    print("\nCorrelation Analysis:")
+    print(f"Mahalanobis at t={t_start} vs Branched FID:")
+    print(
+        f"  Correlation: {mahalanobis_correlation:.4f} (p-value: {mahalanobis_p_value:.4f})"
+    )
+    print(f"Initial FID vs Branched FID:")
+    print(f"  Correlation: {fid_correlation:.4f} (p-value: {fid_p_value:.4f})")
+
+    return {
+        "results": results,
+        "mahalanobis_correlation": mahalanobis_correlation,
+        "mahalanobis_p_value": mahalanobis_p_value,
+        "fid_correlation": fid_correlation,
+        "fid_p_value": fid_p_value,
+    }
+
+
 def main():
     # Use the specified GPU device
     device = torch.device("cuda:1" if torch.cuda.is_available() else "cpu")
@@ -487,12 +651,23 @@ def main():
     #     num_groups=4,
     # )
 
-    fid_progression_results = analyze_fid_progression(
+    # fid_progression_results = analyze_fid_progression(
+    #     sampler=sampler,
+    #     device=device,
+    #     num_batches=16,
+    #     batch_size=256,
+    #     evaluation_times=[0.1, 0.3, 0.5, 0.7, 0.9, 1.0],
+    # )
+
+    branching_results = analyze_branching_fid(
         sampler=sampler,
         device=device,
-        num_batches=16,
-        batch_size=256,
-        evaluation_times=[0.1, 0.3, 0.5, 0.7, 0.9, 1.0],
+        num_batches=10,
+        batch_size=64,
+        t_start=0.9,
+        t_backward=0.1,
+        t_step=0.02,
+        num_branches=4,
     )
 
 
