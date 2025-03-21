@@ -370,7 +370,7 @@ def main():
         flow_model="large_flow_model.pt",
         value_model=None,
         num_channels=256,
-        inception_layer=0,
+        inception_layer=3,
     )
 
     # Training configuration
@@ -417,7 +417,7 @@ def main():
                 num_keep,
                 device,
                 sigma=0,
-                n_samples=5000,
+                n_samples=500,
                 fid=fid,
             )
             print(f"Cycle {cycle + 1} - (branches={num_branches}, keep={num_keep}):")
