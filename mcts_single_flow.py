@@ -1511,6 +1511,7 @@ class MCTSFlowSampler:
         selector="fid",
         use_global=False,
         branch_start_time=0.0,
+        branch_dt=None,  # New parameter
     ):
         """
         Enhanced sampling method with configurable selection criteria and delayed branching.
@@ -1524,11 +1525,12 @@ class MCTSFlowSampler:
             selector: Selection criteria - one of ["fid", "mahalanobis", "mean"]
             use_global: Whether to use global statistics instead of class-specific ones
             branch_start_time: Time point at which to start branching (0.0 to 1.0)
+            branch_dt: Step size to use after branching begins (if None, uses base_dt)
         Returns:
             Tensor of shape [batch_size, C, H, W]
         """
-        # if num_branches == 1 and num_keep == 1:
-        #     return self.regular_batch_sample(class_label, batch_size)
+        if num_branches == 1 and num_keep == 1:
+            return self.regular_batch_sample(class_label, batch_size)
 
         assert (
             num_branches % num_keep == 0
@@ -1573,6 +1575,8 @@ class MCTSFlowSampler:
             current_times = torch.zeros(batch_size, device=self.device)
 
             base_dt = 1 / self.num_timesteps
+            # Use provided branch_dt or default to base_dt
+            branch_dt = branch_dt if branch_dt is not None else base_dt
 
             # Regular flow matching until branch_start_time
             while torch.all(current_times < branch_start_time):
@@ -1601,10 +1605,10 @@ class MCTSFlowSampler:
                     current_times, current_samples, current_label
                 )
 
-                # Sample different dt values for each sample
+                # Sample different dt values for each sample, using branch_dt as mean
                 dts = torch.normal(
-                    mean=base_dt,
-                    std=dt_std * base_dt,
+                    mean=branch_dt,
+                    std=dt_std * branch_dt,
                     size=(len(current_samples),),
                     device=self.device,
                 )
@@ -1619,7 +1623,9 @@ class MCTSFlowSampler:
                 branched_times = current_times + dts
 
                 # STEP 2: Align all branches to the same timepoint
-                target_time = torch.min(current_times) + 2 * base_dt
+                target_time = (
+                    torch.min(current_times) + 2 * branch_dt
+                )  # Use branch_dt here too
                 target_time = torch.min(
                     target_time, torch.tensor(1.0, device=self.device)
                 )
