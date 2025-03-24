@@ -365,7 +365,7 @@ def main():
         device=device,
         num_timesteps=10,
         num_classes=num_classes,
-        buffer_size=200,
+        buffer_size=10,
         load_models=True,
         flow_model="large_flow_model.pt",
         value_model=None,
