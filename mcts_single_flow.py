@@ -1922,6 +1922,10 @@ class MCTSFlowSampler:
             else:
                 final_scores = score_fn(current_samples, current_label)
 
+            batch_indices = torch.arange(
+                batch_size, device=self.device
+            ).repeat_interleave(num_keep)
+
             # Group by original batch index
             samples_by_batch = {}
             for i in range(batch_size):

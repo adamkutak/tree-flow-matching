@@ -280,9 +280,8 @@ def calculate_metrics(
     sampler, num_branches, num_keep, device, n_samples=2000, sigma=0.1, fid=None
 ):
     """
-    Calculate FID metrics for a specific branch/keep configuration across all classes.
+    Calculate FID metrics and average Mahalanobis distance for a specific branch/keep configuration across all classes.
     """
-
     fid.reset()
 
     # Generate samples evenly across all classes
@@ -290,15 +289,11 @@ def calculate_metrics(
     generation_batch_size = 16
     metric_batch_size = 64
     generated_samples = []
+    mahalanobis_distances = []
 
     print(
         f"\nGenerating {n_samples} samples for branches={num_branches}, keep={num_keep}"
     )
-
-    # for 1x1, we don't need noise (this is just normal flow matching integration)
-    noise_scale = sigma
-    if num_branches == 1 and num_keep == 1:
-        noise_scale = 0
 
     # Generate samples for each class
     for class_label in range(sampler.num_classes):
@@ -317,9 +312,14 @@ def calculate_metrics(
                 branch_start_time=0,
                 branch_dt=0.1,
             )
+            # Compute Mahalanobis distance for this batch
+            mahalanobis_dist = sampler.batch_compute_global_mahalanobis_distance(
+                sample, torch.full((generation_batch_size,), class_label, device=device)
+            )
+            mahalanobis_distances.extend(mahalanobis_dist.cpu().tolist())
             generated_samples.extend(sample.cpu())
 
-    # Process generated samples in batches for metrics
+    # Process generated samples in batches for FID metrics
     generated_tensor = torch.stack(generated_samples)
     for i in range(0, len(generated_tensor), metric_batch_size):
         batch = generated_tensor[i : i + metric_batch_size].to(device)
@@ -329,8 +329,9 @@ def calculate_metrics(
 
     # Compute final scores
     fid_score = fid.compute()
+    avg_mahalanobis = sum(mahalanobis_distances) / len(mahalanobis_distances)
 
-    return fid_score
+    return fid_score, avg_mahalanobis
 
 
 def main():
@@ -409,9 +410,8 @@ def main():
         #     use_tqdm=True,
         # )
 
-        # Evaluate metrics across classes after each training cycle
         for num_branches, num_keep in branch_keep_pairs:
-            fid_score = calculate_metrics(
+            fid_score, avg_mahalanobis = calculate_metrics(
                 sampler,
                 num_branches,
                 num_keep,
@@ -422,6 +422,7 @@ def main():
             )
             print(f"Cycle {cycle + 1} - (branches={num_branches}, keep={num_keep}):")
             print(f"   FID Score: {fid_score:.4f}")
+            print(f"   Average Mahalanobis Distance: {avg_mahalanobis:.4f}")
 
 
 if __name__ == "__main__":
