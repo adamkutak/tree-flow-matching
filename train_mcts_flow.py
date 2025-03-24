@@ -310,7 +310,7 @@ def calculate_metrics(
                 selector="mahalanobis",
                 use_global=True,
                 branch_start_time=0,
-                branch_dt=0.1,
+                branch_dt=0.05,
             )
             # Compute Mahalanobis distance for this batch
             mahalanobis_dist = sampler.batch_compute_global_mahalanobis_distance(sample)
