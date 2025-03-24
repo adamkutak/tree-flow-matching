@@ -301,7 +301,7 @@ def calculate_metrics(
 
         # Generate full batches
         for _ in range(num_batches):
-            sample = sampler.batch_sample_with_path_exploration(
+            sample = sampler.batch_sample_wdt_with_selector(
                 class_label=class_label,
                 batch_size=generation_batch_size,
                 num_branches=num_branches,
@@ -415,7 +415,7 @@ def main():
                 num_keep,
                 device,
                 sigma=0,
-                n_samples=500,
+                n_samples=250,
                 fid=fid,
             )
             print(f"Cycle {cycle + 1} - (branches={num_branches}, keep={num_keep}):")
