@@ -114,11 +114,11 @@ class MCTSFlowSampler:
         self.flow_model = UNetModel(
             dim=(channels, image_size, image_size),
             num_channels=num_channels,
-            num_res_blocks=2,
+            num_res_blocks=3,
             channel_mult=[1, 2, 2, 2],
             num_heads=4,
             num_head_channels=64,
-            attention_resolutions="16",
+            attention_resolutions="16, 8",
             dropout=0.0,
             num_classes=num_classes,
             class_cond=True,
