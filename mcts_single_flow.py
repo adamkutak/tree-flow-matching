@@ -1943,98 +1943,99 @@ class MCTSFlowSampler:
 
             return torch.stack(final_samples)
 
+    def batch_sample_with_random_search(
+        self,
+        class_label,
+        batch_size=16,
+        num_branches=4,
+        num_keep=2,  # Unused but kept for compatibility
+        dt_std=0.1,  # Unused but kept for compatibility
+        selector="fid",
+        use_global=False,
+        branch_start_time=0.0,  # Unused but kept for compatibility
+        branch_dt=None,  # Unused but kept for compatibility
+    ):
+        """
+        Simple random search sampling method that:
+        1. Runs num_branches independent flow matching batches
+        2. Evaluates all samples using Mahalanobis distance
+        3. Returns the best batch_size samples
 
-def batch_sample_with_random_search(
-    self,
-    class_label,
-    batch_size=16,
-    num_branches=4,
-    num_keep=2,  # Unused but kept for compatibility
-    dt_std=0.1,  # Unused but kept for compatibility
-    selector="fid",
-    use_global=False,
-    branch_start_time=0.0,  # Unused but kept for compatibility
-    branch_dt=None,  # Unused but kept for compatibility
-):
-    """
-    Simple random search sampling method that:
-    1. Runs num_branches independent flow matching batches
-    2. Evaluates all samples using Mahalanobis distance
-    3. Returns the best batch_size samples
-
-    Args are kept the same as batch_sample_with_path_exploration for compatibility,
-    though many are unused in this simpler implementation.
-    """
-    # Select scoring function (kept for compatibility)
-    if selector == "fid":
-        score_fn = (
-            self.batch_compute_global_fid_change
-            if use_global
-            else lambda x, y: self.batch_compute_fid_change(x, y)
-        )
-    elif selector == "mahalanobis":
-        score_fn = (
-            self.batch_compute_global_mahalanobis_distance
-            if use_global
-            else lambda x, y: self.batch_compute_mahalanobis_distance(x, y)
-        )
-    elif selector == "mean":
-        score_fn = (
-            self.batch_compute_global_mean_difference
-            if use_global
-            else lambda x, y: self.batch_compute_mean_difference(x, y)
-        )
-    else:
-        raise ValueError(f"Unknown selector: {selector}")
-
-    self.flow_model.eval()
-    base_dt = 1 / self.num_timesteps
-
-    with torch.no_grad():
-        # Generate num_branches batches of samples
-        all_samples = []
-
-        for _ in range(num_branches):
-            # Initialize one batch of samples
-            current_samples = torch.randn(
-                batch_size,
-                self.channels,
-                self.image_size,
-                self.image_size,
-                device=self.device,
+        Args are kept the same as batch_sample_with_path_exploration for compatibility,
+        though many are unused in this simpler implementation.
+        """
+        # Select scoring function (kept for compatibility)
+        if selector == "fid":
+            score_fn = (
+                self.batch_compute_global_fid_change
+                if use_global
+                else lambda x, y: self.batch_compute_fid_change(x, y)
             )
-            current_label = torch.full((batch_size,), class_label, device=self.device)
-
-            # Regular flow matching for this batch
-            for step, t in enumerate(self.timesteps[:-1]):
-                dt = self.timesteps[step + 1] - t
-                t_batch = torch.full((batch_size,), t.item(), device=self.device)
-
-                # Flow step
-                velocity = self.flow_model(t_batch, current_samples, current_label)
-                current_samples = current_samples + velocity * dt
-
-            all_samples.append(current_samples)
-
-        # Stack all batches
-        all_samples = torch.cat(
-            all_samples, dim=0
-        )  # shape: [batch_size * num_branches, C, H, W]
-        all_labels = torch.full(
-            (batch_size * num_branches,), class_label, device=self.device
-        )
-
-        # Score all samples
-        if use_global:
-            scores = score_fn(all_samples)
+        elif selector == "mahalanobis":
+            score_fn = (
+                self.batch_compute_global_mahalanobis_distance
+                if use_global
+                else lambda x, y: self.batch_compute_mahalanobis_distance(x, y)
+            )
+        elif selector == "mean":
+            score_fn = (
+                self.batch_compute_global_mean_difference
+                if use_global
+                else lambda x, y: self.batch_compute_mean_difference(x, y)
+            )
         else:
-            scores = score_fn(all_samples, all_labels)
+            raise ValueError(f"Unknown selector: {selector}")
 
-        # Select the best batch_size samples
-        top_k_values, top_k_indices = torch.topk(scores, k=batch_size, dim=0)
-        final_samples = all_samples[top_k_indices]
+        self.flow_model.eval()
+        base_dt = 1 / self.num_timesteps
 
-        return final_samples
+        with torch.no_grad():
+            # Generate num_branches batches of samples
+            all_samples = []
+
+            for _ in range(num_branches):
+                # Initialize one batch of samples
+                current_samples = torch.randn(
+                    batch_size,
+                    self.channels,
+                    self.image_size,
+                    self.image_size,
+                    device=self.device,
+                )
+                current_label = torch.full(
+                    (batch_size,), class_label, device=self.device
+                )
+
+                # Regular flow matching for this batch
+                for step, t in enumerate(self.timesteps[:-1]):
+                    dt = self.timesteps[step + 1] - t
+                    t_batch = torch.full((batch_size,), t.item(), device=self.device)
+
+                    # Flow step
+                    velocity = self.flow_model(t_batch, current_samples, current_label)
+                    current_samples = current_samples + velocity * dt
+
+                all_samples.append(current_samples)
+
+            # Stack all batches
+            all_samples = torch.cat(
+                all_samples, dim=0
+            )  # shape: [batch_size * num_branches, C, H, W]
+            all_labels = torch.full(
+                (batch_size * num_branches,), class_label, device=self.device
+            )
+
+            # Score all samples
+            if use_global:
+                scores = score_fn(all_samples)
+            else:
+                scores = score_fn(all_samples, all_labels)
+
+            # Select the best batch_size samples
+            top_k_values, top_k_indices = torch.topk(scores, k=batch_size, dim=0)
+            final_samples = all_samples[top_k_indices]
+
+            return final_samples
 
     def regular_batch_sample(self, class_label, batch_size=16):
         """
