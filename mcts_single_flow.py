@@ -124,37 +124,37 @@ class MCTSFlowSampler:
             class_cond=True,
         ).to(self.device)
 
-        self.value_model = ValueModel(
-            dim=(channels, image_size, image_size),
-            num_channels=num_channels,
-            num_res_blocks=2,
-            channel_mult=[1, 2, 2, 2],
-            num_heads=4,
-            num_head_channels=64,
-            attention_resolutions="16",
-            dropout=0.0,
-            num_classes=num_classes,
-            class_cond=True,
-        ).to(self.device)
+        # self.value_model = ValueModel(
+        #     dim=(channels, image_size, image_size),
+        #     num_channels=num_channels,
+        #     num_res_blocks=2,
+        #     channel_mult=[1, 2, 2, 2],
+        #     num_heads=4,
+        #     num_head_channels=64,
+        #     attention_resolutions="16",
+        #     dropout=0.0,
+        #     num_classes=num_classes,
+        #     class_cond=True,
+        # ).to(self.device)
 
         # Initialize optimizers
         self.flow_optimizer = torch.optim.Adam(
             self.flow_model.parameters(), lr=learning_rate
         )
-        self.value_optimizer = torch.optim.Adam(
-            self.value_model.parameters(), lr=learning_rate
-        )
+        # self.value_optimizer = torch.optim.Adam(
+        #     self.value_model.parameters(), lr=learning_rate
+        # )
 
-        warmup_epochs = 100
-        num_epochs = 1000
+        warmup_epochs = 20
+        num_epochs = 200
         initial_lr = 1e-8
 
         self.flow_optimizer = torch.optim.Adam(
             self.flow_model.parameters(), lr=initial_lr
         )
-        self.value_optimizer = torch.optim.Adam(
-            self.value_model.parameters(), lr=initial_lr
-        )
+        # self.value_optimizer = torch.optim.Adam(
+        #     self.value_model.parameters(), lr=initial_lr
+        # )
 
         def lr_lambda(epoch):
             if epoch < warmup_epochs:
@@ -169,9 +169,9 @@ class MCTSFlowSampler:
             self.flow_optimizer, lr_lambda=lambda epoch: lr_lambda(epoch) / initial_lr
         )
 
-        self.value_scheduler = torch.optim.lr_scheduler.LambdaLR(
-            self.value_optimizer, lr_lambda=lambda epoch: lr_lambda(epoch) / initial_lr
-        )
+        # self.value_scheduler = torch.optim.lr_scheduler.LambdaLR(
+        #     self.value_optimizer, lr_lambda=lambda epoch: lr_lambda(epoch) / initial_lr
+        # )
 
         self.FM = ExactOptimalTransportConditionalFlowMatcher(sigma=0.05)
         self.trajectory_buffer = TrajectoryBuffer()
