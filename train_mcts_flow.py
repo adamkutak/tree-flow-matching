@@ -309,8 +309,8 @@ def calculate_metrics(
                 dt_std=0.1,
                 selector="mahalanobis",
                 use_global=True,
-                branch_start_time=0,
-                branch_dt=0.05,
+                branch_start_time=0.88,
+                branch_dt=0.02,
             )
             # Compute Mahalanobis distance for this batch
             mahalanobis_dist = sampler.batch_compute_global_mahalanobis_distance(sample)
@@ -415,7 +415,7 @@ def main():
                 num_keep,
                 device,
                 sigma=0,
-                n_samples=200,
+                n_samples=250,
                 fid=fid,
             )
             print(f"Cycle {cycle + 1} - (branches={num_branches}, keep={num_keep}):")
