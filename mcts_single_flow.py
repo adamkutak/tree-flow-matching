@@ -1871,6 +1871,8 @@ class MCTSFlowSampler:
                     ] + velocity * dt.view(-1, 1, 1, 1)
                     simulated_times[active_mask] = simulated_times[active_mask] + dt
 
+                breakpoint()
+
                 # Evaluate final samples
                 if use_global:
                     final_scores = score_fn(simulated_samples)
