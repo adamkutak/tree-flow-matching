@@ -301,12 +301,12 @@ def calculate_metrics(
 
         # Generate full batches
         for _ in range(num_batches):
-            sample = sampler.batch_sample_with_path_exploration(
+            sample = sampler.batch_sample_with_path_exploration_noise(
                 class_label=class_label,
                 batch_size=generation_batch_size,
                 num_branches=num_branches,
                 num_keep=num_keep,
-                dt_std=0.2,
+                noise_scale=0.1,
                 selector="mahalanobis",
                 use_global=True,
                 branch_start_time=0.8,
@@ -375,7 +375,7 @@ def main():
     # Training configuration
     n_epochs_per_cycle = 1
     n_training_cycles = 100
-    branch_keep_pairs = [(4, 1), (8, 1)]
+    branch_keep_pairs = [(1, 1), (4, 1), (8, 1)]
 
     # Initialize metrics
     fid = FID.FrechetInceptionDistance(normalize=True, reset_real_features=False).to(

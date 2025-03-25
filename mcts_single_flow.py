@@ -1637,6 +1637,199 @@ class MCTSFlowSampler:
 
             return torch.stack(final_samples)
 
+    def batch_sample_with_path_exploration_noise(
+        self,
+        class_label,
+        batch_size=16,
+        num_branches=4,
+        num_keep=2,
+        noise_scale=0.1,  # Changed from dt_std to noise_scale
+        selector="fid",
+        use_global=False,
+        branch_start_time=0.0,
+        branch_dt=None,
+    ):
+        """
+        Enhanced sampling method that explores complete paths before selection.
+        Uses additive noise for branching instead of time step variations.
+
+        Args:
+            [previous args remain the same]
+            noise_scale: Scale of noise to add during branching (replaces dt_std)
+        """
+        if num_branches == 1 and num_keep == 1:
+            return self.regular_batch_sample(class_label, batch_size)
+
+        assert (
+            num_branches % num_keep == 0
+        ), "num_branches must be divisible by num_keep"
+        assert 0.0 <= branch_start_time < 1.0, "branch_start_time must be in [0, 1)"
+
+        # Select scoring function
+        if selector == "fid":
+            score_fn = (
+                self.batch_compute_global_fid_change
+                if use_global
+                else lambda x, y: self.batch_compute_fid_change(x, y)
+            )
+        elif selector == "mahalanobis":
+            score_fn = (
+                self.batch_compute_global_mahalanobis_distance
+                if use_global
+                else lambda x, y: self.batch_compute_mahalanobis_distance(x, y)
+            )
+        elif selector == "mean":
+            score_fn = (
+                self.batch_compute_global_mean_difference
+                if use_global
+                else lambda x, y: self.batch_compute_mean_difference(x, y)
+            )
+        else:
+            raise ValueError(f"Unknown selector: {selector}")
+
+        self.flow_model.eval()
+        base_dt = 1 / self.num_timesteps
+        branch_dt = branch_dt if branch_dt is not None else base_dt
+
+        with torch.no_grad():
+            # Initialize with batch_size samples
+            current_samples = torch.randn(
+                batch_size,
+                self.channels,
+                self.image_size,
+                self.image_size,
+                device=self.device,
+            )
+            current_times = torch.zeros(batch_size, device=self.device)
+            current_label = torch.full((batch_size,), class_label, device=self.device)
+
+            # Regular flow until branch_start_time
+            while torch.all(current_times < branch_start_time):
+                velocity = self.flow_model(
+                    current_times, current_samples, current_label
+                )
+                dt = min(base_dt, branch_start_time - current_times[0].item())
+                current_samples = current_samples + velocity * dt
+                current_times += dt
+
+            # Main loop - continue until all samples reach t=1
+            while torch.all(current_times < 1.0):
+                # Create branches from current state
+                branched_samples = current_samples.repeat_interleave(
+                    num_branches, dim=0
+                )
+                branched_times = current_times.repeat_interleave(num_branches)
+                branched_label = current_label.repeat_interleave(num_branches)
+                batch_indices = torch.arange(
+                    len(current_samples), device=self.device
+                ).repeat_interleave(num_branches)
+
+                # Add noise to create branches
+                # Scale noise based on current time (less noise as t approaches 1)
+                time_factor = (1.0 - branched_times.mean()).item()
+                branch_noise = torch.randn_like(branched_samples) * (
+                    noise_scale * time_factor
+                )
+
+                # Get velocity field
+                velocity = self.flow_model(
+                    branched_times, branched_samples, branched_label
+                )
+
+                # Apply step with noise
+                branched_samples = (
+                    branched_samples + velocity * branch_dt + branch_noise
+                )
+                branched_times = branched_times + branch_dt
+
+                # Simulate each branch to completion (t=1) without further branching
+                simulated_samples = branched_samples.clone()
+                simulated_times = branched_times.clone()
+
+                while torch.any(simulated_times < 1.0):
+                    active_mask = simulated_times < 1.0
+                    if not torch.any(active_mask):
+                        break
+
+                    velocity = self.flow_model(
+                        simulated_times[active_mask],
+                        simulated_samples[active_mask],
+                        branched_label[active_mask],
+                    )
+
+                    dt = torch.min(
+                        base_dt * torch.ones_like(simulated_times[active_mask]),
+                        1.0 - simulated_times[active_mask],
+                    )
+                    simulated_samples[active_mask] = simulated_samples[
+                        active_mask
+                    ] + velocity * dt.view(-1, 1, 1, 1)
+                    simulated_times[active_mask] = simulated_times[active_mask] + dt
+
+                # [rest of the function remains the same]
+                # Evaluate final samples
+                if use_global:
+                    final_scores = score_fn(simulated_samples)
+                else:
+                    final_scores = score_fn(simulated_samples, branched_label)
+
+                # Select best branches for each batch element
+                selected_samples = []
+                selected_times = []
+                selected_indices = []
+
+                for idx in range(len(current_samples)):
+                    batch_mask = batch_indices == idx
+                    batch_samples = branched_samples[batch_mask]
+                    batch_times = branched_times[batch_mask]
+                    batch_scores = final_scores[batch_mask]
+
+                    top_k_values, top_k_indices = torch.topk(
+                        batch_scores, k=min(num_keep, len(batch_scores)), dim=0
+                    )
+
+                    selected_samples.append(batch_samples[top_k_indices])
+                    selected_times.append(batch_times[top_k_indices])
+                    selected_indices.extend(
+                        torch.where(batch_mask)[0][top_k_indices].tolist()
+                    )
+
+                # Update current state with selected branches
+                current_samples = torch.cat(selected_samples, dim=0)
+                current_times = torch.cat(selected_times, dim=0)
+                current_label = torch.full(
+                    (len(current_samples),), class_label, device=self.device
+                )
+
+                if torch.all(current_times >= 1.0):
+                    break
+
+            # Final selection
+            if use_global:
+                final_scores = score_fn(current_samples)
+            else:
+                final_scores = score_fn(current_samples, current_label)
+
+            batch_indices = torch.arange(
+                batch_size, device=self.device
+            ).repeat_interleave(num_keep)
+
+            samples_by_batch = {}
+            for i in range(batch_size):
+                batch_mask = batch_indices == i
+                samples_by_batch[i] = {
+                    "samples": current_samples[batch_mask],
+                    "scores": final_scores[batch_mask],
+                }
+
+            final_samples = []
+            for i in range(batch_size):
+                batch_data = samples_by_batch[i]
+                best_idx = torch.argmax(batch_data["scores"])
+                final_samples.append(batch_data["samples"][best_idx])
+
+            return torch.stack(final_samples)
+
     def batch_sample_with_random_search(
         self,
         class_label,
