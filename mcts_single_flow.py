@@ -1828,6 +1828,8 @@ class MCTSFlowSampler:
                 if torch.all(current_times >= 1.0):
                     break
 
+                print(current_times)
+
             # Final selection
             if use_global:
                 final_scores = score_fn(current_samples)
