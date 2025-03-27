@@ -1619,8 +1619,6 @@ class MCTSFlowSampler:
                 batch_size, device=self.device
             ).repeat_interleave(num_keep)
 
-            print(current_times)
-
             # Group by original batch index
             samples_by_batch = {}
             for i in range(batch_size):
@@ -1736,7 +1734,7 @@ class MCTSFlowSampler:
                 current_times += dt
 
             # Main loop - continue until all samples reach t=1
-            while torch.all(current_times < 1.0):
+            while torch.any(current_times < 1.0):
                 # Create branches from current state
                 branched_samples = current_samples.repeat_interleave(
                     num_branches, dim=0
@@ -1760,40 +1758,34 @@ class MCTSFlowSampler:
                     warped_times = torch.zeros_like(simulated_times[active_mask])
 
                     for i, warp_fn in enumerate(warp_fns):
-                        # Apply warping to corresponding branches
                         branch_mask = (
                             torch.arange(len(simulated_times), device=self.device)
                             % num_branches
                             == i
                         )[active_mask]
                         if torch.any(branch_mask):
-                            # Interpolate between warped and linear time based on warp_scale
                             orig_t = simulated_times[active_mask][branch_mask]
                             warped_t = warp_fn(orig_t)
                             warped_times[branch_mask] = (
                                 1 - warp_scale
                             ) * orig_t + warp_scale * warped_t
 
-                    # Get velocity using warped time
                     velocity = self.flow_model(
                         warped_times,
                         simulated_samples[active_mask],
                         branched_label[active_mask],
                     )
 
-                    # Use base dt for stepping
                     dt = torch.min(
                         base_dt * torch.ones_like(simulated_times[active_mask]),
                         1.0 - simulated_times[active_mask],
                     )
 
-                    # Update samples and actual time
                     simulated_samples[active_mask] = simulated_samples[
                         active_mask
                     ] + velocity * dt.view(-1, 1, 1, 1)
                     simulated_times[active_mask] = simulated_times[active_mask] + dt
 
-                # [rest of the function remains the same]
                 if use_global:
                     final_scores = score_fn(simulated_samples)
                 else:
@@ -1826,9 +1818,6 @@ class MCTSFlowSampler:
                 current_label = torch.full(
                     (len(current_samples),), class_label, device=self.device
                 )
-
-                if torch.all(current_times >= 1.0):
-                    break
 
                 print(current_times)
 
