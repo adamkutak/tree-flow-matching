@@ -309,8 +309,8 @@ def calculate_metrics(
                 warp_scale=0.5,
                 selector="mahalanobis",
                 use_global=True,
-                branch_start_time=0.8,
-                branch_dt=0.05,
+                branch_start_time=0,
+                branch_dt=0.1,
             )
             # Compute Mahalanobis distance for this batch
             mahalanobis_dist = sampler.batch_compute_global_mahalanobis_distance(sample)
