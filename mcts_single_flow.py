@@ -1760,7 +1760,9 @@ class MCTSFlowSampler:
                     for i, warp_fn in enumerate(warp_fns):
                         # Apply warping to corresponding branches
                         branch_mask = (
-                            torch.arange(len(simulated_times)) % num_branches == i
+                            torch.arange(len(simulated_times), device=self.device)
+                            % num_branches
+                            == i
                         )[active_mask]
                         if torch.any(branch_mask):
                             # Interpolate between warped and linear time based on warp_scale
