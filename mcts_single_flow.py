@@ -1621,6 +1621,8 @@ class MCTSFlowSampler:
                 batch_size, device=self.device
             ).repeat_interleave(num_keep)
 
+            print(current_times)
+
             # Group by original batch index
             samples_by_batch = {}
             for i in range(batch_size):
