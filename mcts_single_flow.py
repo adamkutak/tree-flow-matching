@@ -1506,7 +1506,7 @@ class MCTSFlowSampler:
                 current_times += dt
 
             # Main loop - continue until all samples reach t=1
-            while torch.all(current_times < 1.0):
+            while torch.any(current_times < 1.0):
                 # Create branches from current state
                 branched_samples = current_samples.repeat_interleave(
                     num_branches, dim=0
