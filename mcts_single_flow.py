@@ -1602,8 +1602,6 @@ class MCTSFlowSampler:
                     (len(current_samples),), class_label, device=self.device
                 )
 
-                print(current_times)
-
                 # Break if all samples have reached t=1
                 if torch.all(current_times >= 1.0):
                     break
