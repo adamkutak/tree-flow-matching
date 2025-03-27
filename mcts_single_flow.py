@@ -1606,6 +1606,8 @@ class MCTSFlowSampler:
                 if torch.all(current_times >= 1.0):
                     break
 
+                print(current_times)
+
             # Final selection - take best sample from each batch element
             final_samples = []
 
