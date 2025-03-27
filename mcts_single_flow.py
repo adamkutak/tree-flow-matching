@@ -1564,7 +1564,6 @@ class MCTSFlowSampler:
                     ] + velocity * dt.view(-1, 1, 1, 1)
                     simulated_times[active_mask] = simulated_times[active_mask] + dt
 
-                breakpoint()
                 # Evaluate final samples
                 if use_global:
                     final_scores = score_fn(simulated_samples)
@@ -1637,25 +1636,29 @@ class MCTSFlowSampler:
 
             return torch.stack(final_samples)
 
-    def batch_sample_with_path_exploration_noise(
+    def batch_sample_with_path_exploration_timewarp(
         self,
         class_label,
         batch_size=16,
         num_branches=4,
         num_keep=2,
-        noise_scale=0.1,  # Changed from dt_std to noise_scale
+        warp_scale=0.5,  # Controls the strength of time warping
         selector="fid",
         use_global=False,
         branch_start_time=0.0,
         branch_dt=None,
     ):
         """
-        Enhanced sampling method that explores complete paths before selection.
-        Uses additive noise for branching instead of time step variations.
+        Enhanced sampling method that uses time warping to create diverse branches.
+        Each branch applies a different warping function to the time coordinate:
+        - Linear (no warping)
+        - Square (slower early, faster late)
+        - Square root (faster early, slower late)
+        - Sigmoid (slower at ends, faster in middle)
 
         Args:
             [previous args remain the same]
-            noise_scale: Scale of noise to add during branching (replaces dt_std)
+            warp_scale: Controls the strength of time warping (0 = no warp, 1 = full warp)
         """
         if num_branches == 1 and num_keep == 1:
             return self.regular_batch_sample(class_label, batch_size)
@@ -1664,6 +1667,24 @@ class MCTSFlowSampler:
             num_branches % num_keep == 0
         ), "num_branches must be divisible by num_keep"
         assert 0.0 <= branch_start_time < 1.0, "branch_start_time must be in [0, 1)"
+
+        # Define time warping functions
+        def linear_warp(t):
+            return t
+
+        def square_warp(t):
+            return t**2
+
+        def sqrt_warp(t):
+            return torch.sqrt(t)
+
+        def sigmoid_warp(t):
+            # Rescale t from [0,1] to [-6,6] for good sigmoid range
+            t_scaled = 12 * t - 6
+            return 1 / (1 + torch.exp(-t_scaled))
+
+        # List of warping functions
+        warp_fns = [linear_warp, square_warp, sqrt_warp, sigmoid_warp]
 
         # Select scoring function
         if selector == "fid":
@@ -1724,25 +1745,7 @@ class MCTSFlowSampler:
                     len(current_samples), device=self.device
                 ).repeat_interleave(num_branches)
 
-                # Add noise to create branches
-                # Scale noise based on current time (less noise as t approaches 1)
-                time_factor = (1.0 - branched_times.mean()).item()
-                branch_noise = torch.randn_like(branched_samples) * (
-                    noise_scale * time_factor
-                )
-
-                # Get velocity field
-                velocity = self.flow_model(
-                    branched_times, branched_samples, branched_label
-                )
-
-                # Apply step with noise
-                branched_samples = (
-                    branched_samples + velocity * branch_dt + branch_noise
-                )
-                branched_times = branched_times + branch_dt
-
-                # Simulate each branch to completion (t=1) without further branching
+                # Simulate each branch to completion with different time warping
                 simulated_samples = branched_samples.clone()
                 simulated_times = branched_times.clone()
 
@@ -1751,27 +1754,48 @@ class MCTSFlowSampler:
                     if not torch.any(active_mask):
                         break
 
+                    # Apply different time warping for each branch
+                    warped_times = torch.zeros_like(simulated_times[active_mask])
+
+                    for i, warp_fn in enumerate(warp_fns):
+                        # Apply warping to corresponding branches
+                        branch_mask = (
+                            torch.arange(len(simulated_times)) % num_branches == i
+                        )[active_mask]
+                        if torch.any(branch_mask):
+                            # Interpolate between warped and linear time based on warp_scale
+                            orig_t = simulated_times[active_mask][branch_mask]
+                            warped_t = warp_fn(orig_t)
+                            warped_times[branch_mask] = (
+                                1 - warp_scale
+                            ) * orig_t + warp_scale * warped_t
+
+                    # Get velocity using warped time
                     velocity = self.flow_model(
-                        simulated_times[active_mask],
+                        warped_times,
                         simulated_samples[active_mask],
                         branched_label[active_mask],
                     )
 
+                    # Use base dt for stepping
                     dt = torch.min(
                         base_dt * torch.ones_like(simulated_times[active_mask]),
                         1.0 - simulated_times[active_mask],
                     )
+
+                    # Update samples and actual time
                     simulated_samples[active_mask] = simulated_samples[
                         active_mask
                     ] + velocity * dt.view(-1, 1, 1, 1)
                     simulated_times[active_mask] = simulated_times[active_mask] + dt
 
                 # [rest of the function remains the same]
-                # Evaluate final samples
                 if use_global:
                     final_scores = score_fn(simulated_samples)
                 else:
                     final_scores = score_fn(simulated_samples, branched_label)
+
+                breakpoint()
 
                 # Select best branches for each batch element
                 selected_samples = []
