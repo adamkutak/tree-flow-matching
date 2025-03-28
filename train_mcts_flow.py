@@ -301,13 +301,13 @@ def calculate_metrics(
 
         # Generate full batches
         for _ in range(num_batches):
-            sample = sampler.batch_sample_with_path_exploration_timewarp(
+            sample = sampler.batch_sample_with_path_exploration(
                 class_label=class_label,
                 batch_size=generation_batch_size,
                 num_branches=num_branches,
                 num_keep=num_keep,
-                warp_scale=0.5,
-                # dt_std=0.1,
+                # warp_scale=0.5,
+                dt_std=0.1,
                 selector="mahalanobis",
                 use_global=True,
                 branch_start_time=0,
