@@ -301,30 +301,30 @@ def calculate_metrics(
 
         # Generate full batches
         for _ in range(num_batches):
-            sample = sampler.batch_sample_with_path_exploration_timewarp(
-                class_label=class_label,
-                batch_size=generation_batch_size,
-                num_branches=num_branches,
-                num_keep=num_keep,
-                warp_scale=0.5,
-                # dt_std=0.1,
-                selector="mahalanobis",
-                use_global=True,
-                branch_start_time=0,
-                branch_dt=0.1,
-            )
-            # sample = sampler.batch_sample_with_path_exploration(
+            # sample = sampler.batch_sample_with_path_exploration_timewarp(
             #     class_label=class_label,
             #     batch_size=generation_batch_size,
             #     num_branches=num_branches,
             #     num_keep=num_keep,
-            #     # warp_scale=0.5,
-            #     dt_std=0.1,
+            #     warp_scale=0.5,
+            #     # dt_std=0.1,
             #     selector="mahalanobis",
             #     use_global=True,
             #     branch_start_time=0,
             #     branch_dt=0.1,
             # )
+            sample = sampler.batch_sample_with_random_search(
+                class_label=class_label,
+                batch_size=generation_batch_size,
+                num_branches=num_branches,
+                num_keep=num_keep,
+                # warp_scale=0.5,
+                dt_std=0.1,
+                selector="mahalanobis",
+                use_global=True,
+                branch_start_time=0,
+                branch_dt=0.1,
+            )
             # Compute Mahalanobis distance for this batch
             mahalanobis_dist = sampler.batch_compute_global_mahalanobis_distance(sample)
             mahalanobis_distances.extend(mahalanobis_dist.cpu().tolist())
