@@ -1647,7 +1647,7 @@ class MCTSFlowSampler:
         use_global=False,
         branch_start_time=0.0,
         branch_dt=None,
-        sqrt_epsilon=1e-4,
+        sqrt_epsilon=1e-8,
     ):
         """
         Enhanced sampling method using time warping path exploration.
