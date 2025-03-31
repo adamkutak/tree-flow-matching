@@ -1850,8 +1850,6 @@ class MCTSFlowSampler:
                     # Ensure labels match simulated samples
                     final_scores = score_fn(simulated_samples, branched_label)
 
-                breakpoint()
-
                 # --- 5. Select Best Branches ---
                 selected_samples_list = []
                 selected_times_list = []
@@ -1869,15 +1867,12 @@ class MCTSFlowSampler:
                     num_to_keep = min(
                         num_keep, len(batch_scores)
                     )  # Handle cases with fewer branches than num_keep
-                    if num_to_keep > 0:
-                        top_k_values, top_k_indices = torch.topk(
-                            batch_scores, k=num_to_keep, dim=0
-                        )
-                        # Keep the state from *after the branching step*
-                        selected_samples_list.append(
-                            batch_branched_samples[top_k_indices]
-                        )
-                        selected_times_list.append(batch_branched_times[top_k_indices])
+                    top_k_values, top_k_indices = torch.topk(
+                        batch_scores, k=num_to_keep, dim=0
+                    )
+                    # Keep the state from *after the branching step*
+                    selected_samples_list.append(batch_branched_samples[top_k_indices])
+                    selected_times_list.append(batch_branched_times[top_k_indices])
 
                 # --- 6. Update Current State ---
                 if not selected_samples_list:  # Handle empty case
@@ -1937,21 +1932,8 @@ class MCTSFlowSampler:
                 batch_final_samples = current_samples[batch_mask]
                 batch_final_scores = final_scores[batch_mask]
 
-                if len(batch_final_scores) > 0:
-                    best_idx_in_batch = torch.argmax(batch_final_scores)
-                    final_samples.append(batch_final_samples[best_idx_in_batch])
-                else:
-                    # Handle case where a batch item might have finished very early
-                    # and has no samples left in current_samples. Need a fallback.
-                    # Option 1: Raise error
-                    # Option 2: Return fewer than batch_size samples
-                    # Option 3: Generate a fallback sample (e.g., random noise or rerun?)
-                    print(
-                        f"Warning: No final samples found for original batch index {i}. Skipping."
-                    )
-
-            if not final_samples:
-                raise RuntimeError("No final samples generated.")
+                best_idx_in_batch = torch.argmax(batch_final_scores)
+                final_samples.append(batch_final_samples[best_idx_in_batch])
 
             return torch.stack(final_samples)
 
