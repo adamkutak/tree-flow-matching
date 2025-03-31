@@ -1648,19 +1648,12 @@ class MCTSFlowSampler:
         selector="fid",
         use_global=False,
         branch_start_time=0.0,
-        branch_dt=None,
+        branch_dt=None,  # Note: branch_dt is used as the actual time step size dt
     ):
         """
-        Enhanced sampling method that uses time warping to create diverse branches.
-        Each branch applies a different warping function to the time coordinate:
-        - Linear (no warping)
-        - Square (slower early, faster late)
-        - Square root (faster early, slower late)
-        - Sigmoid (slower at ends, faster in middle)
-
-        Args:
-            [previous args remain the same]
-            warp_scale: Controls the strength of time warping (0 = no warp, 1 = full warp)
+        Enhanced sampling method using time warping path exploration.
+        Follows the structure: Branch -> Simulate -> Select -> Update.
+        Applies chain rule for time warping: dx/dt = v(x, f(t)) * f'(t).
         """
         if num_branches == 1 and num_keep == 1:
             return self.regular_batch_sample(class_label, batch_size)
@@ -1669,26 +1662,47 @@ class MCTSFlowSampler:
             num_branches % num_keep == 0
         ), "num_branches must be divisible by num_keep"
         assert 0.0 <= branch_start_time < 1.0, "branch_start_time must be in [0, 1)"
+        assert (
+            num_branches <= 4
+        ), "Currently supports up to 4 warp functions"  # Added assertion
 
-        # Define time warping functions
+        # --- Define time warping functions and their derivatives ---
         def linear_warp(t):
             return t
+
+        def linear_warp_deriv(t):
+            return torch.ones_like(t)
 
         def square_warp(t):
             return t**2
 
+        def square_warp_deriv(t):
+            return 2 * t
+
         def sqrt_warp(t):
-            return torch.sqrt(t)
+            # Add epsilon for numerical stability at t=0
+            return torch.sqrt(t + 1e-8)
+
+        def sqrt_warp_deriv(t):
+            return 0.5 / torch.sqrt(t + 1e-8)
 
         def sigmoid_warp(t):
-            # Rescale t from [0,1] to [-6,6] for good sigmoid range
             t_scaled = 12 * t - 6
-            return 1 / (1 + torch.exp(-t_scaled))
+            return torch.sigmoid(t_scaled)  # Use torch.sigmoid for stability
 
-        # List of warping functions
-        warp_fns = [linear_warp, square_warp, sqrt_warp, sigmoid_warp]
+        def sigmoid_warp_deriv(t):
+            sig_t = sigmoid_warp(t)
+            return 12 * sig_t * (1 - sig_t)
 
-        # Select scoring function
+        # Lists of warping functions and their derivatives
+        warp_fns = [linear_warp, square_warp, sqrt_warp, sigmoid_warp][:num_branches]
+        warp_deriv_fns = [
+            linear_warp_deriv,
+            square_warp_deriv,
+            sqrt_warp_deriv,
+            sigmoid_warp_deriv,
+        ][:num_branches]
+
         if selector == "fid":
             score_fn = (
                 self.batch_compute_global_fid_change
@@ -1711,11 +1725,13 @@ class MCTSFlowSampler:
             raise ValueError(f"Unknown selector: {selector}")
 
         self.flow_model.eval()
-        base_dt = 1 / self.num_timesteps
-        branch_dt = branch_dt if branch_dt is not None else base_dt
+        # Use branch_dt if provided, otherwise base_dt, for the actual time step size
+        actual_dt_step = (
+            branch_dt if branch_dt is not None else (1 / self.num_timesteps)
+        )
 
         with torch.no_grad():
-            # Initialize with batch_size samples
+            # Initialize (same as before)
             current_samples = torch.randn(
                 batch_size,
                 self.channels,
@@ -1726,126 +1742,274 @@ class MCTSFlowSampler:
             current_times = torch.zeros(batch_size, device=self.device)
             current_label = torch.full((batch_size,), class_label, device=self.device)
 
-            # Regular flow until branch_start_time
-            while torch.all(current_times < branch_start_time):
+            # Regular flow until branch_start_time (same as before)
+            base_dt = 1 / self.num_timesteps  # Keep base_dt for this initial phase
+            while torch.any(current_times < branch_start_time):
+                # Ensure we only step up to branch_start_time
+                max_dt = torch.clamp(branch_start_time - current_times, min=0.0)
+                dt = torch.minimum(base_dt * torch.ones_like(current_times), max_dt)
+                active_mask = dt > 0  # Only compute velocity for active samples
+
+                if not torch.any(active_mask):
+                    break  # Exit if all reached start time
+
                 velocity = self.flow_model(
-                    current_times, current_samples, current_label
+                    current_times[active_mask],
+                    current_samples[active_mask],
+                    current_label[active_mask],
                 )
-                dt = min(base_dt, branch_start_time - current_times[0].item())
-                current_samples = current_samples + velocity * dt
-                current_times += dt
+                current_samples[active_mask] = current_samples[
+                    active_mask
+                ] + velocity * dt[active_mask].view(-1, 1, 1, 1)
+                current_times[active_mask] = (
+                    current_times[active_mask] + dt[active_mask]
+                )
 
-            # Main loop - continue until all samples reach t=1
+            # --- Main Path Exploration Loop ---
             while torch.any(current_times < 1.0):
-                # Create branches from current state
-                branched_samples = current_samples.repeat_interleave(
-                    num_branches, dim=0
-                )
-                branched_times = current_times.repeat_interleave(num_branches)
-                branched_label = current_label.repeat_interleave(num_branches)
-                batch_indices = torch.arange(
-                    len(current_samples), device=self.device
-                ).repeat_interleave(num_branches)
+                active_batch_mask = current_times < 1.0
+                if not torch.any(active_batch_mask):
+                    break  # Should not happen if while condition is correct, but safe check
 
-                # Simulate each branch to completion with different time warping
+                # Only operate on samples that haven't finished
+                active_samples = current_samples[active_batch_mask]
+                active_times = current_times[active_batch_mask]
+                active_label = current_label[active_batch_mask]
+                num_active = len(active_samples)
+
+                # --- 1. Create Branches ---
+                branched_samples = active_samples.repeat_interleave(num_branches, dim=0)
+                branched_times = active_times.repeat_interleave(num_branches)
+                branched_label = active_label.repeat_interleave(num_branches)
+                # Keep track of original index for grouping later
+                branch_indices_map = torch.arange(
+                    num_active, device=self.device
+                ).repeat_interleave(num_branches)
+                # Assign warp functions cyclically to branches
+                warp_indices = (
+                    torch.arange(len(branched_samples), device=self.device)
+                    % num_branches
+                )
+
+                # --- 2. Take ONE Branching Step with Warping ---
+                # Calculate the actual time step, ensuring we don't overshoot t=1
+                dt_step = torch.minimum(
+                    actual_dt_step * torch.ones_like(branched_times),
+                    1.0 - branched_times,
+                )
+
+                # Calculate warped times and derivatives for this step
+                warped_times_step = torch.zeros_like(branched_times)
+                warp_derivs_step = torch.zeros_like(branched_times)
+                for i in range(num_branches):
+                    mask = warp_indices == i
+                    if torch.any(mask):
+                        orig_t = branched_times[mask]
+                        # Interpolate between warped and linear time based on warp_scale
+                        warped_t = warp_fns[i](orig_t)
+                        final_warped_t = (
+                            1 - warp_scale
+                        ) * orig_t + warp_scale * warped_t
+                        warped_times_step[mask] = final_warped_t
+
+                        # Calculate derivative for chain rule (using original time t)
+                        # Derivative of (1-a)t + a*f(t) is (1-a) + a*f'(t)
+                        orig_deriv = warp_deriv_fns[i](orig_t)
+                        final_warp_deriv = (1 - warp_scale) * torch.ones_like(
+                            orig_deriv
+                        ) + warp_scale * orig_deriv
+                        warp_derivs_step[mask] = final_warp_deriv
+
+                # Get velocity using the warped time for the step
+                velocity_step = self.flow_model(
+                    warped_times_step, branched_samples, branched_label
+                )
+
+                # Apply the branching step using the chain rule: dx = v * f'(t) * dt
+                branched_samples = (
+                    branched_samples
+                    + velocity_step
+                    * warp_derivs_step.view(-1, 1, 1, 1)
+                    * dt_step.view(-1, 1, 1, 1)
+                )
+                branched_times = (
+                    branched_times + dt_step
+                )  # Actual time progresses normally
+
+                # --- 3. Simulate Each Branch to Completion (for Scoring) ---
                 simulated_samples = branched_samples.clone()
                 simulated_times = branched_times.clone()
+                # We need to know which warp function corresponds to which simulation path
+                sim_warp_indices = warp_indices.clone()
 
                 while torch.any(simulated_times < 1.0):
-                    active_mask = simulated_times < 1.0
-                    if not torch.any(active_mask):
+                    sim_active_mask = simulated_times < 1.0
+                    if not torch.any(sim_active_mask):
                         break
 
-                    # Apply different time warping for each branch
-                    warped_times = torch.zeros_like(simulated_times[active_mask])
+                    active_sim_samples = simulated_samples[sim_active_mask]
+                    active_sim_times = simulated_times[sim_active_mask]
+                    active_sim_label = branched_label[
+                        sim_active_mask
+                    ]  # Label remains constant
+                    active_sim_warp_indices = sim_warp_indices[sim_active_mask]
 
-                    for i, warp_fn in enumerate(warp_fns):
-                        branch_mask = (
-                            torch.arange(len(simulated_times), device=self.device)
-                            % num_branches
-                            == i
-                        )[active_mask]
-                        if torch.any(branch_mask):
-                            orig_t = simulated_times[active_mask][branch_mask]
-                            warped_t = warp_fn(orig_t)
-                            warped_times[branch_mask] = (
+                    # Calculate dt for this simulation substep
+                    dt_sim = torch.minimum(
+                        actual_dt_step * torch.ones_like(active_sim_times),
+                        1.0 - active_sim_times,
+                    )
+
+                    # Calculate warped times and derivatives for simulation step
+                    warped_times_sim = torch.zeros_like(active_sim_times)
+                    warp_derivs_sim = torch.zeros_like(active_sim_times)
+                    for i in range(num_branches):
+                        # Find which of the *currently active* simulation samples use warp i
+                        mask = active_sim_warp_indices == i
+                        if torch.any(mask):
+                            orig_t = active_sim_times[mask]
+                            warped_t = warp_fns[i](orig_t)
+                            final_warped_t = (
                                 1 - warp_scale
                             ) * orig_t + warp_scale * warped_t
+                            warped_times_sim[mask] = final_warped_t
 
-                    velocity = self.flow_model(
-                        warped_times,
-                        simulated_samples[active_mask],
-                        branched_label[active_mask],
+                            orig_deriv = warp_deriv_fns[i](orig_t)
+                            final_warp_deriv = (1 - warp_scale) * torch.ones_like(
+                                orig_deriv
+                            ) + warp_scale * orig_deriv
+                            warp_derivs_sim[mask] = final_warp_deriv
+
+                    # Get velocity using warped time
+                    velocity_sim = self.flow_model(
+                        warped_times_sim, active_sim_samples, active_sim_label
                     )
 
-                    dt = torch.min(
-                        base_dt * torch.ones_like(simulated_times[active_mask]),
-                        1.0 - simulated_times[active_mask],
+                    # Update simulation state using chain rule
+                    update = (
+                        velocity_sim
+                        * warp_derivs_sim.view(-1, 1, 1, 1)
+                        * dt_sim.view(-1, 1, 1, 1)
                     )
+                    simulated_samples[sim_active_mask] = active_sim_samples + update
+                    simulated_times[sim_active_mask] = active_sim_times + dt_sim
 
-                    simulated_samples[active_mask] = simulated_samples[
-                        active_mask
-                    ] + velocity * dt.view(-1, 1, 1, 1)
-                    simulated_times[active_mask] = simulated_times[active_mask] + dt
-
+                # --- 4. Score Simulated Samples ---
                 if use_global:
                     final_scores = score_fn(simulated_samples)
                 else:
+                    # Ensure labels match simulated samples
                     final_scores = score_fn(simulated_samples, branched_label)
 
-                # Select best branches for each batch element
-                selected_samples = []
-                selected_times = []
-                selected_indices = []
+                # --- 5. Select Best Branches ---
+                selected_samples_list = []
+                selected_times_list = []
 
-                for idx in range(len(current_samples)):
-                    batch_mask = batch_indices == idx
-                    batch_samples = branched_samples[batch_mask]
-                    batch_times = branched_times[batch_mask]
-                    batch_scores = final_scores[batch_mask]
+                for idx in range(num_active):  # Iterate through original active samples
+                    # Find all branches originating from the idx-th active sample
+                    mask = branch_indices_map == idx
+                    # Get the states AFTER THE FIRST BRANCHING STEP for these branches
+                    batch_branched_samples = branched_samples[mask]
+                    batch_branched_times = branched_times[mask]
+                    # Get the scores from the SIMULATED results for these branches
+                    batch_scores = final_scores[mask]
 
-                    top_k_values, top_k_indices = torch.topk(
-                        batch_scores, k=min(num_keep, len(batch_scores)), dim=0
-                    )
+                    # Select top num_keep based on scores
+                    num_to_keep = min(
+                        num_keep, len(batch_scores)
+                    )  # Handle cases with fewer branches than num_keep
+                    if num_to_keep > 0:
+                        top_k_values, top_k_indices = torch.topk(
+                            batch_scores, k=num_to_keep, dim=0
+                        )
+                        # Keep the state from *after the branching step*
+                        selected_samples_list.append(
+                            batch_branched_samples[top_k_indices]
+                        )
+                        selected_times_list.append(batch_branched_times[top_k_indices])
+                    # If num_to_keep is 0 (e.g., if input batch size was 0), append nothing
 
-                    selected_samples.append(batch_samples[top_k_indices])
-                    selected_times.append(batch_times[top_k_indices])
-                    selected_indices.extend(
-                        torch.where(batch_mask)[0][top_k_indices].tolist()
-                    )
+                # --- 6. Update Current State ---
+                if not selected_samples_list:  # Handle empty case
+                    break  # No active samples left to process
 
-                # Update current state with selected branches
-                current_samples = torch.cat(selected_samples, dim=0)
-                current_times = torch.cat(selected_times, dim=0)
-                current_label = torch.full(
-                    (len(current_samples),), class_label, device=self.device
+                # Update the state for the *next iteration* using the selected branches
+                next_samples = torch.cat(selected_samples_list, dim=0)
+                next_times = torch.cat(selected_times_list, dim=0)
+                next_label = torch.full(
+                    (len(next_samples),), class_label, device=self.device
                 )
 
-                print(current_times)
+                # Replace the finished/processed samples with the new selected ones
+                # Need to carefully map back. Easier to reconstruct current_samples/times
+                new_current_samples = torch.zeros_like(current_samples)
+                new_current_times = torch.zeros_like(current_times)
+                new_current_label = torch.zeros_like(current_label)
 
-            # Final selection
+                # Keep samples that were already >= 1.0
+                finished_mask = ~active_batch_mask
+                if torch.any(finished_mask):
+                    new_current_samples[finished_mask] = current_samples[finished_mask]
+                    new_current_times[finished_mask] = current_times[finished_mask]
+                    new_current_label[finished_mask] = current_label[finished_mask]
+
+                # Add the newly selected samples (results of the branching)
+                new_current_samples[active_batch_mask] = next_samples
+                new_current_times[active_batch_mask] = next_times
+                new_current_label[active_batch_mask] = (
+                    next_label  # Assuming label stays same
+                )
+
+                current_samples = new_current_samples
+                current_times = new_current_times
+                current_label = new_current_label
+
+                # print(f"Iteration done. Min time: {current_times.min()}, Max time: {current_times.max()}") # Debug print
+
+            # --- Final Selection (after loop finishes) ---
+            # At this point, current_samples should all be at t >= 1.0
+            # We need to select the single best sample for each original batch index.
+            # The current_samples tensor now has batch_size * num_keep samples (potentially fewer if some finished early).
+
+            # Re-evaluate final samples if needed (optional, could use last simulation scores)
             if use_global:
                 final_scores = score_fn(current_samples)
             else:
                 final_scores = score_fn(current_samples, current_label)
 
-            batch_indices = torch.arange(
-                batch_size, device=self.device
-            ).repeat_interleave(num_keep)
-
-            samples_by_batch = {}
-            for i in range(batch_size):
-                batch_mask = batch_indices == i
-                samples_by_batch[i] = {
-                    "samples": current_samples[batch_mask],
-                    "scores": final_scores[batch_mask],
-                }
+            # We need to know which original batch element each sample corresponds to.
+            # This mapping got complicated. Let's re-think the final selection.
+            # It's simpler to run the final selection logic from the dt_std version.
 
             final_samples = []
+            # Need to group current_samples by their original batch index.
+            # The structure `current_samples[active_batch_mask] = next_samples` preserves order.
+            # So, the first num_keep samples correspond to original batch 0, next num_keep to batch 1, etc.
+            samples_per_original = (
+                current_samples.shape[0] // batch_size
+            )  # Should be num_keep
+            assert samples_per_original == num_keep  # Sanity check
+
             for i in range(batch_size):
-                batch_data = samples_by_batch[i]
-                best_idx = torch.argmax(batch_data["scores"])
-                final_samples.append(batch_data["samples"][best_idx])
+                start_idx = i * num_keep
+                end_idx = (i + 1) * num_keep
+                batch_final_samples = current_samples[start_idx:end_idx]
+                batch_final_scores = final_scores[start_idx:end_idx]
+
+                if len(batch_final_scores) > 0:
+                    best_idx_in_batch = torch.argmax(batch_final_scores)
+                    final_samples.append(batch_final_samples[best_idx_in_batch])
+                else:
+                    # This case should ideally not happen if batch_size > 0
+                    # Handle appropriately, maybe raise error or return placeholder
+                    print(
+                        f"Warning: No samples found for original batch index {i} in final selection."
+                    )
+
+            if not final_samples:
+                raise RuntimeError(
+                    "No final samples generated."
+                )  # Or return empty tensor
 
             return torch.stack(final_samples)
 
