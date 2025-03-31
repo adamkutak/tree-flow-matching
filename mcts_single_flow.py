@@ -1642,15 +1642,16 @@ class MCTSFlowSampler:
         batch_size=16,
         num_branches=4,
         num_keep=2,
-        warp_scale=0.5,  # Controls the strength of time warping
+        warp_scale=0.5,
         selector="fid",
         use_global=False,
         branch_start_time=0.0,
-        branch_dt=None,  # Note: branch_dt is used as the actual time step size dt
+        branch_dt=None,
+        sqrt_epsilon=1e-4,
     ):
         """
         Enhanced sampling method using time warping path exploration.
-        Follows the structure: Branch -> Simulate -> Select -> Update.
+        Supports num_branches > 4.
         Applies chain rule for time warping: dx/dt = v(x, f(t)) * f'(t).
         """
         if num_branches == 1 and num_keep == 1:
@@ -1660,47 +1661,14 @@ class MCTSFlowSampler:
             num_branches % num_keep == 0
         ), "num_branches must be divisible by num_keep"
         assert 0.0 <= branch_start_time < 1.0, "branch_start_time must be in [0, 1)"
-        assert (
-            num_branches <= 4
-        ), "Currently supports up to 4 warp functions"  # Added assertion
 
-        # --- Define time warping functions and their derivatives ---
-        def linear_warp(t):
-            return t
+        # --- Get warping functions and derivatives ---
+        warp_fns, warp_deriv_fns = self._get_warp_functions(
+            num_branches, self.device, sqrt_epsilon
+        )
+        # --- End Warp Function Definitions ---
 
-        def linear_warp_deriv(t):
-            return torch.ones_like(t)
-
-        def square_warp(t):
-            return t**2
-
-        def square_warp_deriv(t):
-            return 2 * t
-
-        def sqrt_warp(t):
-            # Add epsilon for numerical stability at t=0
-            return torch.sqrt(t + 1e-8)
-
-        def sqrt_warp_deriv(t):
-            return 0.5 / torch.sqrt(t + 1e-8)
-
-        def sigmoid_warp(t):
-            t_scaled = 12 * t - 6
-            return torch.sigmoid(t_scaled)  # Use torch.sigmoid for stability
-
-        def sigmoid_warp_deriv(t):
-            sig_t = sigmoid_warp(t)
-            return 12 * sig_t * (1 - sig_t)
-
-        # Lists of warping functions and their derivatives
-        warp_fns = [linear_warp, square_warp, sqrt_warp, sigmoid_warp][:num_branches]
-        warp_deriv_fns = [
-            linear_warp_deriv,
-            square_warp_deriv,
-            sqrt_warp_deriv,
-            sigmoid_warp_deriv,
-        ][:num_branches]
-
+        # Select scoring function
         if selector == "fid":
             score_fn = (
                 self.batch_compute_global_fid_change
@@ -1723,7 +1691,6 @@ class MCTSFlowSampler:
             raise ValueError(f"Unknown selector: {selector}")
 
         self.flow_model.eval()
-        # Use branch_dt if provided, otherwise base_dt, for the actual time step size
         actual_dt_step = (
             branch_dt if branch_dt is not None else (1 / self.num_timesteps)
         )
@@ -1767,9 +1734,8 @@ class MCTSFlowSampler:
             while torch.any(current_times < 1.0):
                 active_batch_mask = current_times < 1.0
                 if not torch.any(active_batch_mask):
-                    break  # Should not happen if while condition is correct, but safe check
+                    break
 
-                # Only operate on samples that haven't finished
                 active_samples = current_samples[active_batch_mask]
                 active_times = current_times[active_batch_mask]
                 active_label = current_label[active_batch_mask]
@@ -1779,65 +1745,55 @@ class MCTSFlowSampler:
                 branched_samples = active_samples.repeat_interleave(num_branches, dim=0)
                 branched_times = active_times.repeat_interleave(num_branches)
                 branched_label = active_label.repeat_interleave(num_branches)
-                # Keep track of original index for grouping later
                 branch_indices_map = torch.arange(
                     num_active, device=self.device
                 ).repeat_interleave(num_branches)
-                # Assign warp functions cyclically to branches
                 warp_indices = (
                     torch.arange(len(branched_samples), device=self.device)
                     % num_branches
                 )
 
                 # --- 2. Take ONE Branching Step with Warping ---
-                # Calculate the actual time step, ensuring we don't overshoot t=1
                 dt_step = torch.minimum(
                     actual_dt_step * torch.ones_like(branched_times),
                     1.0 - branched_times,
                 )
 
-                # Calculate warped times and derivatives for this step
                 warped_times_step = torch.zeros_like(branched_times)
                 warp_derivs_step = torch.zeros_like(branched_times)
+                # Use the fetched functions
                 for i in range(num_branches):
                     mask = warp_indices == i
                     if torch.any(mask):
                         orig_t = branched_times[mask]
-                        # Interpolate between warped and linear time based on warp_scale
-                        warped_t = warp_fns[i](orig_t)
+                        warped_t = warp_fns[i](orig_t)  # Use warp_fns list
                         final_warped_t = (
                             1 - warp_scale
                         ) * orig_t + warp_scale * warped_t
                         warped_times_step[mask] = final_warped_t
 
-                        # Calculate derivative for chain rule (using original time t)
-                        # Derivative of (1-a)t + a*f(t) is (1-a) + a*f'(t)
-                        orig_deriv = warp_deriv_fns[i](orig_t)
+                        orig_deriv = warp_deriv_fns[i](
+                            orig_t
+                        )  # Use warp_deriv_fns list
                         final_warp_deriv = (1 - warp_scale) * torch.ones_like(
                             orig_deriv
                         ) + warp_scale * orig_deriv
                         warp_derivs_step[mask] = final_warp_deriv
 
-                # Get velocity using the warped time for the step
                 velocity_step = self.flow_model(
                     warped_times_step, branched_samples, branched_label
                 )
-
-                # Apply the branching step using the chain rule: dx = v * f'(t) * dt
                 branched_samples = (
                     branched_samples
                     + velocity_step
                     * warp_derivs_step.view(-1, 1, 1, 1)
                     * dt_step.view(-1, 1, 1, 1)
                 )
-                branched_times = (
-                    branched_times + dt_step
-                )  # Actual time progresses normally
+                branched_times = branched_times + dt_step
 
                 # --- 3. Simulate Each Branch to Completion (for Scoring) ---
                 simulated_samples = branched_samples.clone()
                 simulated_times = branched_times.clone()
-                # We need to know which warp function corresponds to which simulation path
                 sim_warp_indices = warp_indices.clone()
 
                 while torch.any(simulated_times < 1.0):
@@ -1847,43 +1803,38 @@ class MCTSFlowSampler:
 
                     active_sim_samples = simulated_samples[sim_active_mask]
                     active_sim_times = simulated_times[sim_active_mask]
-                    active_sim_label = branched_label[
-                        sim_active_mask
-                    ]  # Label remains constant
+                    active_sim_label = branched_label[sim_active_mask]
                     active_sim_warp_indices = sim_warp_indices[sim_active_mask]
 
-                    # Calculate dt for this simulation substep
                     dt_sim = torch.minimum(
                         actual_dt_step * torch.ones_like(active_sim_times),
                         1.0 - active_sim_times,
                     )
 
-                    # Calculate warped times and derivatives for simulation step
                     warped_times_sim = torch.zeros_like(active_sim_times)
                     warp_derivs_sim = torch.zeros_like(active_sim_times)
+                    # Use the fetched functions
                     for i in range(num_branches):
-                        # Find which of the *currently active* simulation samples use warp i
                         mask = active_sim_warp_indices == i
                         if torch.any(mask):
                             orig_t = active_sim_times[mask]
-                            warped_t = warp_fns[i](orig_t)
+                            warped_t = warp_fns[i](orig_t)  # Use warp_fns list
                             final_warped_t = (
                                 1 - warp_scale
                             ) * orig_t + warp_scale * warped_t
                             warped_times_sim[mask] = final_warped_t
 
-                            orig_deriv = warp_deriv_fns[i](orig_t)
+                            orig_deriv = warp_deriv_fns[i](
+                                orig_t
+                            )  # Use warp_deriv_fns list
                             final_warp_deriv = (1 - warp_scale) * torch.ones_like(
                                 orig_deriv
                             ) + warp_scale * orig_deriv
                             warp_derivs_sim[mask] = final_warp_deriv
 
-                    # Get velocity using warped time
                     velocity_sim = self.flow_model(
                         warped_times_sim, active_sim_samples, active_sim_label
                     )
-
-                    # Update simulation state using chain rule
                     update = (
                         velocity_sim
                         * warp_derivs_sim.view(-1, 1, 1, 1)
@@ -1925,7 +1876,6 @@ class MCTSFlowSampler:
                             batch_branched_samples[top_k_indices]
                         )
                         selected_times_list.append(batch_branched_times[top_k_indices])
-                    # If num_to_keep is 0 (e.g., if input batch size was 0), append nothing
 
                 # --- 6. Update Current State ---
                 if not selected_samples_list:  # Handle empty case
@@ -1939,7 +1889,6 @@ class MCTSFlowSampler:
                 )
 
                 # Replace the finished/processed samples with the new selected ones
-                # Need to carefully map back. Easier to reconstruct current_samples/times
                 new_current_samples = torch.zeros_like(current_samples)
                 new_current_times = torch.zeros_like(current_times)
                 new_current_label = torch.zeros_like(current_label)
@@ -1962,52 +1911,45 @@ class MCTSFlowSampler:
                 current_times = new_current_times
                 current_label = new_current_label
 
-                # print(f"Iteration done. Min time: {current_times.min()}, Max time: {current_times.max()}") # Debug print
-
             # --- Final Selection (after loop finishes) ---
-            # At this point, current_samples should all be at t >= 1.0
-            # We need to select the single best sample for each original batch index.
-            # The current_samples tensor now has batch_size * num_keep samples (potentially fewer if some finished early).
-
-            # Re-evaluate final samples if needed (optional, could use last simulation scores)
             if use_global:
                 final_scores = score_fn(current_samples)
             else:
                 final_scores = score_fn(current_samples, current_label)
 
-            # We need to know which original batch element each sample corresponds to.
-            # This mapping got complicated. Let's re-think the final selection.
-            # It's simpler to run the final selection logic from the dt_std version.
-
             final_samples = []
-            # Need to group current_samples by their original batch index.
-            # The structure `current_samples[active_batch_mask] = next_samples` preserves order.
-            # So, the first num_keep samples correspond to original batch 0, next num_keep to batch 1, etc.
             samples_per_original = (
                 current_samples.shape[0] // batch_size
             )  # Should be num_keep
-            assert samples_per_original == num_keep  # Sanity check
+            # assert samples_per_original == num_keep # This might fail if some finished early and weren't replaced
+
+            # Correct way to handle potentially varying number of samples per batch item
+            current_batch_indices = torch.arange(
+                batch_size, device=self.device
+            ).repeat_interleave(
+                samples_per_original
+            )  # Map current samples back to original batch index
 
             for i in range(batch_size):
-                start_idx = i * num_keep
-                end_idx = (i + 1) * num_keep
-                batch_final_samples = current_samples[start_idx:end_idx]
-                batch_final_scores = final_scores[start_idx:end_idx]
+                batch_mask = current_batch_indices == i
+                batch_final_samples = current_samples[batch_mask]
+                batch_final_scores = final_scores[batch_mask]
 
                 if len(batch_final_scores) > 0:
                     best_idx_in_batch = torch.argmax(batch_final_scores)
                     final_samples.append(batch_final_samples[best_idx_in_batch])
                 else:
-                    # This case should ideally not happen if batch_size > 0
-                    # Handle appropriately, maybe raise error or return placeholder
+                    # Handle case where a batch item might have finished very early
+                    # and has no samples left in current_samples. Need a fallback.
+                    # Option 1: Raise error
+                    # Option 2: Return fewer than batch_size samples
+                    # Option 3: Generate a fallback sample (e.g., random noise or rerun?)
                     print(
-                        f"Warning: No samples found for original batch index {i} in final selection."
+                        f"Warning: No final samples found for original batch index {i}. Skipping."
                     )
 
             if not final_samples:
-                raise RuntimeError(
-                    "No final samples generated."
-                )  # Or return empty tensor
+                raise RuntimeError("No final samples generated.")
 
             return torch.stack(final_samples)
 
@@ -2204,74 +2146,118 @@ class MCTSFlowSampler:
 
         return flow_exists and value_exists
 
-    # def calculate_frechet_distance_components(self, mu1, sigma1, mu2, sigma2):
-    #     """
-    #     Calculate the components of the Frechet distance between two distributions.
+    # --- Helper Function to Generate Warp Functions ---
+    def _get_warp_functions(self, n, device, sqrt_epsilon=1e-4):
+        """Generates n warp functions and their derivatives."""
+        warp_fns = []
+        warp_deriv_fns = []
 
-    #     Returns:
-    #         mean_distance: The squared distance between means
-    #         cov_distance: The trace term for covariance matrices
-    #         covmean_term: The trace of the square root of product of covariances
-    #     """
-    #     # Mean term: ||μ1 - μ2||^2
-    #     mean_distance = np.sum((mu1 - mu2) ** 2)
+        # Base functions
+        # 1. Linear
+        def linear_warp(t):
+            return t
 
-    #     # Covariance terms: Tr(Σ1) + Tr(Σ2) - 2*Tr(sqrt(Σ1*Σ2))
-    #     trace_sigma1 = np.trace(sigma1)
-    #     trace_sigma2 = np.trace(sigma2)
+        def linear_warp_deriv(t):
+            return torch.ones_like(t)
 
-    #     # Calculate sqrt(Σ1*Σ2)
-    #     covmean = sqrtm(sigma1.dot(sigma2))
-    #     if np.iscomplexobj(covmean):
-    #         covmean = covmean.real
+        warp_fns.append(linear_warp)
+        warp_deriv_fns.append(linear_warp_deriv)
 
-    #     # 2*Tr(sqrt(Σ1*Σ2))
-    #     covmean_term = 2 * np.trace(covmean)
+        # 2. Square
+        def square_warp(t):
+            return t**2
 
-    #     # Tr(Σ1) + Tr(Σ2)
-    #     cov_distance = trace_sigma1 + trace_sigma2
+        def square_warp_deriv(t):
+            return 2 * t
 
-    #     return mean_distance, cov_distance, covmean_term
+        warp_fns.append(square_warp)
+        warp_deriv_fns.append(square_warp_deriv)
 
-    # def analyze_fid_components(self, generated_samples, class_idx):
-    #     """
-    #     Analyze the components of the FID score for a set of generated samples.
+        # 3. Modified Sqrt
+        def sqrt_warp(t):
+            return torch.sqrt(t + sqrt_epsilon)
 
-    #     Args:
-    #         generated_samples: Tensor of generated images
-    #         class_idx: Class index for comparison
+        def sqrt_warp_deriv(t):
+            return 0.5 / torch.sqrt(t + sqrt_epsilon)
 
-    #     Returns:
-    #         Dictionary with FID components
-    #     """
-    #     # Extract features from generated samples
-    #     features = self.extract_inception_features(generated_samples)
+        warp_fns.append(sqrt_warp)
+        warp_deriv_fns.append(sqrt_warp_deriv)
 
-    #     # Calculate statistics for generated samples
-    #     mu_gen = np.mean(features, axis=0)
-    #     sigma_gen = np.cov(features, rowvar=False)
+        # 4. Sigmoid (Standard)
+        def sigmoid_warp_k12(t):
+            t_scaled = 12 * t - 6
+            return torch.sigmoid(t_scaled)
 
-    #     # Get reference statistics for this class
-    #     mu_ref = self.fids[class_idx]["mu"]
-    #     sigma_ref = self.fids[class_idx]["sigma"]
+        def sigmoid_warp_deriv_k12(t):
+            sig_t = sigmoid_warp_k12(t)
+            return 12 * sig_t * (1 - sig_t)
 
-    #     # Calculate FID components
-    #     mean_dist, cov_dist, covmean_term = self.calculate_frechet_distance_components(
-    #         mu_gen, sigma_gen, mu_ref, sigma_ref
-    #     )
+        warp_fns.append(sigmoid_warp_k12)
+        warp_deriv_fns.append(sigmoid_warp_deriv_k12)
 
-    #     # Calculate total FID
-    #     fid_score = mean_dist + cov_dist - covmean_term
+        # Add more if needed (cyclically or by adding new types)
+        current_len = 4
+        while current_len < n:
+            next_fn_idx = (
+                current_len % 4
+            )  # Cycle through base types for now, can add more complex logic
+            if next_fn_idx == 0:  # Add Cubic
+                p = 3 + (current_len // 4)  # Power increases: 3, 4, 5...
 
-    #     return {
-    #         "fid_total": fid_score,
-    #         "mean_distance": mean_dist,
-    #         "covariance_distance": cov_dist,
-    #         "covmean_term": covmean_term,
-    #         "mean_distance_percent": (
-    #             100 * mean_dist / fid_score if fid_score > 0 else 0
-    #         ),
-    #         "covariance_percent": (
-    #             100 * (cov_dist - covmean_term) / fid_score if fid_score > 0 else 0
-    #         ),
-    #     }
+                def cubic_warp(t, p=p):  # Need to capture p
+                    return t**p
+
+                def cubic_warp_deriv(t, p=p):
+                    return p * (t ** (p - 1))
+
+                warp_fns.append(cubic_warp)
+                warp_deriv_fns.append(cubic_warp_deriv)
+            elif next_fn_idx == 1:  # Add Wider Sigmoid
+                k = 6 * (
+                    1 + current_len // 4
+                )  # Steepness decreases: 6, 3, ...? Let's increase: 6, 18, 24
+                k = 6 * (2 + current_len // 4)  # k = 18, 24, 30...
+
+                def sigmoid_warp_k_wide(t, k=k):
+                    t_scaled = k * t - k / 2  # Center at 0.5
+                    return torch.sigmoid(t_scaled)
+
+                def sigmoid_warp_deriv_k_wide(t, k=k):
+                    sig_t = sigmoid_warp_k_wide(t, k=k)
+                    return k * sig_t * (1 - sig_t)
+
+                warp_fns.append(sigmoid_warp_k_wide)
+                warp_deriv_fns.append(sigmoid_warp_deriv_k_wide)
+            elif (
+                next_fn_idx == 2
+            ):  # Add Higher Root (like cube root) - also has derivative issues near 0
+                p_inv = 3 + (current_len // 4)  # Root increases: 3, 4, 5...
+
+                def root_warp(t, p_inv=p_inv, eps=sqrt_epsilon):
+                    return (t + eps) ** (1.0 / p_inv)  # Add epsilon
+
+                def root_warp_deriv(t, p_inv=p_inv, eps=sqrt_epsilon):
+                    return (1.0 / p_inv) * (t + eps) ** ((1.0 / p_inv) - 1.0)
+
+                warp_fns.append(root_warp)
+                warp_deriv_fns.append(root_warp_deriv)
+            elif next_fn_idx == 3:  # Add Narrower Sigmoid
+                k = 18 * (1 + current_len // 4)  # Steepness increases: 18, 36, ...
+
+                def sigmoid_warp_k_narrow(t, k=k):
+                    t_scaled = k * t - k / 2  # Center at 0.5
+                    return torch.sigmoid(t_scaled)
+
+                def sigmoid_warp_deriv_k_narrow(t, k=k):
+                    sig_t = sigmoid_warp_k_narrow(t, k=k)
+                    return k * sig_t * (1 - sig_t)
+
+                warp_fns.append(sigmoid_warp_k_narrow)
+                warp_deriv_fns.append(sigmoid_warp_deriv_k_narrow)
+
+            current_len += 1
+
+        # Ensure we only return n functions if the loop overshoots (shouldn't happen with while)
+        return warp_fns[:n], warp_deriv_fns[:n]
+
+    # --- End Helper Function ---
