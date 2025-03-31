@@ -301,7 +301,7 @@ def calculate_metrics(
 
         # Generate full batches
         for _ in range(num_batches):
-            sample = sampler.batch_sample_with_path_exploration(
+            sample = sampler.batch_sample_with_path_exploration_timewarp(
                 class_label=class_label,
                 batch_size=generation_batch_size,
                 num_branches=num_branches,
