@@ -281,6 +281,7 @@ def calculate_metrics(
 ):
     """
     Calculate FID metrics and average Mahalanobis distance for a specific branch/keep configuration across all classes.
+    Returns FID score, average Mahalanobis distance, and FID components for debugging.
     """
     fid.reset()
 
@@ -342,7 +343,34 @@ def calculate_metrics(
     fid_score = fid.compute()
     avg_mahalanobis = sum(mahalanobis_distances) / len(mahalanobis_distances)
 
-    return fid_score, avg_mahalanobis
+    # Get FID components for debugging
+    mean_real = (fid.real_features_sum / fid.real_features_num_samples).cpu()
+    mean_fake = (fid.fake_features_sum / fid.fake_features_num_samples).cpu()
+
+    cov_real_num = (
+        fid.real_features_cov_sum
+        - fid.real_features_num_samples
+        * mean_real.unsqueeze(0).t().mm(mean_real.unsqueeze(0))
+    )
+    cov_real = (cov_real_num / (fid.real_features_num_samples - 1)).cpu()
+
+    cov_fake_num = (
+        fid.fake_features_cov_sum
+        - fid.fake_features_num_samples
+        * mean_fake.unsqueeze(0).t().mm(mean_fake.unsqueeze(0))
+    )
+    cov_fake = (cov_fake_num / (fid.fake_features_num_samples - 1)).cpu()
+
+    fid_components = {
+        "mean_real": mean_real,
+        "mean_fake": mean_fake,
+        "cov_real": cov_real,
+        "cov_fake": cov_fake,
+        "num_real_samples": fid.real_features_num_samples.item(),
+        "num_fake_samples": fid.fake_features_num_samples.item(),
+    }
+
+    return fid_score, avg_mahalanobis, fid_components
 
 
 def main():
@@ -422,7 +450,7 @@ def main():
         # )
 
         for num_branches, num_keep in branch_keep_pairs:
-            fid_score, avg_mahalanobis = calculate_metrics(
+            fid_score, avg_mahalanobis, fid_components = calculate_metrics(
                 sampler,
                 num_branches,
                 num_keep,
@@ -434,6 +462,7 @@ def main():
             print(f"Cycle {cycle + 1} - (branches={num_branches}, keep={num_keep}):")
             print(f"   FID Score: {fid_score:.4f}")
             print(f"   Average Mahalanobis Distance: {avg_mahalanobis:.4f}")
+            print(f"   FID Components: {fid_components}")
 
 
 if __name__ == "__main__":
