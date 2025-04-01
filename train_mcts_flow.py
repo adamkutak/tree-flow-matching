@@ -470,7 +470,7 @@ def main():
                 num_keep,
                 device,
                 sigma=0,
-                n_samples=1000,
+                n_samples=200,
                 fid=fid,
             )
             print(f"\nCycle {cycle + 1} - (branches={num_branches}, keep={num_keep}):")
