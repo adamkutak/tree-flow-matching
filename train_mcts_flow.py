@@ -311,7 +311,7 @@ def calculate_metrics(
                 selector="mean",
                 use_global=True,
                 branch_start_time=0,
-                branch_dt=0.1,
+                branch_dt=0.05,
             )
             # sample = sampler.batch_sample_with_path_exploration(
             #     class_label=class_label,
