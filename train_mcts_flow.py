@@ -281,7 +281,7 @@ def calculate_metrics(
 ):
     """
     Calculate FID metrics and average Mahalanobis distance for a specific branch/keep configuration across all classes.
-    Returns FID score, average Mahalanobis distance, and FID components for debugging.
+    Returns FID score, avg_mahalanobis, and detailed FID components.
     """
     fid.reset()
 
@@ -343,31 +343,45 @@ def calculate_metrics(
     fid_score = fid.compute()
     avg_mahalanobis = sum(mahalanobis_distances) / len(mahalanobis_distances)
 
-    # Get FID components for debugging
-    mean_real = fid.real_features_sum / fid.real_features_num_samples
-    mean_fake = fid.fake_features_sum / fid.fake_features_num_samples
+    # Calculate means
+    mean_real = (fid.real_features_sum / fid.real_features_num_samples).unsqueeze(0)
+    mean_fake = (fid.fake_features_sum / fid.fake_features_num_samples).unsqueeze(0)
 
+    # Calculate covariances
     cov_real_num = (
         fid.real_features_cov_sum
-        - fid.real_features_num_samples
-        * mean_real.unsqueeze(0).t().mm(mean_real.unsqueeze(0))
+        - fid.real_features_num_samples * mean_real.t().mm(mean_real)
     )
     cov_real = cov_real_num / (fid.real_features_num_samples - 1)
 
     cov_fake_num = (
         fid.fake_features_cov_sum
-        - fid.fake_features_num_samples
-        * mean_fake.unsqueeze(0).t().mm(mean_fake.unsqueeze(0))
+        - fid.fake_features_num_samples * mean_fake.t().mm(mean_fake)
     )
     cov_fake = cov_fake_num / (fid.fake_features_num_samples - 1)
 
+    # Calculate detailed FID components
+    mean_diff = mean_real - mean_fake
+    mean_norm = mean_diff.norm().item()
+    mean_term = torch.sum(mean_diff**2).item()
+
+    cov_sum = torch.trace(cov_real + cov_fake).item()
+    covmean = torch.linalg.matrix_power(cov_real.mm(cov_fake), 0.5)
+    cov_term = -2 * torch.trace(covmean).item()
+
     fid_components = {
-        "mean_real": mean_real,
-        "mean_fake": mean_fake,
-        "cov_real": cov_real,
-        "cov_fake": cov_fake,
+        "mean_norm": mean_norm,
+        "mean_term": mean_term,
+        "cov_sum_trace": cov_sum,
+        "covmean_trace": -cov_term / 2,  # Negative of cov_term/2 for clarity
+        "total_trace_term": cov_sum + cov_term,
+        "total_fid": fid_score.item(),
         "num_real_samples": fid.real_features_num_samples.item(),
         "num_fake_samples": fid.fake_features_num_samples.item(),
+        "mean_real_norm": mean_real.norm().item(),
+        "mean_fake_norm": mean_fake.norm().item(),
+        "cov_real_trace": torch.trace(cov_real).item(),
+        "cov_fake_trace": torch.trace(cov_fake).item(),
     }
 
     return fid_score, avg_mahalanobis, fid_components
@@ -459,10 +473,37 @@ def main():
                 n_samples=200,
                 fid=fid,
             )
-            print(f"Cycle {cycle + 1} - (branches={num_branches}, keep={num_keep}):")
-            print(f"   FID Score: {fid_score:.4f}")
-            print(f"   Average Mahalanobis Distance: {avg_mahalanobis:.4f}")
-            print(f"   FID Components: {fid_components}")
+            print(f"\nCycle {cycle + 1} - (branches={num_branches}, keep={num_keep}):")
+            print(f"FID Components Breakdown:")
+            print(f"  Mean Statistics:")
+            print(
+                f"    - Real features mean norm: {fid_components['mean_real_norm']:.4f}"
+            )
+            print(
+                f"    - Fake features mean norm: {fid_components['mean_fake_norm']:.4f}"
+            )
+            print(f"    - Mean difference norm: {fid_components['mean_norm']:.4f}")
+            print(f"    - Mean term (squared L2): {fid_components['mean_term']:.4f}")
+            print(f"\n  Covariance Statistics:")
+            print(
+                f"    - Real covariance trace: {fid_components['cov_real_trace']:.4f}"
+            )
+            print(
+                f"    - Fake covariance trace: {fid_components['cov_fake_trace']:.4f}"
+            )
+            print(f"    - Sum of traces: {fid_components['cov_sum_trace']:.4f}")
+            print(
+                f"    - 2 * Trace(sqrt(cov1*cov2)): {2 * fid_components['covmean_trace']:.4f}"
+            )
+            print(f"    - Total trace term: {fid_components['total_trace_term']:.4f}")
+            print(f"\n  Final FID = {fid_components['total_fid']:.4f}")
+            print(
+                f"    (mean_term + trace_term = {fid_components['mean_term'] + fid_components['total_trace_term']:.4f})"
+            )
+            print(f"\n  Sample Counts:")
+            print(f"    - Real samples: {fid_components['num_real_samples']}")
+            print(f"    - Fake samples: {fid_components['num_fake_samples']}")
+            print(f"\n  Mahalanobis Distance: {avg_mahalanobis:.4f}")
 
 
 if __name__ == "__main__":
