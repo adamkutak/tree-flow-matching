@@ -338,7 +338,7 @@ def calculate_metrics(
                 branch_dt=0.1,
             )
             # Compute Mahalanobis distance for this batch
-            mahalanobis_dist = sampler.batch_compute_global_mean_distance(sample)
+            mahalanobis_dist = sampler.batch_compute_global_mean_difference(sample)
             mahalanobis_distances.extend(mahalanobis_dist.cpu().tolist())
             generated_samples.extend(sample.cpu())
 
