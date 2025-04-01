@@ -466,10 +466,11 @@ def main():
             print(f"  a (mean term) = {fid_components['a']:.4f}")
             print(f"  b (trace sum) = {fid_components['b']:.4f}")
             print(f"  c (sqrt term) = {fid_components['c']:.4f}")
-            print(f"  FID = a + b - 2c = {fid_components['fid']:.4f}")
+            print(f"  real FID = {fid_score}")
             print(
                 f"  Verification: {fid_components['a'] + fid_components['b'] - 2*fid_components['c']:.4f}"
             )
+            print(f"Average Mahalanobis Distance: {avg_mahalanobis:.4f}")
 
 
 if __name__ == "__main__":
