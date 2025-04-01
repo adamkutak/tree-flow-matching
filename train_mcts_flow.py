@@ -344,22 +344,22 @@ def calculate_metrics(
     avg_mahalanobis = sum(mahalanobis_distances) / len(mahalanobis_distances)
 
     # Get FID components for debugging
-    mean_real = (fid.real_features_sum / fid.real_features_num_samples).cpu()
-    mean_fake = (fid.fake_features_sum / fid.fake_features_num_samples).cpu()
+    mean_real = fid.real_features_sum / fid.real_features_num_samples
+    mean_fake = fid.fake_features_sum / fid.fake_features_num_samples
 
     cov_real_num = (
         fid.real_features_cov_sum
         - fid.real_features_num_samples
         * mean_real.unsqueeze(0).t().mm(mean_real.unsqueeze(0))
     )
-    cov_real = (cov_real_num / (fid.real_features_num_samples - 1)).cpu()
+    cov_real = cov_real_num / (fid.real_features_num_samples - 1)
 
     cov_fake_num = (
         fid.fake_features_cov_sum
         - fid.fake_features_num_samples
         * mean_fake.unsqueeze(0).t().mm(mean_fake.unsqueeze(0))
     )
-    cov_fake = (cov_fake_num / (fid.fake_features_num_samples - 1)).cpu()
+    cov_fake = cov_fake_num / (fid.fake_features_num_samples - 1)
 
     fid_components = {
         "mean_real": mean_real,
