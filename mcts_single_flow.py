@@ -855,53 +855,15 @@ class MCTSFlowSampler:
         """
         batch_size = image_batch.shape[0]
 
-        features = self.extract_inception_features(image_batch).cpu().numpy()
+        features = self.extract_inception_features(image_batch)
 
         mu_gen = np.mean(features, axis=0)
         # Add epsilon to prevent singular covariance
-        sigma_gen = np.cov(features, rowvar=False) + np.eye(features.shape[1]) * 1e-6
-
-        target_stats = None
-        try:
-            if use_global:
-                if (
-                    self.global_fid_stats is None
-                    or "mu" not in self.global_fid_stats
-                    or "sigma" not in self.global_fid_stats
-                ):
-                    raise ValueError("Global FID stats not computed or incomplete.")
-                target_stats = self.global_fid_stats
-            else:
-                if (
-                    class_label not in self.fids
-                    or "mu" not in self.fids[class_label]
-                    or "sigma" not in self.fids[class_label]
-                ):
-                    raise ValueError(
-                        f"Class {class_label} FID stats not computed or incomplete."
-                    )
-                target_stats = self.fids[class_label]
-        except Exception as e:
-            print(f"Error retrieving target FID statistics: {e}")
-            return float("inf")
-
-        mu_real = target_stats["mu"]
-        sigma_real = target_stats["sigma"]
-
-        # Ensure sigma_real is also non-singular
-        sigma_real = sigma_real + np.eye(sigma_real.shape[0]) * 1e-6
-
-        try:
-            fid_value = self.calculate_frechet_distance(
-                mu_gen, sigma_gen, mu_real, sigma_real
-            )
-            # Clamp FID to avoid extreme values if necessary, e.g., negative values due to numerical instability
-            fid_value = max(0, fid_value)
-        except Exception as e:
-            print(f"Error in calculate_frechet_distance: {e}")
-            return float("inf")
-
-        return fid_value
+        sigma_gen = np.cov(features, rowvar=False)
+        fid = self.calculate_frechet_distance(
+            mu_gen, sigma_gen, self.global_fid["mu"], self.global_fid["sigma"]
+        )
+        return fid
 
     def calculate_frechet_distance(self, mu1, sigma1, mu2, sigma2):
         """Calculate the Frechet distance between two distributions."""
