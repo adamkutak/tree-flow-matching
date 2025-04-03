@@ -2831,6 +2831,10 @@ class MCTSFlowSampler:
                     best_batch_overall_idx
                 ]  # Get the actual sample indices
 
+                print(
+                    f"Selected batch with FID: {best_score:.4f} (from {num_scoring_batches} evaluations)"
+                )
+
                 # Retrieve the best batch from the candidate pool
                 final_samples = all_candidate_samples[winning_indices]
 

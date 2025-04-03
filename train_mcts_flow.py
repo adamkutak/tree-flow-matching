@@ -286,7 +286,7 @@ def calculate_metrics(
 
     # Generate samples evenly across all classes
     samples_per_class = n_samples // sampler.num_classes
-    generation_batch_size = 64
+    generation_batch_size = 16
     metric_batch_size = 64
     generated_samples = []
     mahalanobis_distances = []
@@ -476,7 +476,7 @@ def main():
                 num_keep,
                 device,
                 sigma=0,
-                n_samples=650,
+                n_samples=200,
                 fid=fid,
             )
             print(f"\nCycle {cycle + 1} - (branches={num_branches}, keep={num_keep}):")
