@@ -2707,10 +2707,7 @@ class MCTSFlowSampler:
         batch_size=16,
         num_branches=4,  # Determines the size of the candidate pool (batch_size * num_branches)
         num_scoring_batches=10,  # How many random batches to score
-        use_global=False,
-        # Add dummy args for signature consistency if needed, but they aren't used here
-        # branch_start_time=0.0, # Unused in this direct version
-        # branch_dt=None,       # Unused in this direct version
+        use_global=True,
     ):
         """
         Generates samples using a direct random search optimized for batch FID.
