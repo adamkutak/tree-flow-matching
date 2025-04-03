@@ -341,6 +341,7 @@ def calculate_metrics(
                 class_label=class_label,
                 batch_size=generation_batch_size,
                 num_branches=num_branches,
+                num_scoring_batches=4 * num_branches,
             )
             # Compute Mahalanobis distance for this batch
             mahalanobis_dist = sampler.batch_compute_global_mean_difference(sample)

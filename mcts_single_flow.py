@@ -1984,6 +1984,10 @@ class MCTSFlowSampler:
         Args are kept the same as batch_sample_with_path_exploration for compatibility,
         though many are unused in this simpler implementation.
         """
+
+        if num_branches == 1 and num_keep == 1:
+            return self.regular_batch_sample(class_label, batch_size)
+
         # Select scoring function (kept for compatibility)
         if selector == "fid":
             score_fn = (
@@ -2086,6 +2090,9 @@ class MCTSFlowSampler:
         Returns:
             Tensor of [batch_size, C, H, W] generated samples.
         """
+        if num_branches == 1:
+            return self.regular_batch_sample(class_label, batch_size)
+
         assert 0.0 <= branch_start_time < 1.0, "branch_start_time must be in [0, 1)"
         assert num_scoring_batches > 0, "num_scoring_batches must be positive"
 
@@ -2437,6 +2444,9 @@ class MCTSFlowSampler:
         Returns:
             Tensor of [batch_size, C, H, W] generated samples.
         """
+        if num_branches == 1:
+            return self.regular_batch_sample(class_label, batch_size)
+
         assert 0.0 <= branch_start_time < 1.0, "branch_start_time must be in [0, 1)"
         assert num_scoring_batches > 0, "num_scoring_batches must be positive"
 
@@ -2689,6 +2699,9 @@ class MCTSFlowSampler:
         Returns:
             Tensor of [batch_size, C, H, W] generated samples corresponding to the best batch FID.
         """
+        if num_branches == 1:
+            return self.regular_batch_sample(class_label, batch_size)
+
         # Calculate the total number of candidates based on batch_size and num_branches
         num_candidates = batch_size * num_branches
 
@@ -2748,9 +2761,6 @@ class MCTSFlowSampler:
                 ] = current_samples
                 generated_count += current_chunk_size
 
-            print(
-                f"Generated {generated_count} candidate samples (target: {num_candidates})."
-            )
             if generated_count != num_candidates:
                 print(
                     f"Warning: Mismatch in generated candidates. Proceeding with {generated_count}."
@@ -2820,10 +2830,6 @@ class MCTSFlowSampler:
                 winning_indices = batch_indices_list[
                     best_batch_overall_idx
                 ]  # Get the actual sample indices
-
-                print(
-                    f"Selected batch with FID: {best_score:.4f} (from {num_scoring_batches} evaluations)"
-                )
 
                 # Retrieve the best batch from the candidate pool
                 final_samples = all_candidate_samples[winning_indices]
