@@ -2536,7 +2536,6 @@ class MCTSFlowSampler:
                     dts = torch.normal(
                         mean=mean_dt,
                         std=std_dev,
-                        size=active_branched_times_step.shape,  # Match shape
                         device=self.device,
                     )
                     # Clamp dt: must be >= 0 and not exceed time remaining
