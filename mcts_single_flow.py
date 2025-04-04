@@ -2389,7 +2389,6 @@ class MCTSFlowSampler:
                         winning_indices = batch_indices_list[
                             best_batch_idx
                         ]  # These are indices into the simulated pool
-                        print(f"Step {loop_count}: Best Batch FID: {best_score:.4f}")
 
                 # --- 6. Update Current State ---
                 # Select the state *after the branching step* corresponding to the winning batch
