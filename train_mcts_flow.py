@@ -344,20 +344,20 @@ def calculate_metrics(
             #     num_scoring_batches=4 * num_branches,
             #     dt_std=0.1,
             # )
-            sample = sampler.batch_sample_with_path_exploration_timewarp_batch_fid(
-                class_label=class_label,
-                batch_size=generation_batch_size,
-                num_branches=num_branches,
-                num_scoring_batches=4 * num_branches,
-                warp_scale=0.5,
-            )
-
-            # sample = sampler.batch_sample_with_random_search_batch_fid_direct(
+            # sample = sampler.batch_sample_with_path_exploration_timewarp_batch_fid(
             #     class_label=class_label,
             #     batch_size=generation_batch_size,
             #     num_branches=num_branches,
             #     num_scoring_batches=4 * num_branches,
+            #     warp_scale=0.5,
             # )
+
+            sample = sampler.batch_sample_with_random_search_batch_fid_direct(
+                class_label=class_label,
+                batch_size=generation_batch_size,
+                num_branches=num_branches,
+                num_scoring_batches=4 * num_branches,
+            )
             # Compute Mahalanobis distance for this batch
             mahalanobis_dist = sampler.batch_compute_global_mean_difference(sample)
             mahalanobis_distances.extend(mahalanobis_dist.cpu().tolist())
