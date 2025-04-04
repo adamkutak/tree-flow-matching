@@ -337,13 +337,21 @@ def calculate_metrics(
             #     branch_start_time=0,
             #     branch_dt=0.1,
             # )
-            sample = sampler.batch_sample_with_path_exploration_batch_fid(
+            # sample = sampler.batch_sample_with_path_exploration_batch_fid(
+            #     class_label=class_label,
+            #     batch_size=generation_batch_size,
+            #     num_branches=num_branches,
+            #     num_scoring_batches=4 * num_branches,
+            #     dt_std=0.1,
+            # )
+            sample = sampler.batch_sample_with_path_exploration_timewarp_batch_fid(
                 class_label=class_label,
                 batch_size=generation_batch_size,
                 num_branches=num_branches,
                 num_scoring_batches=4 * num_branches,
                 dt_std=0.1,
             )
+
             # sample = sampler.batch_sample_with_random_search_batch_fid_direct(
             #     class_label=class_label,
             #     batch_size=generation_batch_size,
