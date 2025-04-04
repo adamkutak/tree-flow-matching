@@ -2645,7 +2645,6 @@ class MCTSFlowSampler:
                         best_score = torch.min(scores_tensor)
                         best_batch_idx = torch.argmin(scores_tensor)
                         winning_indices = batch_indices_list[best_batch_idx]
-                        print(f"Best Batch FID: {best_score:.4f}")
 
                 # --- 6. Update Current State ---
                 current_samples = post_branch_samples[winning_indices]
