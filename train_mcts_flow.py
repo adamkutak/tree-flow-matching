@@ -349,7 +349,7 @@ def calculate_metrics(
                 batch_size=generation_batch_size,
                 num_branches=num_branches,
                 num_scoring_batches=4 * num_branches,
-                dt_std=0.1,
+                warp_scale=0.5,
             )
 
             # sample = sampler.batch_sample_with_random_search_batch_fid_direct(
