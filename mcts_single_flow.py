@@ -2488,13 +2488,7 @@ class MCTSFlowSampler:
                 current_times = torch.clamp(current_times, max=branch_start_time)
 
             # --- Main Path Exploration Loop ---
-            loop_count = 0
-            max_loops = int(1.0 / branch_dt_base) + 50  # Safety break
             while torch.any(current_times < 1.0):
-                loop_count += 1
-                if loop_count > max_loops:
-                    print("Warning: Max loops reached in dt_batch_fid. Breaking.")
-                    break
 
                 active_batch_mask = current_times < 1.0
                 if not torch.any(active_batch_mask):
@@ -2515,51 +2509,51 @@ class MCTSFlowSampler:
                 post_branch_samples = branched_samples.clone()  # State AFTER the step
                 post_branch_times = branched_times.clone()  # Time AFTER the step
 
-                # Only compute velocity for branches where t < 1
+                # Only compute velocity for branches where t < 1 (mask used later)
                 active_step_mask = branched_times < 1.0
                 if torch.any(active_step_mask):
-                    active_branched_samples_step = branched_samples[active_step_mask]
-                    active_branched_times_step = branched_times[active_step_mask]
-                    active_branched_label_step = branched_label[active_step_mask]
-
-                    # Calculate mean dt for active branches, ensure it doesn't overshoot 1.0
-                    mean_dt = torch.minimum(
-                        branch_dt_base * torch.ones_like(active_branched_times_step),
-                        1.0 - active_branched_times_step,
+                    # Get velocity for ALL branches (simpler to compute for all, mask later)
+                    velocity = self.flow_model(
+                        branched_times, branched_samples, branched_label
                     )
-                    mean_dt = torch.clamp(
-                        mean_dt, min=0.0
-                    )  # Ensure mean_dt is non-negative
 
-                    # Sample different dt values
-                    std_dev = dt_std * mean_dt  # Std proportional to mean dt
+                    # Sample dt values for ALL branches using SCALAR mean and std
+                    # Use branch_dt_base (scalar) as the mean
+                    mean_dt_scalar = branch_dt_base
+                    std_dev_scalar = dt_std * mean_dt_scalar
+
+                    # Use the normal(float, float, size=...) signature
                     dts = torch.normal(
-                        mean=mean_dt,
-                        std=std_dev,
+                        mean=mean_dt_scalar,
+                        std=std_dev_scalar,
+                        size=(len(branched_samples),),  # Sample for ALL branches
                         device=self.device,
                     )
-                    # Clamp dt: must be >= 0 and not exceed time remaining
-                    dts = torch.clamp(
-                        dts, min=0.0, max=(1.0 - active_branched_times_step)
-                    )
 
-                    # Get velocity for the state BEFORE the step
-                    velocity = self.flow_model(
-                        active_branched_times_step,
-                        active_branched_samples_step,
-                        active_branched_label_step,
-                    )
+                    # Clamp dt AFTER sampling based on individual time remaining
+                    # Ensure clamp min is a tensor or scalar consistent with dts
+                    min_clamp = torch.tensor(0.0, device=self.device)
+                    # max is time remaining for each branch
+                    max_clamp = 1.0 - branched_times
+                    dts = torch.clamp(dts, min=min_clamp, max=max_clamp)
+                    # Ensure dts is non-negative after clamping (max could be < 0 if t > 1, though mask should prevent)
+                    dts = torch.clamp(dts, min=0.0)
 
-                    # Apply update
-                    update = velocity * dts.view(-1, 1, 1, 1)
+                    # Apply update only to active branches using the calculated dts
+                    # Select the relevant dts and velocities using the mask
+                    active_velocity = velocity[active_step_mask]
+                    active_dts = dts[active_step_mask]
+
+                    update = active_velocity * active_dts.view(-1, 1, 1, 1)
+                    # Update samples in post_branch_samples using the mask
                     post_branch_samples[active_step_mask] = (
-                        active_branched_samples_step + update
+                        branched_samples[active_step_mask] + update
                     )
-                    post_branch_times[active_step_mask] = (
-                        active_branched_times_step + dts
-                    )
-                    post_branch_times[active_step_mask] = torch.clamp(
-                        post_branch_times[active_step_mask], max=1.0
+
+                    # Update times for ALL branches based on their respective sampled/clamped dts
+                    post_branch_times = post_branch_times + dts
+                    post_branch_times = torch.clamp(
+                        post_branch_times, max=1.0
                     )  # Clamp time
 
                 # --- 3. Simulate Each Branch to Completion (for Scoring) ---
@@ -2651,7 +2645,7 @@ class MCTSFlowSampler:
                         best_score = torch.min(scores_tensor)
                         best_batch_idx = torch.argmin(scores_tensor)
                         winning_indices = batch_indices_list[best_batch_idx]
-                        print(f"Step {loop_count}: Best Batch FID: {best_score:.4f}")
+                        print(f"Best Batch FID: {best_score:.4f}")
 
                 # --- 6. Update Current State ---
                 current_samples = post_branch_samples[winning_indices]
