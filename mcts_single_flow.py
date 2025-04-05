@@ -2935,8 +2935,8 @@ class MCTSFlowSampler:
 
         # Get target statistics
         if use_global:
-            target_mu = self.global_fid_stats["mu"]
-            target_sigma = self.global_fid_stats["sigma"]
+            target_mu = self.global_fid["mu"]
+            target_sigma = self.global_fid["sigma"]
         else:
             raise NotImplementedError(
                 "Class-specific FID refinement target not implemented yet."
