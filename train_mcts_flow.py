@@ -580,7 +580,7 @@ def main():
         flow_model="large_flow_model.pt",
         value_model=None,
         num_channels=256,
-        inception_layer=0,
+        inception_layer=3,
     )
 
     # Training configuration
@@ -634,7 +634,7 @@ def main():
                 n_samples=640,
                 refinement_batch_size=64,
                 num_branches=num_branches,
-                num_iterations=2,
+                num_iterations=1,
                 device=device,
                 fid=fid,
             )
