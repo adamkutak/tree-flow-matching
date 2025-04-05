@@ -580,7 +580,7 @@ def main():
         flow_model="large_flow_model.pt",
         value_model=None,
         num_channels=256,
-        inception_layer=3,
+        inception_layer=0,
     )
 
     # Training configuration
@@ -597,7 +597,7 @@ def main():
     )
 
     # Randomly sample real images
-    indices = np.random.choice(len(cifar10), 5000, replace=False)
+    indices = np.random.choice(len(cifar10), 20000, replace=False)
     real_images = torch.stack([cifar10[i][0] for i in indices]).to(device)
 
     # Process real images in batches
@@ -634,7 +634,7 @@ def main():
                 n_samples=650,
                 refinement_batch_size=64,
                 num_branches=num_branches,
-                num_iterations=1,
+                num_iterations=2,
                 device=device,
                 fid=fid,
             )
