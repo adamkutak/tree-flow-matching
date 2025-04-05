@@ -3151,7 +3151,7 @@ class MCTSFlowSampler:
         target_sigma = target_sigma + np.eye(target_sigma.shape[0]) * eps
 
         fid_value = self.calculate_frechet_distance(
-            mu_gen, sigma_gen, target_mu, target_sigma, eps=eps
+            mu_gen, sigma_gen, target_mu, target_sigma
         )
         return max(0, fid_value)  # Clamp negative FID
 
