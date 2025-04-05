@@ -2971,7 +2971,9 @@ class MCTSFlowSampler:
                         continue
 
                     # Get the indices within the GLOBAL pool for this batch
-                    indices_to_replace = class_indices[batch_start_idx:batch_end_idx]
+                    indices_to_replace = class_indices[
+                        batch_start_idx:batch_end_idx
+                    ].cpu()
 
                     # --- Generate Candidate Replacements ---
                     num_candidates = actual_refinement_size * num_branches
