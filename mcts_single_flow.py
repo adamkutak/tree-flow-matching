@@ -2831,6 +2831,343 @@ class MCTSFlowSampler:
 
                 return final_samples
 
+    # ---------------------------------------------------------
+    # Section for minimizing FID over the entire set of samples using iterative refinement
+    # ---------------------------------------------------------
+
+    def batch_sample_refine_global_fid_random(
+        self,
+        n_samples: int,  # Total samples in the final dataset
+        refinement_batch_size: int,  # Size of batches to swap
+        num_branches: int,  # Candidates generated per swap slot
+        num_iterations: int = 1,  # Number of FULL refinement passes over the data
+        use_global: bool = True,  # Use global or class-specific target FID stats
+    ):
+        """
+        Generates a full dataset and iteratively refines it to minimize global FID
+        using random search candidate generation. Systematically attempts to replace
+        each batch num_iterations times.
+
+        Args:
+            n_samples: Total number of samples in the final dataset.
+            refinement_batch_size: Size of the batches to consider swapping out.
+            num_branches: Multiplier for batch_size to determine candidate pool size per attempt.
+            num_iterations: Number of full passes over the dataset for refinement (default: 1).
+            use_global: Whether to use global target stats for FID calculation.
+
+        Returns:
+            Tensor of [n_samples, C, H, W] representing the final refined dataset.
+        """
+
+        self.flow_model.eval()
+        samples_per_class = n_samples // self.num_classes
+        base_dt = 1 / self.num_timesteps
+
+        # --- 1. Initialization: Generate Initial Pool ---
+        print(f"Initializing pool with {n_samples} samples...")
+        initial_pool_samples = torch.zeros(
+            (n_samples, self.channels, self.image_size, self.image_size),
+            dtype=torch.float32,
+            device=self.device,
+        )
+        initial_pool_labels = torch.zeros(
+            n_samples, dtype=torch.long, device=self.device
+        )
+        current_idx = 0
+        generation_chunk_size = (
+            refinement_batch_size  # Can use refinement_batch_size for chunking
+        )
+
+        for class_label in range(self.num_classes):
+            generated_for_class = 0
+            # Calculate target number ensuring the last class gets the remainder
+            target_for_class = (
+                samples_per_class
+                if class_label < self.num_classes - 1
+                else n_samples - current_idx
+            )
+
+            while generated_for_class < target_for_class:
+                chunk_size = min(
+                    generation_chunk_size, target_for_class - generated_for_class
+                )
+                if chunk_size <= 0:
+                    break
+
+                # Generate a chunk using standard flow matching
+                chunk_samples = torch.randn(
+                    chunk_size,
+                    self.channels,
+                    self.image_size,
+                    self.image_size,
+                    device=self.device,
+                )
+                chunk_label = torch.full((chunk_size,), class_label, device=self.device)
+
+                # Standard Euler integration
+                for step, t in enumerate(self.timesteps[:-1]):
+                    dt = self.timesteps[step + 1] - t
+                    t_batch = torch.full((chunk_size,), t.item(), device=self.device)
+                    with torch.no_grad():
+                        velocity = self.flow_model(t_batch, chunk_samples, chunk_label)
+                    chunk_samples = chunk_samples + velocity * dt
+
+                # Add to pool
+                indices = slice(current_idx, current_idx + chunk_size)
+                initial_pool_samples[indices] = chunk_samples
+                initial_pool_labels[indices] = chunk_label
+                current_idx += chunk_size
+                generated_for_class += chunk_size
+        print("Initialization complete.")
+
+        # --- Handle num_branches == 1 Case ---
+        if num_branches == 1:
+            print("num_branches=1, skipping refinement. Returning initial samples.")
+            return initial_pool_samples
+
+        # --- Pre-compute Initial Features and FID (Only if refining) ---
+        print("Computing initial features and FID...")
+        with torch.no_grad():
+            all_features_list = []
+            feature_batch_size = 128
+            for i in range(0, n_samples, feature_batch_size):
+                batch = initial_pool_samples[i : i + feature_batch_size]
+                # Assuming extract_inception_features returns features on CPU as numpy
+                features = self.extract_inception_features(batch).cpu().numpy()
+                all_features_list.append(features)
+            current_pool_features = np.concatenate(all_features_list, axis=0)
+
+        # Get target statistics
+        if use_global:
+            target_mu = self.global_fid_stats["mu"]
+            target_sigma = self.global_fid_stats["sigma"]
+        else:
+            raise NotImplementedError(
+                "Class-specific FID refinement target not implemented yet."
+            )
+
+        current_global_fid = self.compute_fid_from_features(
+            current_pool_features, target_mu, target_sigma
+        )
+        print(f"Initial Global FID: {current_global_fid:.4f}")
+
+        # --- 2. Refinement Loop ---
+        print(f"Starting refinement for {num_iterations} full pass(es)...")
+        for pass_num in range(num_iterations):
+            print(f"\n--- Refinement Pass {pass_num + 1}/{num_iterations} ---")
+            num_swaps_this_pass = 0
+            # Iterate systematically through classes and batches within classes
+            for target_class in range(self.num_classes):
+                class_indices = torch.where(initial_pool_labels == target_class)[0]
+                num_samples_in_class = len(class_indices)
+                if num_samples_in_class == 0:
+                    # print(f"  Class {target_class}: Skipping (0 samples)")
+                    continue
+
+                print(
+                    f"  Class {target_class} (Processing {num_samples_in_class} samples):"
+                )
+                # Iterate through batches within the class
+                for batch_start_idx in range(
+                    0, num_samples_in_class, refinement_batch_size
+                ):
+                    batch_end_idx = min(
+                        batch_start_idx + refinement_batch_size, num_samples_in_class
+                    )
+                    actual_refinement_size = batch_end_idx - batch_start_idx
+                    if actual_refinement_size == 0:
+                        continue
+
+                    # Get the indices within the GLOBAL pool for this batch
+                    indices_to_replace = class_indices[batch_start_idx:batch_end_idx]
+
+                    print(
+                        f"    Batch {batch_start_idx // refinement_batch_size + 1}: Considering {actual_refinement_size} samples for replacement."
+                    )
+
+                    # --- Generate Candidate Replacements ---
+                    num_candidates = actual_refinement_size * num_branches
+                    # print(f"      Generating {num_candidates} candidates...") # Verbose
+                    candidate_samples = torch.zeros(
+                        (
+                            num_candidates,
+                            self.channels,
+                            self.image_size,
+                            self.image_size,
+                        ),
+                        dtype=torch.float32,
+                        device=self.device,
+                    )
+                    generated_count = 0
+                    candidate_label = torch.full(
+                        (num_candidates,), target_class, device=self.device
+                    )
+                    # Generate candidates in chunks
+                    while generated_count < num_candidates:
+                        chunk_size = min(
+                            generation_chunk_size, num_candidates - generated_count
+                        )
+                        if chunk_size <= 0:
+                            break
+                        chunk_cand_samples = torch.randn(
+                            chunk_size,
+                            self.channels,
+                            self.image_size,
+                            self.image_size,
+                            device=self.device,
+                        )
+                        chunk_cand_label = torch.full(
+                            (chunk_size,), target_class, device=self.device
+                        )
+                        # Standard Euler integration
+                        for step, t in enumerate(self.timesteps[:-1]):
+                            dt = self.timesteps[step + 1] - t
+                            t_batch = torch.full(
+                                (chunk_size,), t.item(), device=self.device
+                            )
+                            with torch.no_grad():
+                                velocity = self.flow_model(
+                                    t_batch, chunk_cand_samples, chunk_cand_label
+                                )
+                            chunk_cand_samples = chunk_cand_samples + velocity * dt
+                        candidate_samples[
+                            generated_count : generated_count + chunk_size
+                        ] = chunk_cand_samples
+                        generated_count += chunk_size
+
+                    # --- Evaluate Potential Swaps ---
+                    # print(f"      Evaluating {num_branches} candidate batches...") # Verbose
+                    best_hypothetical_fid = (
+                        current_global_fid  # Start assuming no improvement
+                    )
+                    best_candidate_batch_indices = None
+
+                    # Extract features for all candidates
+                    with torch.no_grad():
+                        cand_features_list_temp = []
+                        for i in range(0, num_candidates, feature_batch_size):
+                            batch = candidate_samples[i : i + feature_batch_size]
+                            features = (
+                                self.extract_inception_features(batch).cpu().numpy()
+                            )
+                            cand_features_list_temp.append(features)
+                        if (
+                            not cand_features_list_temp
+                        ):  # Handle case where num_candidates was 0? Should not happen
+                            all_candidate_features = np.empty(
+                                (0, current_pool_features.shape[1]),
+                                dtype=current_pool_features.dtype,
+                            )
+                        else:
+                            all_candidate_features = np.concatenate(
+                                cand_features_list_temp, axis=0
+                            )
+
+                    # Prepare the feature pool *without* the samples being replaced
+                    pool_indices_mask = np.ones(n_samples, dtype=bool)
+                    # Need indices relative to current_pool_features (numpy array)
+                    indices_to_replace_np = indices_to_replace.cpu().numpy()
+                    pool_indices_mask[indices_to_replace_np] = False
+                    features_pool_without_replaced = current_pool_features[
+                        pool_indices_mask
+                    ]
+
+                    # Iterate through candidate batches
+                    for i in range(num_branches):
+                        start_idx = i * actual_refinement_size
+                        end_idx = (i + 1) * actual_refinement_size
+                        # Check if end_idx exceeds available candidates (shouldn't if generation is correct)
+                        if start_idx >= all_candidate_features.shape[0]:
+                            continue
+
+                        candidate_batch_indices_in_cand_pool = slice(start_idx, end_idx)
+                        candidate_batch_features = all_candidate_features[
+                            candidate_batch_indices_in_cand_pool
+                        ]
+
+                        # Ensure we have the correct number of features
+                        if candidate_batch_features.shape[0] != actual_refinement_size:
+                            # This might happen if num_candidates wasn't a multiple? Should be ok with current logic.
+                            continue  # Skip if feature batch size doesn't match
+
+                        # Combine features for hypothetical pool
+                        hypothetical_features = np.concatenate(
+                            (features_pool_without_replaced, candidate_batch_features),
+                            axis=0,
+                        )
+
+                        # Calculate hypothetical FID
+                        hypothetical_fid = self.compute_fid_from_features(
+                            hypothetical_features, target_mu, target_sigma
+                        )
+
+                        if hypothetical_fid < best_hypothetical_fid:
+                            best_hypothetical_fid = hypothetical_fid
+                            best_candidate_batch_indices = (
+                                candidate_batch_indices_in_cand_pool
+                            )
+                            # print(f"        Found better hypothetical FID: {best_hypothetical_fid:.4f} (Cand. Batch {i+1})") # Verbose
+
+                    # --- Perform Swap if Improvement Found ---
+                    if best_candidate_batch_indices is not None:
+                        print(
+                            f"      Swapping batch. New best FID: {best_hypothetical_fid:.4f}"
+                        )
+                        num_swaps_this_pass += 1
+                        # Get the winning samples and features
+                        winning_candidate_samples = candidate_samples[
+                            best_candidate_batch_indices
+                        ]
+                        winning_candidate_features = all_candidate_features[
+                            best_candidate_batch_indices
+                        ]
+
+                        # Update the main pool samples
+                        initial_pool_samples[indices_to_replace] = (
+                            winning_candidate_samples
+                        )
+                        # Update the main pool features efficiently
+                        current_pool_features[indices_to_replace_np] = (
+                            winning_candidate_features
+                        )
+                        # Update the official current FID
+                        current_global_fid = best_hypothetical_fid
+                    # else: print("      No improvement found for this batch.") # Verbose
+
+                    # Clean up memory for this batch attempt
+                    del candidate_samples, all_candidate_features
+                    if "hypothetical_features" in locals():
+                        del hypothetical_features
+                    torch.cuda.empty_cache()
+
+            print(
+                f"--- End Pass {pass_num + 1}: Made {num_swaps_this_pass} swaps. Current FID: {current_global_fid:.4f} ---"
+            )
+
+        print(f"\nRefinement complete. Final Global FID: {current_global_fid:.4f}")
+        return initial_pool_samples
+
+    def compute_fid_from_features(
+        self, features_gen, target_mu, target_sigma, eps=1e-6
+    ):
+        """Helper to compute FID directly from generated features and target stats."""
+        if features_gen.shape[0] < 2:
+            # Cannot compute covariance
+            return float("inf")
+
+        mu_gen = np.mean(features_gen, axis=0)
+        sigma_gen = (
+            np.cov(features_gen, rowvar=False) + np.eye(features_gen.shape[1]) * eps
+        )
+
+        # Ensure target sigma is non-singular
+        target_sigma = target_sigma + np.eye(target_sigma.shape[0]) * eps
+
+        fid_value = self.calculate_frechet_distance(
+            mu_gen, sigma_gen, target_mu, target_sigma, eps=eps
+        )
+        return max(0, fid_value)  # Clamp negative FID
+
     def regular_batch_sample(self, class_label, batch_size=16):
         """
         Regular flow matching sampling without branching.

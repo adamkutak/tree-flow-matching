@@ -408,6 +408,150 @@ def calculate_metrics(
     return fid_score, avg_mahalanobis, fid_components
 
 
+def calculate_metrics_refined(
+    sampler,  # The MCTSFlowMatcher instance
+    n_samples,  # Total samples for final FID calculation
+    refinement_batch_size,  # Batch size used during refinement swaps
+    num_branches,  # Candidate multiplier during refinement
+    num_iterations,  # Number of refinement iterations
+    device,  # Device used for model computations
+    fid,  # The FID calculation object (e.g., CleanFID instance) pre-loaded with real stats
+    use_global_stats=True,  # Match the 'use_global' in the refinement function
+):
+    """
+    Calculate final metrics after using the iterative global FID refinement sampler.
+    Includes calculation of FID components (a, b, c), matching original device handling.
+    """
+    fid.reset()  # Reset fake features accumulation in the FID object
+
+    print(f"\nStarting refinement generation for {n_samples} samples...")
+    print(
+        f"Refinement params: batch_size={refinement_batch_size}, branches={num_branches}, iterations={num_iterations}"
+    )
+
+    # Generate the entire refined dataset using the refinement method
+    final_samples = sampler.batch_sample_refine_global_fid_random(
+        n_samples=n_samples,
+        refinement_batch_size=refinement_batch_size,
+        num_branches=num_branches,
+        num_iterations=num_iterations,
+        use_global=use_global_stats,
+    )
+    # final_samples are expected to be on device matching sampler.device
+    print("Refinement generation complete.")
+
+    # --- Calculate Final FID ---
+    print("Calculating final FID on refined dataset...")
+    metric_batch_size = 128  # Batch size for feeding samples to FID object
+    # Note: final_samples are already on sampler.device.
+    # Ensure the FID object internally handles features on the correct device or move data as needed by fid.update
+    # Assuming fid.update can handle samples from 'device' or moves them internally.
+    # If fid.update requires CPU tensors, move them: generated_tensor = final_samples.cpu()
+
+    # Update the FID object with the generated fake samples
+    for i in range(0, len(final_samples), metric_batch_size):
+        # Feed batches directly from the refinement output device
+        batch = final_samples[i : i + metric_batch_size]
+        fid.update(batch, real=False)  # Feed fake samples
+
+    # Compute final FID score using the object's method
+    # This might internally compute means/covariances needed for components
+    final_fid_score = fid.compute()
+    print(f"Final FID Score: {final_fid_score:.4f}")
+
+    # --- Calculate Final Mahalanobis/Mean Difference ---
+    print("Calculating final Mean Difference...")
+    all_mahalanobis_distances = []
+    with torch.no_grad():
+        # Use final_samples directly as they are on the correct device
+        for i in range(0, n_samples, metric_batch_size):
+            batch = final_samples[i : i + metric_batch_size]  # Already on device
+            mahalanobis_dist = sampler.batch_compute_global_mean_difference(batch)
+            all_mahalanobis_distances.extend(
+                mahalanobis_dist.cpu().tolist()
+            )  # Move result to CPU for list storage
+
+    avg_mahalanobis = sum(all_mahalanobis_distances) / len(all_mahalanobis_distances)
+    print(f"Average Mean Difference: {avg_mahalanobis:.4f}")
+
+    # --- Calculate FID Components (a, b, c) ---
+    # Reverting to pure PyTorch logic, assuming fid object's tensors are on 'device'
+    print("Calculating FID components using original PyTorch logic...")
+    fid_components = {}
+    required_attrs = [
+        "real_features_sum",
+        "real_features_num_samples",
+        "real_features_cov_sum",
+        "fake_features_sum",
+        "fake_features_num_samples",
+        "fake_features_cov_sum",
+    ]
+    if all(hasattr(fid, attr) for attr in required_attrs):
+        try:
+            # Perform calculations on the device where fid object stores its tensors
+            # NO explicit .cpu() calls here
+            mean_real = fid.real_features_sum / fid.real_features_num_samples
+            mean_fake = fid.fake_features_sum / fid.fake_features_num_samples
+
+            # Calculate covariance matrix for real features
+            cov_real_num = (
+                fid.real_features_cov_sum
+                - fid.real_features_num_samples
+                * mean_real.unsqueeze(0).t().mm(mean_real.unsqueeze(0))
+            )
+            cov_real = cov_real_num / (fid.real_features_num_samples - 1)
+
+            # Calculate covariance matrix for fake features
+            cov_fake_num = (
+                fid.fake_features_cov_sum
+                - fid.fake_features_num_samples
+                * mean_fake.unsqueeze(0).t().mm(mean_fake.unsqueeze(0))
+            )
+            cov_fake = cov_fake_num / (fid.fake_features_num_samples - 1)
+
+            # Calculate the three FID components using PyTorch operations
+            a = (mean_real - mean_fake).square().sum()
+            b = cov_real.trace() + cov_fake.trace()
+            # Use torch.linalg.eigvals for component c, matching original
+            # Add small epsilon for numerical stability before matrix multiplication / eigvals
+            eps = 1e-6
+            offset = torch.eye(cov_real.shape[0], device=cov_real.device) * eps
+            cov_prod = (cov_real + offset) @ (cov_fake + offset)
+            c = torch.linalg.eigvals(cov_prod).sqrt().real.sum()
+
+            fid_components = {
+                "a": a.item(),  # squared L2 distance between means
+                "b": b.item(),  # sum of traces
+                "c": c.item(),  # trace of sqrt of product (via eigvals)
+                "fid": final_fid_score.item(),  # Use the score from fid.compute()
+            }
+            print(
+                f"FID Components: a={a.item():.4f}, b={b.item():.4f}, c={c.item():.4f}"
+            )
+
+        except Exception as e:
+            print(f"Could not compute FID components due to error: {e}")
+            fid_components = {
+                "a": float("nan"),
+                "b": float("nan"),
+                "c": float("nan"),
+                "fid": final_fid_score.item(),
+            }
+    else:
+        missing_attrs = [attr for attr in required_attrs if not hasattr(fid, attr)]
+        print(
+            f"FID object missing attributes for component calculation: {missing_attrs}"
+        )
+        fid_components = {
+            "a": float("nan"),
+            "b": float("nan"),
+            "c": float("nan"),
+            "fid": final_fid_score.item(),
+        }
+
+    return final_fid_score, avg_mahalanobis, fid_components
+
+
 def main():
     device = torch.device("cuda:1" if torch.cuda.is_available() else "cpu")
     print(f"Using device: {device}")
@@ -493,6 +637,17 @@ def main():
                 sigma=0,
                 n_samples=650,
                 fid=fid,
+            )
+            fid_score_refined, avg_mahalanobis_refined, fid_components_refined = (
+                calculate_metrics_refined(
+                    sampler,
+                    n_samples=650,
+                    refinement_batch_size=64,
+                    num_branches=num_branches,
+                    num_iterations=1,
+                    device=device,
+                    fid=fid,
+                )
             )
             print(f"\nCycle {cycle + 1} - (branches={num_branches}, keep={num_keep}):")
             print(f"FID Components:")
