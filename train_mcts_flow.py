@@ -424,7 +424,6 @@ def calculate_metrics_refined(
     """
     fid.reset()  # Reset fake features accumulation in the FID object
 
-    print(f"\nStarting refinement generation for {n_samples} samples...")
     print(
         f"Refinement params: batch_size={refinement_batch_size}, branches={num_branches}, iterations={num_iterations}"
     )
@@ -437,16 +436,8 @@ def calculate_metrics_refined(
         num_iterations=num_iterations,
         use_global=use_global_stats,
     )
-    # final_samples are expected to be on device matching sampler.device
-    print("Refinement generation complete.")
 
-    # --- Calculate Final FID ---
-    print("Calculating final FID on refined dataset...")
     metric_batch_size = 128  # Batch size for feeding samples to FID object
-    # Note: final_samples are already on sampler.device.
-    # Ensure the FID object internally handles features on the correct device or move data as needed by fid.update
-    # Assuming fid.update can handle samples from 'device' or moves them internally.
-    # If fid.update requires CPU tensors, move them: generated_tensor = final_samples.cpu()
 
     # Update the FID object with the generated fake samples
     for i in range(0, len(final_samples), metric_batch_size):
