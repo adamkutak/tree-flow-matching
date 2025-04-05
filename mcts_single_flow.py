@@ -2864,7 +2864,6 @@ class MCTSFlowSampler:
         base_dt = 1 / self.num_timesteps
 
         # --- 1. Initialization: Generate Initial Pool ---
-        print(f"Initializing pool with {n_samples} samples...")
         initial_pool_samples = torch.zeros(
             (n_samples, self.channels, self.image_size, self.image_size),
             dtype=torch.float32,
@@ -2918,22 +2917,19 @@ class MCTSFlowSampler:
                 initial_pool_labels[indices] = chunk_label
                 current_idx += chunk_size
                 generated_for_class += chunk_size
-        print("Initialization complete.")
 
         # --- Handle num_branches == 1 Case ---
         if num_branches == 1:
-            print("num_branches=1, skipping refinement. Returning initial samples.")
             return initial_pool_samples
 
         # --- Pre-compute Initial Features and FID (Only if refining) ---
-        print("Computing initial features and FID...")
         with torch.no_grad():
             all_features_list = []
             feature_batch_size = 128
             for i in range(0, n_samples, feature_batch_size):
                 batch = initial_pool_samples[i : i + feature_batch_size]
                 # Assuming extract_inception_features returns features on CPU as numpy
-                features = self.extract_inception_features(batch).cpu().numpy()
+                features = self.extract_inception_features(batch)
                 all_features_list.append(features)
             current_pool_features = np.concatenate(all_features_list, axis=0)
 
@@ -2952,7 +2948,6 @@ class MCTSFlowSampler:
         print(f"Initial Global FID: {current_global_fid:.4f}")
 
         # --- 2. Refinement Loop ---
-        print(f"Starting refinement for {num_iterations} full pass(es)...")
         for pass_num in range(num_iterations):
             print(f"\n--- Refinement Pass {pass_num + 1}/{num_iterations} ---")
             num_swaps_this_pass = 0
@@ -2964,9 +2959,6 @@ class MCTSFlowSampler:
                     # print(f"  Class {target_class}: Skipping (0 samples)")
                     continue
 
-                print(
-                    f"  Class {target_class} (Processing {num_samples_in_class} samples):"
-                )
                 # Iterate through batches within the class
                 for batch_start_idx in range(
                     0, num_samples_in_class, refinement_batch_size
@@ -2980,10 +2972,6 @@ class MCTSFlowSampler:
 
                     # Get the indices within the GLOBAL pool for this batch
                     indices_to_replace = class_indices[batch_start_idx:batch_end_idx]
-
-                    print(
-                        f"    Batch {batch_start_idx // refinement_batch_size + 1}: Considering {actual_refinement_size} samples for replacement."
-                    )
 
                     # --- Generate Candidate Replacements ---
                     num_candidates = actual_refinement_size * num_branches
@@ -3144,7 +3132,6 @@ class MCTSFlowSampler:
                 f"--- End Pass {pass_num + 1}: Made {num_swaps_this_pass} swaps. Current FID: {current_global_fid:.4f} ---"
             )
 
-        print(f"\nRefinement complete. Final Global FID: {current_global_fid:.4f}")
         return initial_pool_samples
 
     def compute_fid_from_features(
