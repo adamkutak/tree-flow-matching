@@ -626,12 +626,12 @@ def main():
             #     num_keep,
             #     device,
             #     sigma=0,
-            #     n_samples=650,
+            #     n_samples=640,
             #     fid=fid,
             # )
             fid_score, avg_mahalanobis, fid_components = calculate_metrics_refined(
                 sampler,
-                n_samples=650,
+                n_samples=640,
                 refinement_batch_size=64,
                 num_branches=num_branches,
                 num_iterations=2,
