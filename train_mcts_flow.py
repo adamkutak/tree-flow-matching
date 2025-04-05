@@ -629,25 +629,23 @@ def main():
         # )
 
         for num_branches, num_keep in branch_keep_pairs:
-            fid_score, avg_mahalanobis, fid_components = calculate_metrics(
+            # fid_score, avg_mahalanobis, fid_components = calculate_metrics(
+            #     sampler,
+            #     num_branches,
+            #     num_keep,
+            #     device,
+            #     sigma=0,
+            #     n_samples=650,
+            #     fid=fid,
+            # )
+            fid_score, avg_mahalanobis, fid_components = calculate_metrics_refined(
                 sampler,
-                num_branches,
-                num_keep,
-                device,
-                sigma=0,
                 n_samples=650,
+                refinement_batch_size=64,
+                num_branches=num_branches,
+                num_iterations=1,
+                device=device,
                 fid=fid,
-            )
-            fid_score_refined, avg_mahalanobis_refined, fid_components_refined = (
-                calculate_metrics_refined(
-                    sampler,
-                    n_samples=650,
-                    refinement_batch_size=64,
-                    num_branches=num_branches,
-                    num_iterations=1,
-                    device=device,
-                    fid=fid,
-                )
             )
             print(f"\nCycle {cycle + 1} - (branches={num_branches}, keep={num_keep}):")
             print(f"FID Components:")
