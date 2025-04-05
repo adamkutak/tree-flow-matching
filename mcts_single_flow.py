@@ -3035,9 +3035,7 @@ class MCTSFlowSampler:
                         cand_features_list_temp = []
                         for i in range(0, num_candidates, feature_batch_size):
                             batch = candidate_samples[i : i + feature_batch_size]
-                            features = (
-                                self.extract_inception_features(batch).cpu().numpy()
-                            )
+                            features = self.extract_inception_features(batch)
                             cand_features_list_temp.append(features)
                         if (
                             not cand_features_list_temp
@@ -3054,8 +3052,7 @@ class MCTSFlowSampler:
                     # Prepare the feature pool *without* the samples being replaced
                     pool_indices_mask = np.ones(n_samples, dtype=bool)
                     # Need indices relative to current_pool_features (numpy array)
-                    indices_to_replace_np = indices_to_replace.cpu().numpy()
-                    pool_indices_mask[indices_to_replace_np] = False
+                    pool_indices_mask[indices_to_replace] = False
                     features_pool_without_replaced = current_pool_features[
                         pool_indices_mask
                     ]
@@ -3115,7 +3112,7 @@ class MCTSFlowSampler:
                             winning_candidate_samples
                         )
                         # Update the main pool features efficiently
-                        current_pool_features[indices_to_replace_np] = (
+                        current_pool_features[indices_to_replace] = (
                             winning_candidate_features
                         )
                         # Update the official current FID
