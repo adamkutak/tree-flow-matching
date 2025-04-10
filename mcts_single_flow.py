@@ -269,7 +269,7 @@ class MCTSFlowSampler:
             self.has_global_stats = False
 
         print("Initializing per-class buffers...")
-        self.initialize_class_buffers(buffer_size)
+        # self.initialize_class_buffers(buffer_size)
 
     def compute_mahalanobis_distance(self, features, class_idx):
         """
@@ -3342,9 +3342,7 @@ class MCTSFlowSampler:
                             dts = torch.clamp(
                                 dts,
                                 min=torch.tensor(0.0, device=self.device),
-                                max=torch.tensor(
-                                    1.0 - branched_times, device=self.device
-                                ),
+                                max=1.0 - branched_times,
                             )
 
                             # Take the branching step
@@ -3459,8 +3457,6 @@ class MCTSFlowSampler:
                                 # Update the current FID
                                 current_global_fid = best_hypothetical_fid
 
-                            # SIMPLIFIED: For path exploration, directly use the best batch indices
-                            # Always select the best scoring batch for continued exploration
                             current_batch_samples = branched_samples[best_batch_indices]
                             current_batch_times = branched_times[best_batch_indices]
 
@@ -3478,6 +3474,8 @@ class MCTSFlowSampler:
                             if "hypothetical_features" in locals():
                                 del hypothetical_features
                             torch.cuda.empty_cache()
+
+                            breakpoint()
 
             print(
                 f"--- End Pass {pass_num + 1}: Made {num_swaps_this_pass} swaps. Current FID: {current_global_fid:.4f} ---"
