@@ -429,10 +429,20 @@ def calculate_metrics_refined(
     )
 
     # Generate the entire refined dataset using the refinement method
-    final_samples = sampler.batch_sample_refine_global_fid_random(
+    # final_samples = sampler.batch_sample_refine_global_fid_random(
+    #     n_samples=n_samples,
+    #     refinement_batch_size=refinement_batch_size,
+    #     num_branches=num_branches,
+    #     num_iterations=num_iterations,
+    #     use_global=use_global_stats,
+    # )
+    final_samples = sampler.batch_sample_refine_global_fid_path_explore(
         n_samples=n_samples,
         refinement_batch_size=refinement_batch_size,
         num_branches=num_branches,
+        branch_start_time=0.5,
+        branch_dt=0.05,
+        dt_std=0.1,
         num_iterations=num_iterations,
         use_global=use_global_stats,
     )
@@ -631,10 +641,10 @@ def main():
             # )
             fid_score, avg_mahalanobis, fid_components = calculate_metrics_refined(
                 sampler,
-                n_samples=640,
+                n_samples=320,
                 refinement_batch_size=32,
                 num_branches=num_branches,
-                num_iterations=2,
+                num_iterations=1,
                 device=device,
                 fid=fid,
             )
