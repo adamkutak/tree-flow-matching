@@ -3341,8 +3341,10 @@ class MCTSFlowSampler:
                             )
                             dts = torch.clamp(
                                 dts,
-                                min=0.0,
-                                max=1.0 - branched_times,
+                                min=torch.tensor(0.0, device=self.device),
+                                max=torch.tensor(
+                                    1.0 - branched_times, device=self.device
+                                ),
                             )
 
                             # Take the branching step
