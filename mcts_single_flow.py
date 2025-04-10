@@ -3475,7 +3475,7 @@ class MCTSFlowSampler:
                                 del hypothetical_features
                             torch.cuda.empty_cache()
 
-                            breakpoint()
+                            print(current_time)
 
             print(
                 f"--- End Pass {pass_num + 1}: Made {num_swaps_this_pass} swaps. Current FID: {current_global_fid:.4f} ---"
