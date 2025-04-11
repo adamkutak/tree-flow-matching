@@ -603,13 +603,13 @@ def main():
         flow_model="large_flow_model.pt",
         value_model=None,
         num_channels=256,
-        inception_layer=0,
+        inception_layer=3,
     )
 
     # Training configuration
     n_epochs_per_cycle = 1
     n_training_cycles = 100
-    branch_keep_pairs = [(2, 1), (4, 1), (8, 1), (16, 1)]
+    branch_keep_pairs = [(1, 1), (2, 1), (4, 1), (8, 1), (16, 1)]
 
     # Initialize metrics
     fid = FID.FrechetInceptionDistance(normalize=True, reset_real_features=False).to(
