@@ -3437,6 +3437,10 @@ class MCTSFlowSampler:
                                     best_hypothetical_fid = hypothetical_fid
                                     best_batch_indices = batch_indices
 
+                                print(
+                                    f"hypothetical fid: {hypothetical_fid:.4f}, best fid: {best_hypothetical_fid:.4f}"
+                                )
+
                             # Update the pool samples ONLY if the best batch improves global FID
                             if best_hypothetical_fid < current_global_fid:
                                 print(
@@ -3474,8 +3478,6 @@ class MCTSFlowSampler:
                             if "hypothetical_features" in locals():
                                 del hypothetical_features
                             torch.cuda.empty_cache()
-
-                            print(current_time)
 
             print(
                 f"--- End Pass {pass_num + 1}: Made {num_swaps_this_pass} swaps. Current FID: {current_global_fid:.4f} ---"
