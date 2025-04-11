@@ -3402,6 +3402,8 @@ class MCTSFlowSampler:
                             # Create batches from the simulated samples and evaluate them
                             num_candidates = len(simulated_samples)
 
+                            breakpoint()
+
                             # Evaluate num_branches random batches
                             for i in range(num_branches):
                                 # Randomly select a batch of samples
