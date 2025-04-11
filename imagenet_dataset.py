@@ -25,6 +25,7 @@ class ImageNet32Dataset(Dataset):
             file_path = os.path.join(self.data_dir, batch_file)
             with open(file_path, "rb") as f:
                 entry = pickle.load(f, encoding="bytes")
+                breakpoint()
                 self.data.append(entry[b"data"])
                 self.targets.extend(entry[b"labels"])
 
