@@ -444,7 +444,7 @@ def calculate_metrics_refined(
         num_batches=4 * num_branches,
         branch_start_time=0.5,
         branch_dt=0.05,
-        dt_std=0.1,
+        dt_std=0.7,
         num_iterations=num_iterations,
         use_global=use_global_stats,
     )
@@ -592,7 +592,7 @@ def main():
         flow_model="large_flow_model.pt",
         value_model=None,
         num_channels=256,
-        inception_layer=3,
+        inception_layer=0,
     )
 
     # Training configuration
