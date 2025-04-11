@@ -3449,14 +3449,7 @@ class MCTSFlowSampler:
                                         ]
                                     )
 
-                            # If we couldn't form any valid batches, break the path exploration
-                            if best_batch_indices is None:
-                                break
-
                             # Update the pool samples ONLY if the best batch improves global FID
-                            print(
-                                f"best hypothetical fid: {best_hypothetical_fid:.4f}, current global fid: {current_global_fid:.4f}"
-                            )
                             if best_hypothetical_fid < current_global_fid:
                                 print(
                                     f"      Found better batch at t={current_time:.4f}. New FID: {best_hypothetical_fid:.4f}"
@@ -3516,6 +3509,493 @@ class MCTSFlowSampler:
                                     else:
                                         # This case shouldn't happen with proper branching
                                         pass
+
+                            # Update current batch for next iteration
+                            if len(next_batch_samples) == actual_refinement_size:
+                                current_batch_samples = torch.stack(next_batch_samples)
+                                current_batch_times = torch.stack(next_batch_times)
+
+                                # Update current time to minimum of current batch times
+                                current_time = current_batch_times.min().item()
+                            else:
+                                # If we couldn't form a complete batch, end path exploration
+                                break
+
+                            # Clean up to save memory
+                            del (
+                                branched_samples,
+                                branched_times,
+                                simulated_samples,
+                                simulated_times,
+                            )
+                            del all_simulated_features
+                            if "hypothetical_features" in locals():
+                                del hypothetical_features
+                            torch.cuda.empty_cache()
+
+            print(
+                f"--- End Pass {pass_num + 1}: Made {num_swaps_this_pass} swaps. Current FID: {current_global_fid:.4f} ---"
+            )
+
+        return initial_pool_samples
+
+    def batch_sample_refine_global_fid_timewarp(
+        self,
+        n_samples: int,  # Total samples in the final dataset
+        refinement_batch_size: int,  # Size of batches to swap
+        num_branches: int,  # Branches per sample at each step
+        num_batches: int = 10,  # Number of random batches to evaluate
+        warp_scale: float = 0.5,  # Scale of time warping (0-1)
+        num_iterations: int = 1,  # Number of FULL refinement passes over the data
+        use_global: bool = True,  # Use global or class-specific target FID stats
+        branch_start_time: float = 0.0,  # When to start branching
+        branch_dt: float = None,  # Step size during branching phase
+        sqrt_epsilon: float = 1e-8,  # Small epsilon for safe sqrt operations
+    ):
+        """
+        Generates a full dataset and iteratively refines it to minimize global FID
+        using time warping path exploration. Systematically attempts to replace
+        each batch num_iterations times, starting from initial noise states at
+        branch_start_time and exploring different paths from there using time warping.
+
+        Args:
+            n_samples: Total number of samples in the final dataset.
+            refinement_batch_size: Size of the batches to consider swapping out.
+            num_branches: Branches per sample at each step.
+            num_batches: Number of random batches to evaluate for improvement.
+            warp_scale: Scale of time warping effect (0-1).
+            num_iterations: Number of full passes over the dataset for refinement.
+            use_global: Whether to use global target stats for FID calculation.
+            branch_start_time: Time point at which to start branching (0.0 to 1.0).
+            branch_dt: Step size to use after branching begins (if None, uses base_dt).
+            sqrt_epsilon: Small constant to ensure numerical stability in warping functions.
+
+        Returns:
+            Tensor of [n_samples, C, H, W] representing the final refined dataset.
+        """
+
+        self.flow_model.eval()
+        samples_per_class = n_samples // self.num_classes
+        base_dt = 1 / self.num_timesteps
+        branch_dt = branch_dt if branch_dt is not None else base_dt
+
+        # --- Get time warping functions and derivatives ---
+        warp_fns, warp_deriv_fns = self._get_warp_functions(
+            num_branches, self.device, sqrt_epsilon
+        )
+
+        # --- 1. Initialization: Generate Initial Noise and Partial Integration ---
+        # We store both initial noise and integrated samples at branch_start_time
+        initial_pool_noise = torch.randn(
+            (n_samples, self.channels, self.image_size, self.image_size),
+            dtype=torch.float32,
+            device=self.device,
+        )
+        initial_pool_samples = initial_pool_noise.clone()
+        initial_pool_labels = torch.zeros(
+            n_samples, dtype=torch.long, device=self.device
+        )
+
+        # Store samples at branch_start_time for later refinement
+        branched_pool_samples = initial_pool_noise.clone()
+
+        current_idx = 0
+        feature_batch_size = 128
+
+        # Generate initial samples by class and integrate to branch_start_time
+        for class_label in range(self.num_classes):
+            generated_for_class = 0
+            # Calculate target number ensuring the last class gets the remainder
+            target_for_class = (
+                samples_per_class
+                if class_label < self.num_classes - 1
+                else n_samples - current_idx
+            )
+
+            while generated_for_class < target_for_class:
+                chunk_size = min(
+                    refinement_batch_size, target_for_class - generated_for_class
+                )
+                if chunk_size <= 0:
+                    break
+
+                # Get the slice of initial noise
+                chunk_start = current_idx
+                chunk_end = chunk_start + chunk_size
+                chunk_samples = initial_pool_noise[chunk_start:chunk_end].clone()
+                chunk_label = torch.full((chunk_size,), class_label, device=self.device)
+
+                # Set labels in the main pool
+                initial_pool_labels[chunk_start:chunk_end] = chunk_label
+
+                # Integrate to branch_start_time
+                if branch_start_time > 0:
+                    current_t = 0.0
+                    while current_t < branch_start_time:
+                        dt = min(base_dt, branch_start_time - current_t)
+                        t_batch = torch.full(
+                            (chunk_size,), current_t, device=self.device
+                        )
+                        with torch.no_grad():
+                            velocity = self.flow_model(
+                                t_batch, chunk_samples, chunk_label
+                            )
+                        chunk_samples = chunk_samples + velocity * dt
+                        current_t += dt
+
+                # Store partially integrated samples at branch_start_time for refinement later
+                branched_pool_samples[chunk_start:chunk_end] = chunk_samples
+
+                # Continue integration to t=1.0 for initial pool
+                current_t = branch_start_time
+                while current_t < 1.0:
+                    dt = min(base_dt, 1.0 - current_t)
+                    t_batch = torch.full((chunk_size,), current_t, device=self.device)
+                    with torch.no_grad():
+                        velocity = self.flow_model(t_batch, chunk_samples, chunk_label)
+                    chunk_samples = chunk_samples + velocity * dt
+                    current_t += dt
+
+                # Store final integrated samples
+                initial_pool_samples[chunk_start:chunk_end] = chunk_samples
+
+                # Update counters
+                current_idx += chunk_size
+                generated_for_class += chunk_size
+
+        # --- Handle num_branches == 1 Case ---
+        if num_branches == 1:
+            return initial_pool_samples
+
+        # --- Pre-compute Initial Features and FID ---
+        with torch.no_grad():
+            all_features_list = []
+            for i in range(0, n_samples, feature_batch_size):
+                batch = initial_pool_samples[i : i + feature_batch_size]
+                features = self.extract_inception_features(batch)
+                all_features_list.append(features)
+            current_pool_features = np.concatenate(all_features_list, axis=0)
+
+        # Get target statistics
+        if use_global:
+            target_mu = self.global_fid["mu"]
+            target_sigma = self.global_fid["sigma"]
+        else:
+            raise NotImplementedError(
+                "Class-specific FID refinement target not implemented yet."
+            )
+
+        current_global_fid = self.compute_fid_from_features(
+            current_pool_features, target_mu, target_sigma
+        )
+        print(f"Initial Global FID: {current_global_fid:.4f}")
+
+        # --- 2. Refinement Loop ---
+        for pass_num in range(num_iterations):
+            print(f"\n--- Refinement Pass {pass_num + 1}/{num_iterations} ---")
+            num_swaps_this_pass = 0
+
+            # Iterate systematically through classes and batches within classes
+            for target_class in range(self.num_classes):
+                class_indices = torch.where(initial_pool_labels == target_class)[0]
+                num_samples_in_class = len(class_indices)
+                if num_samples_in_class == 0:
+                    continue
+
+                # Iterate through batches within the class
+                for batch_start_idx in range(
+                    0, num_samples_in_class, refinement_batch_size
+                ):
+                    batch_end_idx = min(
+                        batch_start_idx + refinement_batch_size, num_samples_in_class
+                    )
+                    actual_refinement_size = batch_end_idx - batch_start_idx
+                    if actual_refinement_size == 0:
+                        continue
+
+                    # Get the indices within the GLOBAL pool for this batch
+                    indices_to_replace = class_indices[
+                        batch_start_idx:batch_end_idx
+                    ].cpu()
+
+                    # Start with the partially integrated samples at branch_start_time
+                    current_batch_samples = branched_pool_samples[
+                        indices_to_replace
+                    ].clone()
+                    current_batch_times = torch.full(
+                        (actual_refinement_size,), branch_start_time, device=self.device
+                    )
+                    current_batch_label = torch.full(
+                        (actual_refinement_size,), target_class, device=self.device
+                    )
+
+                    # Prepare feature pool without the batch we're replacing
+                    pool_indices_mask = np.ones(n_samples, dtype=bool)
+                    pool_indices_mask[indices_to_replace] = False
+                    features_pool_without_replaced = current_pool_features[
+                        pool_indices_mask
+                    ]
+
+                    # Path exploration with continuous checking
+                    with torch.no_grad():
+                        current_time = branch_start_time
+
+                        while current_time < 1.0:
+                            # Create branches for the current batch
+                            branched_samples = current_batch_samples.repeat_interleave(
+                                num_branches, dim=0
+                            )
+                            branched_times = current_batch_times.repeat_interleave(
+                                num_branches
+                            )
+                            branched_label = current_batch_label.repeat_interleave(
+                                num_branches
+                            )
+
+                            # Track which original sample each branch belongs to
+                            branch_indices = torch.arange(
+                                len(current_batch_samples), device=self.device
+                            ).repeat_interleave(num_branches)
+
+                            # Track which warping function to use for each sample
+                            warp_indices = (
+                                torch.arange(len(branched_samples), device=self.device)
+                                % num_branches
+                            )
+
+                            # Take ONE branching step with time warping
+                            dt_step = torch.minimum(
+                                branch_dt * torch.ones_like(branched_times),
+                                1.0 - branched_times,
+                            )
+
+                            # Apply time warping
+                            warped_times_step = torch.zeros_like(branched_times)
+                            warp_derivs_step = torch.zeros_like(branched_times)
+
+                            # Use the fetched warping functions
+                            for i in range(num_branches):
+                                mask = warp_indices == i
+                                if torch.any(mask):
+                                    orig_t = branched_times[mask]
+                                    warped_t = warp_fns[i](orig_t)
+                                    final_warped_t = (
+                                        1 - warp_scale
+                                    ) * orig_t + warp_scale * warped_t
+                                    warped_times_step[mask] = final_warped_t
+
+                                    orig_deriv = warp_deriv_fns[i](orig_t)
+                                    final_warp_deriv = (
+                                        1 - warp_scale
+                                    ) * torch.ones_like(
+                                        orig_deriv
+                                    ) + warp_scale * orig_deriv
+                                    warp_derivs_step[mask] = final_warp_deriv
+
+                            # Calculate velocity using warped times
+                            velocity_step = self.flow_model(
+                                warped_times_step, branched_samples, branched_label
+                            )
+
+                            # Apply the step with chain rule: dx/dt = v(x, f(t)) * f'(t)
+                            branched_samples = (
+                                branched_samples
+                                + velocity_step
+                                * warp_derivs_step.view(-1, 1, 1, 1)
+                                * dt_step.view(-1, 1, 1, 1)
+                            )
+                            branched_times = branched_times + dt_step
+
+                            # Simulate forward to completion (t=1.0)
+                            simulated_samples = branched_samples.clone()
+                            simulated_times = branched_times.clone()
+                            sim_warp_indices = warp_indices.clone()
+
+                            while torch.any(simulated_times < 1.0):
+                                active_mask = simulated_times < 1.0
+                                if not torch.any(active_mask):
+                                    break
+
+                                active_sim_samples = simulated_samples[active_mask]
+                                active_sim_times = simulated_times[active_mask]
+                                active_sim_label = branched_label[active_mask]
+                                active_sim_warp_indices = sim_warp_indices[active_mask]
+
+                                dt_sim = torch.minimum(
+                                    branch_dt * torch.ones_like(active_sim_times),
+                                    1.0 - active_sim_times,
+                                )
+
+                                # Apply time warping for simulation
+                                warped_times_sim = torch.zeros_like(active_sim_times)
+                                warp_derivs_sim = torch.zeros_like(active_sim_times)
+
+                                for i in range(num_branches):
+                                    mask = active_sim_warp_indices == i
+                                    if torch.any(mask):
+                                        orig_t = active_sim_times[mask]
+                                        warped_t = warp_fns[i](orig_t)
+                                        final_warped_t = (
+                                            1 - warp_scale
+                                        ) * orig_t + warp_scale * warped_t
+                                        warped_times_sim[mask] = final_warped_t
+
+                                        orig_deriv = warp_deriv_fns[i](orig_t)
+                                        final_warp_deriv = (
+                                            1 - warp_scale
+                                        ) * torch.ones_like(
+                                            orig_deriv
+                                        ) + warp_scale * orig_deriv
+                                        warp_derivs_sim[mask] = final_warp_deriv
+
+                                # Calculate velocity using warped times
+                                velocity_sim = self.flow_model(
+                                    warped_times_sim,
+                                    active_sim_samples,
+                                    active_sim_label,
+                                )
+
+                                # Apply the step with chain rule
+                                update = (
+                                    velocity_sim
+                                    * warp_derivs_sim.view(-1, 1, 1, 1)
+                                    * dt_sim.view(-1, 1, 1, 1)
+                                )
+                                simulated_samples[active_mask] = (
+                                    active_sim_samples + update
+                                )
+                                simulated_times[active_mask] = active_sim_times + dt_sim
+
+                            # Extract features for all completed samples
+                            all_simulated_features = []
+                            for i in range(
+                                0, len(simulated_samples), feature_batch_size
+                            ):
+                                batch = simulated_samples[i : i + feature_batch_size]
+                                features = self.extract_inception_features(batch)
+                                all_simulated_features.append(features)
+                            all_simulated_features = np.concatenate(
+                                all_simulated_features, axis=0
+                            )
+
+                            # Evaluate potential batches
+                            best_hypothetical_fid = float("inf")
+                            best_batch_indices = None
+                            best_original_indices = None
+
+                            # Create and evaluate num_batches random batches, ensuring diversity
+                            for batch_idx in range(num_batches):
+                                # Select exactly one branch from each original sample
+                                batch_indices = []
+
+                                # For each original sample index
+                                for orig_idx in range(actual_refinement_size):
+                                    # Find all branches from this original sample
+                                    branch_mask = branch_indices == orig_idx
+                                    candidate_indices = torch.where(branch_mask)[0]
+
+                                    # Randomly select one branch
+                                    if len(candidate_indices) > 0:
+                                        selected_idx = candidate_indices[
+                                            torch.randint(
+                                                len(candidate_indices),
+                                                (1,),
+                                                device=self.device,
+                                            )
+                                        ].item()
+                                        batch_indices.append(selected_idx)
+
+                                # Skip if we couldn't form a complete batch
+                                if len(batch_indices) != actual_refinement_size:
+                                    continue
+
+                                # Get features for this batch
+                                batch_features = all_simulated_features[batch_indices]
+
+                                # Calculate hypothetical FID
+                                hypothetical_features = np.concatenate(
+                                    (features_pool_without_replaced, batch_features),
+                                    axis=0,
+                                )
+                                hypothetical_fid = self.compute_fid_from_features(
+                                    hypothetical_features, target_mu, target_sigma
+                                )
+
+                                # Update best if improved
+                                if hypothetical_fid < best_hypothetical_fid:
+                                    best_hypothetical_fid = hypothetical_fid
+                                    best_batch_indices = batch_indices
+                                    best_original_indices = np.array(
+                                        [
+                                            branch_indices[idx].item()
+                                            for idx in batch_indices
+                                        ]
+                                    )
+
+                            # Update the pool samples ONLY if the best batch improves global FID
+                            if best_hypothetical_fid < current_global_fid:
+                                print(
+                                    f"      Found better batch at t={current_time:.4f}. New FID: {best_hypothetical_fid:.4f}"
+                                )
+                                num_swaps_this_pass += 1
+
+                                # Update the final samples in the main pool
+                                initial_pool_samples[indices_to_replace] = (
+                                    simulated_samples[best_batch_indices]
+                                )
+
+                                # Update features
+                                current_pool_features[indices_to_replace] = (
+                                    all_simulated_features[best_batch_indices]
+                                )
+
+                                # Update the current FID
+                                current_global_fid = best_hypothetical_fid
+
+                            # For path exploration, select the best branches
+                            # We need exactly one branch per original sample
+                            next_batch_samples = []
+                            next_batch_times = []
+                            next_batch_warp_indices = []
+
+                            # Use the original indices from the best batch to select which samples to continue with
+                            for orig_idx in range(actual_refinement_size):
+                                # Find position in the best batch where this original index appears
+                                positions = np.where(best_original_indices == orig_idx)[
+                                    0
+                                ]
+
+                                if len(positions) > 0:
+                                    # If present in best batch, use the corresponding branch
+                                    branch_idx = best_batch_indices[positions[0]]
+                                    next_batch_samples.append(
+                                        branched_samples[branch_idx]
+                                    )
+                                    next_batch_times.append(branched_times[branch_idx])
+                                    next_batch_warp_indices.append(
+                                        warp_indices[branch_idx].item()
+                                    )
+                                else:
+                                    # If not in best batch, use a random branch for this original
+                                    branch_mask = branch_indices == orig_idx
+                                    candidate_indices = torch.where(branch_mask)[0]
+                                    if len(candidate_indices) > 0:
+                                        random_idx = candidate_indices[
+                                            torch.randint(
+                                                len(candidate_indices),
+                                                (1,),
+                                                device=self.device,
+                                            )
+                                        ].item()
+                                        next_batch_samples.append(
+                                            branched_samples[random_idx]
+                                        )
+                                        next_batch_times.append(
+                                            branched_times[random_idx]
+                                        )
+                                        next_batch_warp_indices.append(
+                                            warp_indices[random_idx].item()
+                                        )
 
                             # Update current batch for next iteration
                             if len(next_batch_samples) == actual_refinement_size:

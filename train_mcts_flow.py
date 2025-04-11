@@ -448,6 +448,17 @@ def calculate_metrics_refined(
         num_iterations=num_iterations,
         use_global=use_global_stats,
     )
+    final_samples = sampler.batch_sample_refine_global_fid_timewarp(
+        n_samples=n_samples,
+        refinement_batch_size=refinement_batch_size,
+        num_branches=num_branches,
+        num_batches=4 * num_branches,
+        branch_dt=0.05,
+        warp_scale=0.5,
+        num_iterations=num_iterations,
+        use_global=use_global_stats,
+        branch_start_time=0.5,
+    )
 
     metric_batch_size = 128  # Batch size for feeding samples to FID object
 
