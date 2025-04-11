@@ -3454,6 +3454,9 @@ class MCTSFlowSampler:
                                 break
 
                             # Update the pool samples ONLY if the best batch improves global FID
+                            print(
+                                f"best hypothetical fid: {best_hypothetical_fid:.4f}, current global fid: {current_global_fid:.4f}"
+                            )
                             if best_hypothetical_fid < current_global_fid:
                                 print(
                                     f"      Found better batch at t={current_time:.4f}. New FID: {best_hypothetical_fid:.4f}"
