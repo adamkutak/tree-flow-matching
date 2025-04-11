@@ -437,17 +437,17 @@ def calculate_metrics_refined(
     #     num_iterations=num_iterations,
     #     use_global=use_global_stats,
     # )
-    final_samples = sampler.batch_sample_refine_global_fid_path_explore(
-        n_samples=n_samples,
-        refinement_batch_size=refinement_batch_size,
-        num_branches=num_branches,
-        num_batches=4 * num_branches,
-        branch_start_time=0.5,
-        branch_dt=0.1,
-        dt_std=0.7,
-        num_iterations=num_iterations,
-        use_global=use_global_stats,
-    )
+    # final_samples = sampler.batch_sample_refine_global_fid_path_explore(
+    #     n_samples=n_samples,
+    #     refinement_batch_size=refinement_batch_size,
+    #     num_branches=num_branches,
+    #     num_batches=4 * num_branches,
+    #     branch_start_time=0.5,
+    #     branch_dt=0.1,
+    #     dt_std=0.7,
+    #     num_iterations=num_iterations,
+    #     use_global=use_global_stats,
+    # )
     final_samples = sampler.batch_sample_refine_global_fid_timewarp(
         n_samples=n_samples,
         refinement_batch_size=refinement_batch_size,
