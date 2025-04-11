@@ -3343,7 +3343,7 @@ class MCTSFlowSampler:
                             )
                             dts = torch.clamp(
                                 dts,
-                                min=0.0,
+                                min=torch.tensor(0.0, device=self.device),
                                 max=1.0 - branched_times,
                             )
 
