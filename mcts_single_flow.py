@@ -3432,21 +3432,13 @@ class MCTSFlowSampler:
                                     hypothetical_features, target_mu, target_sigma
                                 )
 
-                                print(
-                                    f"hypothetical fid: {hypothetical_fid:.4f}, best fid: {best_hypothetical_fid:.4f}"
-                                )
-
                                 # Check if this is better than current best
                                 if hypothetical_fid < best_hypothetical_fid:
-                                    print("updating best hypothetical fid")
                                     best_hypothetical_fid = hypothetical_fid
                                     best_batch_indices = batch_indices
 
                             # Update the pool samples ONLY if the best batch improves global FID
 
-                            print(
-                                f"best hypothetical fid: {best_hypothetical_fid:.4f}, current global fid: {current_global_fid:.4f}"
-                            )
                             if best_hypothetical_fid < current_global_fid:
                                 print(
                                     f"      Found better batch at t={current_time:.4f}. New FID: {best_hypothetical_fid:.4f}"
@@ -3471,18 +3463,6 @@ class MCTSFlowSampler:
 
                             # Update current time to minimum of current batch times
                             current_time = current_batch_times.min().item()
-
-                            # Clean up to save memory
-                            del (
-                                branched_samples,
-                                branched_times,
-                                simulated_samples,
-                                simulated_times,
-                            )
-                            del all_simulated_features
-                            if "hypothetical_features" in locals():
-                                del hypothetical_features
-                            torch.cuda.empty_cache()
 
             print(
                 f"--- End Pass {pass_num + 1}: Made {num_swaps_this_pass} swaps. Current FID: {current_global_fid:.4f} ---"
