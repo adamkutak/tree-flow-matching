@@ -3132,7 +3132,8 @@ class MCTSFlowSampler:
         self,
         n_samples: int,  # Total samples in the final dataset
         refinement_batch_size: int,  # Size of batches to swap
-        num_branches: int,  # Candidates generated per swap slot
+        num_branches: int,  # Branches per sample at each step
+        num_batches: int = 10,  # Number of random batches to evaluate
         dt_std: float = 0.1,  # Standard deviation for dt sampling
         num_iterations: int = 1,  # Number of FULL refinement passes over the data
         use_global: bool = True,  # Use global or class-specific target FID stats
@@ -3148,7 +3149,8 @@ class MCTSFlowSampler:
         Args:
             n_samples: Total number of samples in the final dataset.
             refinement_batch_size: Size of the batches to consider swapping out.
-            num_branches: Multiplier for candidate branches at each step.
+            num_branches: Branches per sample at each step.
+            num_batches: Number of random batches to evaluate for improvement.
             dt_std: Standard deviation for sampling different dt values.
             num_iterations: Number of full passes over the dataset for refinement.
             use_global: Whether to use global target stats for FID calculation.
@@ -3332,6 +3334,11 @@ class MCTSFlowSampler:
                                 num_branches
                             )
 
+                            # Track which original sample each branch belongs to
+                            branch_indices = torch.arange(
+                                len(current_batch_samples), device=self.device
+                            ).repeat_interleave(num_branches)
+
                             # Sample different dt values for each branch
                             dts = torch.normal(
                                 mean=branch_dt,
@@ -3341,7 +3348,7 @@ class MCTSFlowSampler:
                             )
                             dts = torch.clamp(
                                 dts,
-                                min=torch.tensor(0.0, device=self.device),
+                                min=0.0,
                                 max=1.0 - branched_times,
                             )
 
@@ -3393,52 +3400,65 @@ class MCTSFlowSampler:
                                 all_simulated_features, axis=0
                             )
 
-                            # Evaluate potential batches similar to random search method
-                            best_hypothetical_fid = float(
-                                "inf"
-                            )  # Start with worst possible score
+                            # Evaluate potential batches
+                            best_hypothetical_fid = float("inf")
                             best_batch_indices = None
+                            best_original_indices = None
 
-                            # Create batches from the simulated samples and evaluate them
-                            num_candidates = len(simulated_samples)
+                            # Create and evaluate num_batches random batches, ensuring diversity
+                            for batch_idx in range(num_batches):
+                                # Select exactly one branch from each original sample
+                                batch_indices = []
 
-                            # Evaluate num_branches random batches
-                            for i in range(num_branches):
-                                # Randomly select a batch of samples
-                                if num_candidates <= actual_refinement_size:
-                                    # If we have fewer candidates than batch size, use all of them
-                                    batch_indices = np.arange(num_candidates)
-                                else:
-                                    # Randomly select samples
-                                    batch_indices = np.random.choice(
-                                        num_candidates,
-                                        size=actual_refinement_size,
-                                        replace=False,
-                                    )
+                                # For each original sample index
+                                for orig_idx in range(actual_refinement_size):
+                                    # Find all branches from this original sample
+                                    branch_mask = branch_indices == orig_idx
+                                    candidate_indices = torch.where(branch_mask)[0]
 
-                                candidate_batch_features = all_simulated_features[
-                                    batch_indices
-                                ]
+                                    # Randomly select one branch
+                                    if len(candidate_indices) > 0:
+                                        selected_idx = candidate_indices[
+                                            torch.randint(
+                                                len(candidate_indices),
+                                                (1,),
+                                                device=self.device,
+                                            )
+                                        ].item()
+                                        batch_indices.append(selected_idx)
 
-                                # Combine with rest of pool and calculate hypothetical FID
+                                # Skip if we couldn't form a complete batch
+                                if len(batch_indices) != actual_refinement_size:
+                                    continue
+
+                                # Get features for this batch
+                                batch_features = all_simulated_features[batch_indices]
+
+                                # Calculate hypothetical FID
                                 hypothetical_features = np.concatenate(
-                                    (
-                                        features_pool_without_replaced,
-                                        candidate_batch_features,
-                                    ),
+                                    (features_pool_without_replaced, batch_features),
                                     axis=0,
                                 )
                                 hypothetical_fid = self.compute_fid_from_features(
                                     hypothetical_features, target_mu, target_sigma
                                 )
 
-                                # Check if this is better than current best
+                                # Update best if improved
                                 if hypothetical_fid < best_hypothetical_fid:
                                     best_hypothetical_fid = hypothetical_fid
                                     best_batch_indices = batch_indices
+                                    best_original_indices = np.array(
+                                        [
+                                            branch_indices[idx].item()
+                                            for idx in batch_indices
+                                        ]
+                                    )
+
+                            # If we couldn't form any valid batches, break the path exploration
+                            if best_batch_indices is None:
+                                break
 
                             # Update the pool samples ONLY if the best batch improves global FID
-
                             if best_hypothetical_fid < current_global_fid:
                                 print(
                                     f"      Found better batch at t={current_time:.4f}. New FID: {best_hypothetical_fid:.4f}"
@@ -3458,11 +3478,69 @@ class MCTSFlowSampler:
                                 # Update the current FID
                                 current_global_fid = best_hypothetical_fid
 
-                            current_batch_samples = branched_samples[best_batch_indices]
-                            current_batch_times = branched_times[best_batch_indices]
+                            # For path exploration, select the best branches
+                            # We need exactly one branch per original sample
+                            next_batch_samples = []
+                            next_batch_times = []
 
-                            # Update current time to minimum of current batch times
-                            current_time = current_batch_times.min().item()
+                            # Use the original indices from the best batch to select which samples to continue with
+                            for orig_idx in range(actual_refinement_size):
+                                # Find position in the best batch where this original index appears
+                                positions = np.where(best_original_indices == orig_idx)[
+                                    0
+                                ]
+
+                                if len(positions) > 0:
+                                    # If present in best batch, use the corresponding branch
+                                    branch_idx = best_batch_indices[positions[0]]
+                                    next_batch_samples.append(
+                                        branched_samples[branch_idx]
+                                    )
+                                    next_batch_times.append(branched_times[branch_idx])
+                                else:
+                                    # If not in best batch, use a random branch for this original
+                                    branch_mask = branch_indices == orig_idx
+                                    candidate_indices = torch.where(branch_mask)[0]
+                                    if len(candidate_indices) > 0:
+                                        random_idx = candidate_indices[
+                                            torch.randint(
+                                                len(candidate_indices),
+                                                (1,),
+                                                device=self.device,
+                                            )
+                                        ].item()
+                                        next_batch_samples.append(
+                                            branched_samples[random_idx]
+                                        )
+                                        next_batch_times.append(
+                                            branched_times[random_idx]
+                                        )
+                                    else:
+                                        # This case shouldn't happen with proper branching
+                                        pass
+
+                            # Update current batch for next iteration
+                            if len(next_batch_samples) == actual_refinement_size:
+                                current_batch_samples = torch.stack(next_batch_samples)
+                                current_batch_times = torch.stack(next_batch_times)
+
+                                # Update current time to minimum of current batch times
+                                current_time = current_batch_times.min().item()
+                            else:
+                                # If we couldn't form a complete batch, end path exploration
+                                break
+
+                            # Clean up to save memory
+                            del (
+                                branched_samples,
+                                branched_times,
+                                simulated_samples,
+                                simulated_times,
+                            )
+                            del all_simulated_features
+                            if "hypothetical_features" in locals():
+                                del hypothetical_features
+                            torch.cuda.empty_cache()
 
             print(
                 f"--- End Pass {pass_num + 1}: Made {num_swaps_this_pass} swaps. Current FID: {current_global_fid:.4f} ---"
