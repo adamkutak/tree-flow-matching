@@ -2840,6 +2840,7 @@ class MCTSFlowSampler:
         n_samples: int,  # Total samples in the final dataset
         refinement_batch_size: int,  # Size of batches to swap
         num_branches: int,  # Candidates generated per swap slot
+        num_batches: int = 10,  # Number of random batches to evaluate
         num_iterations: int = 1,  # Number of FULL refinement passes over the data
         use_global: bool = True,  # Use global or class-specific target FID stats
     ):
@@ -2852,6 +2853,7 @@ class MCTSFlowSampler:
             n_samples: Total number of samples in the final dataset.
             refinement_batch_size: Size of the batches to consider swapping out.
             num_branches: Multiplier for batch_size to determine candidate pool size per attempt.
+            num_batches: Number of random batches to evaluate for improvement.
             num_iterations: Number of full passes over the dataset for refinement (default: 1).
             use_global: Whether to use global target stats for FID calculation.
 
@@ -2873,9 +2875,7 @@ class MCTSFlowSampler:
             n_samples, dtype=torch.long, device=self.device
         )
         current_idx = 0
-        generation_chunk_size = (
-            refinement_batch_size  # Can use refinement_batch_size for chunking
-        )
+        generation_chunk_size = refinement_batch_size
 
         for class_label in range(self.num_classes):
             generated_for_class = 0
@@ -2928,7 +2928,6 @@ class MCTSFlowSampler:
             feature_batch_size = 128
             for i in range(0, n_samples, feature_batch_size):
                 batch = initial_pool_samples[i : i + feature_batch_size]
-                # Assuming extract_inception_features returns features on CPU as numpy
                 features = self.extract_inception_features(batch)
                 all_features_list.append(features)
             current_pool_features = np.concatenate(all_features_list, axis=0)
@@ -2956,7 +2955,6 @@ class MCTSFlowSampler:
                 class_indices = torch.where(initial_pool_labels == target_class)[0]
                 num_samples_in_class = len(class_indices)
                 if num_samples_in_class == 0:
-                    # print(f"  Class {target_class}: Skipping (0 samples)")
                     continue
 
                 # Iterate through batches within the class
@@ -2977,7 +2975,6 @@ class MCTSFlowSampler:
 
                     # --- Generate Candidate Replacements ---
                     num_candidates = actual_refinement_size * num_branches
-                    # print(f"      Generating {num_candidates} candidates...") # Verbose
                     candidate_samples = torch.zeros(
                         (
                             num_candidates,
@@ -3026,7 +3023,6 @@ class MCTSFlowSampler:
                         generated_count += chunk_size
 
                     # --- Evaluate Potential Swaps ---
-                    # print(f"      Evaluating {num_branches} candidate batches...") # Verbose
                     best_hypothetical_fid = (
                         current_global_fid  # Start assuming no improvement
                     )
@@ -3039,38 +3035,38 @@ class MCTSFlowSampler:
                             batch = candidate_samples[i : i + feature_batch_size]
                             features = self.extract_inception_features(batch)
                             cand_features_list_temp.append(features)
-                        if (
-                            not cand_features_list_temp
-                        ):  # Handle case where num_candidates was 0? Should not happen
-                            all_candidate_features = np.empty(
+
+                        all_candidate_features = (
+                            np.concatenate(cand_features_list_temp, axis=0)
+                            if cand_features_list_temp
+                            else np.empty(
                                 (0, current_pool_features.shape[1]),
                                 dtype=current_pool_features.dtype,
                             )
-                        else:
-                            all_candidate_features = np.concatenate(
-                                cand_features_list_temp, axis=0
-                            )
+                        )
 
                     # Prepare the feature pool *without* the samples being replaced
                     pool_indices_mask = np.ones(n_samples, dtype=bool)
-                    # Need indices relative to current_pool_features (numpy array)
                     pool_indices_mask[indices_to_replace] = False
                     features_pool_without_replaced = current_pool_features[
                         pool_indices_mask
                     ]
 
-                    # Iterate through candidate batches
-                    for i in range(num_branches):
-                        start_idx = i * actual_refinement_size
-                        end_idx = (i + 1) * actual_refinement_size
-                        # Check if end_idx exceeds available candidates (shouldn't if generation is correct)
-                        if start_idx >= all_candidate_features.shape[0]:
-                            continue
+                    # Evaluate num_batches random candidate batches
+                    for i in range(num_batches):
+                        # Randomly select a batch of samples from the candidates
+                        if num_candidates <= actual_refinement_size:
+                            # If we have fewer candidates than batch size, use all of them
+                            batch_indices = np.arange(num_candidates)
+                        else:
+                            # Randomly select samples
+                            batch_indices = np.random.choice(
+                                num_candidates,
+                                size=actual_refinement_size,
+                                replace=False,
+                            )
 
-                        candidate_batch_indices_in_cand_pool = slice(start_idx, end_idx)
-                        candidate_batch_features = all_candidate_features[
-                            candidate_batch_indices_in_cand_pool
-                        ]
+                        candidate_batch_features = all_candidate_features[batch_indices]
 
                         # Combine features for hypothetical pool
                         hypothetical_features = np.concatenate(
@@ -3085,13 +3081,13 @@ class MCTSFlowSampler:
 
                         if hypothetical_fid < best_hypothetical_fid:
                             best_hypothetical_fid = hypothetical_fid
-                            best_candidate_batch_indices = (
-                                candidate_batch_indices_in_cand_pool
-                            )
-                            # print(f"        Found better hypothetical FID: {best_hypothetical_fid:.4f} (Cand. Batch {i+1})") # Verbose
+                            best_candidate_batch_indices = batch_indices
 
                     # --- Perform Swap if Improvement Found ---
-                    if best_candidate_batch_indices is not None:
+                    if (
+                        best_candidate_batch_indices is not None
+                        and best_hypothetical_fid < current_global_fid
+                    ):
                         print(
                             f"      Swapping batch. New best FID: {best_hypothetical_fid:.4f}"
                         )
@@ -3114,7 +3110,6 @@ class MCTSFlowSampler:
                         )
                         # Update the official current FID
                         current_global_fid = best_hypothetical_fid
-                    # else: print("      No improvement found for this batch.") # Verbose
 
                     # Clean up memory for this batch attempt
                     del candidate_samples, all_candidate_features

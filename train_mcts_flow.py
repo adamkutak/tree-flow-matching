@@ -433,6 +433,7 @@ def calculate_metrics_refined(
     #     n_samples=n_samples,
     #     refinement_batch_size=refinement_batch_size,
     #     num_branches=num_branches,
+    #     num_batches=4 * num_branches,
     #     num_iterations=num_iterations,
     #     use_global=use_global_stats,
     # )
@@ -440,6 +441,7 @@ def calculate_metrics_refined(
         n_samples=n_samples,
         refinement_batch_size=refinement_batch_size,
         num_branches=num_branches,
+        num_batches=4 * num_branches,
         branch_start_time=0.5,
         branch_dt=0.05,
         dt_std=0.1,
@@ -554,7 +556,7 @@ def calculate_metrics_refined(
 
 
 def main():
-    device = torch.device("cuda:1" if torch.cuda.is_available() else "cpu")
+    device = torch.device("cuda:5" if torch.cuda.is_available() else "cpu")
     print(f"Using device: {device}")
 
     # Set random seeds for reproducibility
