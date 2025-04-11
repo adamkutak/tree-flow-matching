@@ -25,9 +25,8 @@ class ImageNet32Dataset(Dataset):
             file_path = os.path.join(self.data_dir, batch_file)
             with open(file_path, "rb") as f:
                 entry = pickle.load(f, encoding="bytes")
-                breakpoint()
-                self.data.append(entry[b"data"])
-                self.targets.extend(entry[b"labels"])
+                self.data.append(entry["data"])
+                self.targets.extend(entry["labels"])
 
         self.data = np.vstack(self.data).reshape(-1, 3, 32, 32)
         self.data = self.data.transpose((0, 2, 3, 1))  # Convert to HWC format
