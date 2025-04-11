@@ -96,6 +96,7 @@ class MCTSFlowSampler:
         value_model="single_value_model.pt",
         inception_layer=3,
         pca_dim=None,
+        dataset="cifar10",
     ):
         # Check if CUDA is available and set device
         if torch.cuda.is_available():
@@ -110,6 +111,7 @@ class MCTSFlowSampler:
         self.image_size = image_size
         self.channels = channels
         self.num_classes = num_classes
+        self.dataset = dataset.lower()
 
         self.flow_model = UNetModel(
             dim=(channels, image_size, image_size),
@@ -220,14 +222,16 @@ class MCTSFlowSampler:
 
         # Load reference statistics based on feature dimension and PCA if applicable
         if self.use_pca:
-            stats_file = f"cifar10_fid_stats_{self.feature_dim}to{self.pca_dim}dim.pkl"
+            stats_file = (
+                f"{self.dataset}_fid_stats_{self.feature_dim}to{self.pca_dim}dim.pkl"
+            )
         else:
-            stats_file = f"cifar10_fid_stats_{self.feature_dim}dim.pkl"
+            stats_file = f"{self.dataset}_fid_stats_{self.feature_dim}dim.pkl"
 
         try:
             with open(stats_file, "rb") as f:
-                cifar_stats = pickle.load(f)
-            print(f"Loaded CIFAR-10 statistics from {stats_file}")
+                stats = pickle.load(f)
+            print(f"Loaded {self.dataset.upper()} statistics from {stats_file}")
         except FileNotFoundError:
             raise FileNotFoundError(
                 f"Statistics file {stats_file} not found. Please run compute_cifar_stats.py "
@@ -251,17 +255,18 @@ class MCTSFlowSampler:
 
         # Load per-class statistics
         for class_idx in range(num_classes):
-            self.fids[class_idx]["mu"] = cifar_stats[f"class_{class_idx}_mu"]
-            self.fids[class_idx]["sigma"] = cifar_stats[f"class_{class_idx}_sigma"]
-            self.fids[class_idx]["sigma_inv"] = np.linalg.inv(
-                self.fids[class_idx]["sigma"]
-            )
+            if f"class_{class_idx}_mu" in stats and f"class_{class_idx}_sigma" in stats:
+                self.fids[class_idx]["mu"] = stats[f"class_{class_idx}_mu"]
+                self.fids[class_idx]["sigma"] = stats[f"class_{class_idx}_sigma"]
+                self.fids[class_idx]["sigma_inv"] = np.linalg.inv(
+                    self.fids[class_idx]["sigma"]
+                )
 
         # Load global statistics if available
-        if "global_mu" in cifar_stats and "global_sigma" in cifar_stats:
+        if "global_mu" in stats and "global_sigma" in stats:
             print("Global FID statistics found, loading...")
-            self.global_fid["mu"] = cifar_stats["global_mu"]
-            self.global_fid["sigma"] = cifar_stats["global_sigma"]
+            self.global_fid["mu"] = stats["global_mu"]
+            self.global_fid["sigma"] = stats["global_sigma"]
             self.global_fid["sigma_inv"] = np.linalg.inv(self.global_fid["sigma"])
             self.has_global_stats = True
         else:

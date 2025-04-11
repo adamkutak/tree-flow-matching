@@ -1,22 +1,25 @@
 import torch
 import torch.nn as nn
 import torchvision.transforms as transforms
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, Dataset
 from torchvision.datasets import CIFAR10
 import numpy as np
 import pickle
+import os
 from tqdm import tqdm
 from collections import defaultdict
 import argparse
 from sklearn.decomposition import PCA
 from torchmetrics.image.fid import NoTrainInceptionV3
+from imagenet_dataset import ImageNet32Dataset
 
 
-def compute_cifar10_statistics(feature_dim=64, pca_dim=None):
+def compute_dataset_statistics(dataset_name, feature_dim=64, pca_dim=None):
     """
-    Compute and save Inception feature statistics for CIFAR-10 dataset.
+    Compute and save Inception feature statistics for the specified dataset.
 
     Args:
+        dataset_name (str): Name of the dataset ('cifar10' or 'imagenet32')
         feature_dim (int): Dimension of features to extract. Options are:
             - 64: First layer features
             - 192: Second layer features
@@ -49,7 +52,7 @@ def compute_cifar10_statistics(feature_dim=64, pca_dim=None):
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
     inception = inception.to(device)
 
-    # Transform for CIFAR-10
+    # Transform for dataset
     transform = transforms.Compose(
         [
             transforms.ToTensor(),
@@ -57,25 +60,29 @@ def compute_cifar10_statistics(feature_dim=64, pca_dim=None):
         ]
     )
 
-    # Load both training and test sets
-    train_dataset = CIFAR10(
-        root="./data", train=True, download=True, transform=transform
-    )
+    # Load dataset
+    if dataset_name.lower() == "cifar10":
+        dataset = CIFAR10(root="./data", train=True, download=True, transform=transform)
+        num_classes = 10
+    elif dataset_name.lower() == "imagenet32":
+        dataset = ImageNet32Dataset(root_dir="./data", train=True, transform=transform)
+        num_classes = 1000
+    else:
+        raise ValueError(f"Unsupported dataset: {dataset_name}")
 
-    dataloader = DataLoader(train_dataset, batch_size=64, shuffle=False, num_workers=4)
+    dataloader = DataLoader(dataset, batch_size=64, shuffle=False, num_workers=4)
 
     # Dictionary to store features for each class
     class_features = defaultdict(list)
     # List to store all features for global statistics
     all_features_list = []
 
-    print(f"Computing {feature_dim}-dim Inception features for CIFAR-10...")
+    print(f"Computing {feature_dim}-dim Inception features for {dataset_name}...")
 
     with torch.no_grad():
         for images, labels in tqdm(dataloader):
             images = images.to(device)
             # Scale images to [0, 255] range as uint8 as expected by torchmetrics implementation
-            # This matches how FID.FrechetInceptionDistance processes images when normalize=True
             images = (images * 255).byte()
 
             # Get features
@@ -101,13 +108,13 @@ def compute_cifar10_statistics(feature_dim=64, pca_dim=None):
         pca_model.fit(all_features)
 
         # Save PCA model
-        pca_file = f"inception_pca_{feature_dim}to{pca_dim}.pkl"
+        pca_file = f"{dataset_name}_inception_pca_{feature_dim}to{pca_dim}.pkl"
         with open(pca_file, "wb") as f:
             pickle.dump(pca_model, f)
         print(f"Saved PCA model to {pca_file}")
 
         # Transform features using PCA
-        for class_idx in range(10):
+        for class_idx in range(num_classes):
             if class_idx in class_features:
                 class_features[class_idx] = [
                     pca_model.transform([feat])[0] for feat in class_features[class_idx]
@@ -121,7 +128,7 @@ def compute_cifar10_statistics(feature_dim=64, pca_dim=None):
 
     # Compute per-class statistics
     print("\nComputing statistics for each class...")
-    for class_idx in range(10):
+    for class_idx in range(num_classes):
         if class_idx in class_features and len(class_features[class_idx]) > 0:
             features = np.stack(class_features[class_idx])
             mu = np.mean(features, axis=0)
@@ -153,9 +160,9 @@ def compute_cifar10_statistics(feature_dim=64, pca_dim=None):
 
     # Save statistics with dimension in filename
     if use_pca:
-        output_file = f"cifar10_fid_stats_{feature_dim}to{pca_dim}dim.pkl"
+        output_file = f"{dataset_name}_fid_stats_{feature_dim}to{pca_dim}dim.pkl"
     else:
-        output_file = f"cifar10_fid_stats_{feature_dim}dim.pkl"
+        output_file = f"{dataset_name}_fid_stats_{feature_dim}dim.pkl"
 
     with open(output_file, "wb") as f:
         pickle.dump(stats, f)
@@ -170,7 +177,14 @@ def compute_cifar10_statistics(feature_dim=64, pca_dim=None):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
-        description="Compute CIFAR-10 statistics for FID calculation"
+        description="Compute dataset statistics for FID calculation"
+    )
+    parser.add_argument(
+        "--dataset",
+        type=str,
+        default="cifar10",
+        choices=["cifar10", "imagenet32"],
+        help="Dataset to compute statistics for (cifar10 or imagenet32)",
     )
     parser.add_argument(
         "--dim",
@@ -187,7 +201,8 @@ if __name__ == "__main__":
     )
     args = parser.parse_args()
 
-    compute_cifar10_statistics(
+    compute_dataset_statistics(
+        dataset_name=args.dataset,
         feature_dim=args.dim,
         pca_dim=args.pca_dim,
     )

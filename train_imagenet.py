@@ -1,7 +1,6 @@
 import torch
 import torch.utils.data as data
 import torchvision.transforms as transforms
-import torchvision.datasets as datasets
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 import os
@@ -10,6 +9,7 @@ import numpy as np
 from mcts_single_flow import MCTSFlowSampler
 from train_mcts_flow import calculate_metrics
 import torchmetrics.image.fid as FID
+from imagenet_dataset import ImageNet32Dataset
 
 
 def train_large_flow_model(
@@ -39,7 +39,6 @@ def train_large_flow_model(
     print(f"Using {num_timesteps} timesteps for flow matching")
 
     # Setup ImageNet 32x32 dataset with appropriate transforms
-    # ImageNet normalization values
     transform = transforms.Compose(
         [
             transforms.ToTensor(),
@@ -47,9 +46,9 @@ def train_large_flow_model(
         ]
     )
 
-    # Assuming ImageNet-32x32 is stored in ./data/imagenet32
-    train_dataset = datasets.ImageFolder(
-        root="./data/imagenet32/train", transform=transform
+    # Use the ImageNet32Dataset class
+    train_dataset = ImageNet32Dataset(
+        root_dir="./data", train=True, transform=transform
     )
     train_loader = DataLoader(
         train_dataset, batch_size=batch_size, shuffle=True, num_workers=4
@@ -59,6 +58,7 @@ def train_large_flow_model(
     fid = FID.FrechetInceptionDistance(normalize=True, reset_real_features=False).to(
         device
     )
+
     # Randomly sample real images
     indices = np.random.choice(len(train_dataset), 5000, replace=False)
     real_images = torch.stack([train_dataset[i][0] for i in indices]).to(device)
@@ -70,7 +70,7 @@ def train_large_flow_model(
         batch = real_images[i : i + real_batch_size]
         fid.update(batch, real=True)
 
-    # Initialize sampler with larger UNet model
+    # Initialize sampler with larger UNet model and ImageNet dataset
     sampler = MCTSFlowSampler(
         image_size=32,
         channels=3,
@@ -81,13 +81,14 @@ def train_large_flow_model(
         num_channels=num_channels,
         learning_rate=learning_rate,
         load_models=False,
+        dataset="imagenet32",  # Specify we're using ImageNet32
     )
 
     # Create directory for saving models
     os.makedirs("saved_models", exist_ok=True)
 
     # Check if a saved model exists and load it
-    save_path = f"saved_models/large_flow_model_imagenet32.pt"  # Changed filename
+    save_path = f"saved_models/large_flow_model_imagenet32.pt"
     if os.path.exists(save_path):
         print(f"Loading existing model from {save_path}")
         sampler.flow_model.load_state_dict(torch.load(save_path, map_location=device))

@@ -280,7 +280,7 @@ def calculate_metrics(
     sampler, num_branches, num_keep, device, n_samples=2000, sigma=0.1, fid=None
 ):
     """
-    Calculate FID metrics and average Mahalanobis distance for a specific branch/keep configuration across all classes.
+    Calculate FID metrics, Inception Score, and average Mahalanobis distance for a specific branch/keep configuration across all classes.
     """
     fid.reset()
 
@@ -301,6 +301,9 @@ def calculate_metrics(
 
         # Generate full batches
         for _ in range(num_batches):
+            sample = sampler.regular_batch_sample(
+                class_label=class_label, batch_size=generation_batch_size
+            )
             # sample = sampler.batch_sample_with_path_exploration_timewarp(
             #     class_label=class_label,
             #     batch_size=generation_batch_size,
@@ -352,12 +355,12 @@ def calculate_metrics(
             #     warp_scale=0.5,
             # )
 
-            sample = sampler.batch_sample_with_random_search_batch_fid_direct(
-                class_label=class_label,
-                batch_size=generation_batch_size,
-                num_branches=num_branches,
-                num_scoring_batches=4 * num_branches,
-            )
+            # sample = sampler.batch_sample_with_random_search_batch_fid_direct(
+            #     class_label=class_label,
+            #     batch_size=generation_batch_size,
+            #     num_branches=num_branches,
+            #     num_scoring_batches=4 * num_branches,
+            # )
             # Compute Mahalanobis distance for this batch
             mahalanobis_dist = sampler.batch_compute_global_mean_difference(sample)
             mahalanobis_distances.extend(mahalanobis_dist.cpu().tolist())
@@ -374,6 +377,19 @@ def calculate_metrics(
     # Compute final scores
     fid_score = fid.compute()
     avg_mahalanobis = sum(mahalanobis_distances) / len(mahalanobis_distances)
+
+    # Calculate Inception Score
+    print("Calculating Inception Score...")
+    # Re-collect all generated samples on the device for IS calculation
+    generated_tensor_device = torch.stack(generated_samples).to(device)
+    inception_score, inception_std = calculate_inception_score(
+        generated_tensor_device, device=device, batch_size=metric_batch_size, splits=10
+    )
+    print(f"Inception Score: {inception_score:.4f} ± {inception_std:.4f}")
+
+    # Clean up to free memory
+    generated_tensor_device = None
+    torch.cuda.empty_cache()
 
     # Calculate means and covariances
     mean_real = fid.real_features_sum / fid.real_features_num_samples
@@ -405,7 +421,8 @@ def calculate_metrics(
         "fid": fid_score.item(),
     }
 
-    return fid_score, avg_mahalanobis, fid_components
+    # Add Inception Score to the return values
+    return fid_score, avg_mahalanobis, fid_components, inception_score, inception_std
 
 
 def calculate_metrics_refined(
@@ -469,9 +486,15 @@ def calculate_metrics_refined(
         fid.update(batch, real=False)  # Feed fake samples
 
     # Compute final FID score using the object's method
-    # This might internally compute means/covariances needed for components
     final_fid_score = fid.compute()
     print(f"Final FID Score: {final_fid_score:.4f}")
+
+    # --- Calculate Inception Score ---
+    print("Calculating Inception Score...")
+    inception_score, inception_std = calculate_inception_score(
+        final_samples, device=device, batch_size=metric_batch_size, splits=10
+    )
+    print(f"Inception Score: {inception_score:.4f} ± {inception_std:.4f}")
 
     # --- Calculate Final Mahalanobis/Mean Difference ---
     print("Calculating final Mean Difference...")
@@ -563,35 +586,67 @@ def calculate_metrics_refined(
             "fid": final_fid_score.item(),
         }
 
-    return final_fid_score, avg_mahalanobis, fid_components
+    metrics = {
+        "fid_score": final_fid_score.item(),
+        "avg_mahalanobis": avg_mahalanobis,
+        "fid_components": fid_components,
+        "inception_score": inception_score,
+        "inception_std": inception_std,
+    }
+
+    return metrics
 
 
 def main():
+    # Configuration
+    dataset_name = "cifar10"  # Options: "cifar10" or "imagenet32"
     device = torch.device("cuda:5" if torch.cuda.is_available() else "cpu")
     print(f"Using device: {device}")
 
-    # Set random seeds for reproducibility
-    # torch.manual_seed(42)
-    # np.random.seed(42)
+    # Set dataset-specific parameters
+    if dataset_name.lower() == "cifar10":
+        num_classes = 10
+        print("Using CIFAR-10 dataset")
+    elif dataset_name.lower() == "imagenet32":
+        num_classes = 1000
+        print("Using ImageNet32 dataset")
+    else:
+        raise ValueError(f"Unsupported dataset: {dataset_name}")
 
-    # CIFAR-10 dimensions and setup
+    # Common parameters
     image_size = 32
     channels = 3
-    num_classes = 10
 
-    # Setup CIFAR-10 dataset with appropriate transforms
+    # Setup dataset with appropriate transforms
     transform = transforms.Compose(
         [
             transforms.ToTensor(),
             transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
         ]
     )
-    train_dataset = datasets.CIFAR10(
-        root="./data", train=True, download=True, transform=transform
-    )
-    train_loader = DataLoader(train_dataset, batch_size=128, shuffle=True)
 
-    # Initialize sampler with CIFAR-10 dimensions
+    # Load the appropriate dataset
+    if dataset_name.lower() == "cifar10":
+        train_dataset = datasets.CIFAR10(
+            root="./data", train=True, download=True, transform=transform
+        )
+    else:  # ImageNet32
+        from imagenet_dataset import ImageNet32Dataset
+
+        train_dataset = ImageNet32Dataset(
+            root_dir="./data", train=True, transform=transform
+        )
+
+    train_loader = DataLoader(
+        train_dataset, batch_size=128, shuffle=True, num_workers=4
+    )
+
+    # Initialize sampler with appropriate dimensions and dataset
+    flow_model_name = f"large_flow_model_{dataset_name}.pt"
+    value_model_name = (
+        f"value_model_{dataset_name}.pt" if dataset_name == "imagenet32" else None
+    )
+
     sampler = MCTSFlowSampler(
         image_size=image_size,
         channels=channels,
@@ -600,10 +655,11 @@ def main():
         num_classes=num_classes,
         buffer_size=10,
         load_models=True,
-        flow_model="large_flow_model.pt",
-        value_model=None,
+        flow_model=flow_model_name,
+        value_model=value_model_name,
         num_channels=256,
         inception_layer=3,
+        dataset=dataset_name,
     )
 
     # Training configuration
@@ -615,17 +671,29 @@ def main():
     fid = FID.FrechetInceptionDistance(normalize=True, reset_real_features=False).to(
         device
     )
-    cifar10 = datasets.CIFAR10(
-        root="./data", train=True, download=True, transform=transform
-    )
+
+    # Load real images for FID calculation
+    if dataset_name.lower() == "cifar10":
+        real_dataset = datasets.CIFAR10(
+            root="./data", train=True, download=True, transform=transform
+        )
+    else:  # ImageNet32
+        from imagenet_dataset import ImageNet32Dataset
+
+        real_dataset = ImageNet32Dataset(
+            root_dir="./data", train=True, transform=transform
+        )
+
+    # Sample size for real images - use fewer for ImageNet32 due to its larger size
+    sample_size = 50000 if dataset_name.lower() == "cifar10" else 5000
 
     # Randomly sample real images
-    indices = np.random.choice(len(cifar10), 20000, replace=False)
-    real_images = torch.stack([cifar10[i][0] for i in indices]).to(device)
+    indices = np.random.choice(len(real_dataset), sample_size, replace=False)
+    real_images = torch.stack([real_dataset[i][0] for i in indices]).to(device)
 
     # Process real images in batches
     real_batch_size = 100
-    print("Processing real images...")
+    print(f"Processing {sample_size} real images from {dataset_name}...")
     for i in range(0, len(real_images), real_batch_size):
         batch = real_images[i : i + real_batch_size]
         fid.update(batch, real=True)
@@ -643,7 +711,13 @@ def main():
         # )
 
         for num_branches, num_keep in branch_keep_pairs:
-            # fid_score, avg_mahalanobis, fid_components = calculate_metrics(
+            # (
+            #     fid_score,
+            #     avg_mahalanobis,
+            #     fid_components,
+            #     inception_score,
+            #     inception_std,
+            # ) = calculate_metrics(
             #     sampler,
             #     num_branches,
             #     num_keep,
@@ -652,7 +726,8 @@ def main():
             #     n_samples=640,
             #     fid=fid,
             # )
-            fid_score, avg_mahalanobis, fid_components = calculate_metrics_refined(
+
+            metrics = calculate_metrics_refined(
                 sampler,
                 n_samples=320,
                 refinement_batch_size=32,
@@ -661,6 +736,14 @@ def main():
                 device=device,
                 fid=fid,
             )
+
+            # Extract metrics
+            fid_score = metrics["fid_score"]
+            avg_mahalanobis = metrics["avg_mahalanobis"]
+            fid_components = metrics["fid_components"]
+            inception_score = metrics["inception_score"]
+            inception_std = metrics["inception_std"]
+
             print(f"\nCycle {cycle + 1} - (branches={num_branches}, keep={num_keep}):")
             print(f"FID Components:")
             print(f"  a (mean term) = {fid_components['a']:.4f}")
@@ -671,6 +754,70 @@ def main():
                 f"  Verification: {fid_components['a'] + fid_components['b'] - 2*fid_components['c']:.4f}"
             )
             print(f"Average Mahalanobis Distance: {avg_mahalanobis:.4f}")
+            print(f"Inception Score: {inception_score:.4f} ± {inception_std:.4f}")
+
+
+def calculate_inception_score(images, device, batch_size=32, splits=10):
+    """
+    Calculate the Inception Score of generated images using the NoTrainInceptionV3 model from torchmetrics.
+
+    Args:
+        images: Tensor of images, normalized to Inception's expectations (shape [N, C, H, W])
+        device: Device to compute on
+        batch_size: Batch size for Inception model
+        splits: Number of splits to calculate mean and std
+
+    Returns:
+        mean_score: Average Inception Score
+        std_score: Standard deviation of Inception Score
+    """
+    from torchmetrics.image.fid import NoTrainInceptionV3
+    import torch.nn.functional as F
+
+    # Load inception model - use the full model (no feature list) to get logits
+    inception_model = NoTrainInceptionV3(
+        name="inception-v3-compat", features_list=["logits"]
+    ).to(device)
+    inception_model.eval()
+
+    # Function to get predictions
+    def get_pred(x):
+        with torch.no_grad():
+            # NoTrainInceptionV3 expects uint8 images in [0, 255] range
+            if x.dtype != torch.uint8:
+                x = (x * 255).byte()
+
+            # Get predictions and apply softmax
+            pred = inception_model(x)  # This returns logits
+            pred = F.softmax(pred, dim=1)
+            return pred
+
+    # Get predictions for all images in batches
+    all_preds = []
+    n_batches = len(images) // batch_size + (0 if len(images) % batch_size == 0 else 1)
+
+    for i in range(n_batches):
+        batch = images[i * batch_size : min((i + 1) * batch_size, len(images))]
+        all_preds.append(get_pred(batch))
+
+    all_preds = torch.cat(all_preds, dim=0).cpu().numpy()
+
+    # Calculate scores for each split
+    scores = []
+    split_size = all_preds.shape[0] // splits
+
+    for k in range(splits):
+        part = all_preds[k * split_size : (k + 1) * split_size]
+        py = np.mean(part, axis=0)
+        scores.append(
+            np.exp(
+                np.mean(
+                    np.sum(part * (np.log(part + 1e-7) - np.log(py + 1e-7)), axis=1)
+                )
+            )
+        )
+
+    return np.mean(scores), np.std(scores)
 
 
 if __name__ == "__main__":
