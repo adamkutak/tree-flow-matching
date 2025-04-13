@@ -567,10 +567,7 @@ def main():
     )
 
     # Initialize sampler with appropriate dimensions and dataset
-    flow_model_name = f"large_flow_model_{dataset_name}.pt"
-    value_model_name = (
-        f"value_model_{dataset_name}.pt" if dataset_name == "imagenet32" else None
-    )
+    flow_model_name = f"flow_model_{dataset_name}.pt"
 
     sampler = MCTSFlowSampler(
         image_size=image_size,
@@ -581,7 +578,6 @@ def main():
         buffer_size=10,
         load_models=True,
         flow_model=flow_model_name,
-        value_model=value_model_name,
         num_channels=256,
         inception_layer=3,
         dataset=dataset_name,
