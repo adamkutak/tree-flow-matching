@@ -23,61 +23,6 @@ from pytorch_fid.inception import InceptionV3
 from torchmetrics.image.fid import NoTrainInceptionV3
 
 
-class TrajectoryBuffer:
-    def __init__(self, max_size=500_000):
-        self.max_size = max_size
-        self.trajectories = []  # List of (state, t, label, final_score) tuples
-
-    def add_trajectory(self, states, ts, labels, scores):
-        """
-        Add a complete trajectory and its final score
-        states: list of tensors for each step
-        ts: list of time points
-        labels: tensor of target labels
-        scores: final scores for each branch
-        """
-        for branch_idx in range(len(scores)):
-            branch_states = [step_states[branch_idx] for step_states in states]
-            for step, (state, t) in enumerate(zip(branch_states, ts)):
-                self.trajectories.append(
-                    (
-                        state.cpu(),
-                        t,
-                        labels[branch_idx].cpu(),
-                        scores[branch_idx].cpu(),
-                    )
-                )
-
-        # Trim buffer if needed
-        if len(self.trajectories) > self.max_size:
-            self.trajectories = self.trajectories[-self.max_size :]
-
-    def sample_batch(self, batch_size):
-        """Sample a random batch of (state, t, label, score) tuples"""
-        if len(self.trajectories) < batch_size:
-            return None
-
-        indices = np.random.choice(len(self.trajectories), batch_size, replace=False)
-        batch = [self.trajectories[i] for i in indices]
-
-        states = torch.stack([b[0] for b in batch])
-        ts = torch.tensor([b[1] for b in batch])
-        labels = torch.stack([b[2] for b in batch])
-        scores = torch.tensor([b[3] for b in batch])
-
-        return states, ts, labels, scores
-
-
-class ValueModel(UNetModel):
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        self.final_layer = torch.nn.Conv2d(self.out_channels, 1, 1)
-
-    def forward(self, t, x, y):
-        features = super().forward(t, x, y)
-        return torch.sigmoid(self.final_layer(features).mean(dim=[1, 2, 3]))
-
-
 class MCTSFlowSampler:
     def __init__(
         self,
@@ -92,7 +37,6 @@ class MCTSFlowSampler:
         learning_rate=5e-4,
         load_models=True,
         flow_model="single_flow_model.pt",
-        value_model="single_value_model.pt",
         inception_layer=3,
         pca_dim=None,
         dataset="cifar10",
@@ -135,26 +79,6 @@ class MCTSFlowSampler:
             num_classes=num_classes,
             class_cond=True,
         ).to(self.device)
-        self.value_model = ValueModel(
-            dim=(channels, image_size, image_size),
-            num_channels=num_channels,
-            num_res_blocks=2,
-            channel_mult=[1, 2, 2, 2],
-            num_heads=4,
-            num_head_channels=64,
-            attention_resolutions="16",
-            dropout=0.0,
-            num_classes=num_classes,
-            class_cond=True,
-        ).to(self.device)
-
-        # Initialize optimizers
-        self.flow_optimizer = torch.optim.Adam(
-            self.flow_model.parameters(), lr=learning_rate
-        )
-        self.value_optimizer = torch.optim.Adam(
-            self.value_model.parameters(), lr=learning_rate
-        )
 
         warmup_epochs = 100
         num_epochs = 1000
@@ -162,9 +86,6 @@ class MCTSFlowSampler:
 
         self.flow_optimizer = torch.optim.Adam(
             self.flow_model.parameters(), lr=initial_lr
-        )
-        self.value_optimizer = torch.optim.Adam(
-            self.value_model.parameters(), lr=initial_lr
         )
 
         def lr_lambda(epoch):
@@ -180,20 +101,14 @@ class MCTSFlowSampler:
             self.flow_optimizer, lr_lambda=lambda epoch: lr_lambda(epoch) / initial_lr
         )
 
-        self.value_scheduler = torch.optim.lr_scheduler.LambdaLR(
-            self.value_optimizer, lr_lambda=lambda epoch: lr_lambda(epoch) / initial_lr
-        )
-
         self.FM = ExactOptimalTransportConditionalFlowMatcher(sigma=0.05)
-        self.trajectory_buffer = TrajectoryBuffer()
 
         # Try to load pre-trained models
         if load_models:
             if self.load_models(
                 flow_model=flow_model,
-                value_model=value_model,
             ):
-                print("Successfully loaded pre-trained flow and value models")
+                print("Successfully loaded pre-trained flow model")
             else:
                 print("No pre-trained models found, starting from scratch")
 
@@ -1750,6 +1665,7 @@ class MCTSFlowSampler:
 
         self.flow_model.eval()
         base_dt = 1 / self.num_timesteps
+        print("base_dt", base_dt)
 
         with torch.no_grad():
             # Generate num_branches batches of samples
@@ -1770,12 +1686,11 @@ class MCTSFlowSampler:
 
                 # Regular flow matching for this batch
                 for step, t in enumerate(self.timesteps[:-1]):
-                    dt = self.timesteps[step + 1] - t
                     t_batch = torch.full((batch_size,), t.item(), device=self.device)
 
                     # Flow step
                     velocity = self.flow_model(t_batch, current_samples, current_label)
-                    current_samples = current_samples + velocity * dt
+                    current_samples = current_samples + velocity * base_dt
 
                 all_samples.append(current_samples)
 
@@ -3827,28 +3742,15 @@ class MCTSFlowSampler:
         )
         print(f"Flow model saved to {flow_path}")
 
-        # Save value model
-        value_path = f"{path}/single_value_model.pt"
-        torch.save(
-            {
-                "model": self.value_model.state_dict(),
-            },
-            value_path,
-        )
-        print(f"Value model saved to {value_path}")
-
     def load_models(
         self,
         path="saved_models",
         flow_model="single_flow_model.pt",
-        value_model="single_value_model.pt",
     ):
         """Load flow and value models if they exist."""
         flow_path = f"{path}/{flow_model}"
-        value_path = f"{path}/{value_model}"
 
         flow_exists = os.path.exists(flow_path)
-        value_exists = os.path.exists(value_path)
 
         if flow_exists:
             try:
@@ -3866,23 +3768,7 @@ class MCTSFlowSampler:
                 print(f"Error loading flow model: {e}")
                 flow_exists = False
 
-        if value_exists:
-            try:
-                # First try loading as a checkpoint dictionary
-                checkpoint = torch.load(
-                    value_path, map_location=self.device, weights_only=True
-                )
-                if isinstance(checkpoint, dict) and "model" in checkpoint:
-                    self.value_model.load_state_dict(checkpoint["model"])
-                else:
-                    # If not a checkpoint dict, assume it's a direct state_dict
-                    self.value_model.load_state_dict(checkpoint)
-                print(f"Value model loaded from {value_path}")
-            except Exception as e:
-                print(f"Error loading value model: {e}")
-                value_exists = False
-
-        return flow_exists and value_exists
+        return flow_exists
 
     # --- Helper Function to Generate Warp Functions ---
     def _get_warp_functions(self, n, device, sqrt_epsilon=1e-4):
