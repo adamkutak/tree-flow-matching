@@ -87,6 +87,7 @@ def train_large_flow_model(
             "attention_resolutions": "16,8",
             "channel_mult": [1, 2, 2, 2],
         },
+        inception_layer=0,
     )
 
     # Create directory for saving models
