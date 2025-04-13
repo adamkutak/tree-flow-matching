@@ -157,4 +157,5 @@ if __name__ == "__main__":
         save_interval=50,
         num_channels=256,
         num_timesteps=10,
+        learning_rate=2e-4,
     )
