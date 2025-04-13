@@ -82,6 +82,11 @@ def train_large_flow_model(
         learning_rate=learning_rate,
         load_models=False,
         dataset="imagenet32",  # Specify we're using ImageNet32
+        flow_model_config={
+            "num_res_blocks": 3,
+            "attention_resolutions": "16,8",
+            "channel_mult": [1, 2, 2, 2],
+        },
     )
 
     # Create directory for saving models
@@ -141,7 +146,7 @@ def train_large_flow_model(
 
 if __name__ == "__main__":
     # Use the specified GPU device
-    device = torch.device("cuda:1" if torch.cuda.is_available() else "cpu")
+    device = torch.device("cuda:5" if torch.cuda.is_available() else "cpu")
     print(f"Using device: {device}")
 
     train_large_flow_model(

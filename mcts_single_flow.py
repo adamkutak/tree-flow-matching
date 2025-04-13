@@ -97,6 +97,7 @@ class MCTSFlowSampler:
         inception_layer=3,
         pca_dim=None,
         dataset="cifar10",
+        flow_model_config=None,
     ):
         # Check if CUDA is available and set device
         if torch.cuda.is_available():
@@ -112,20 +113,29 @@ class MCTSFlowSampler:
         self.channels = channels
         self.num_classes = num_classes
         self.dataset = dataset.lower()
+        self.flow_model_config = flow_model_config or {}
+        # Default UNet parameters
+        default_config = {
+            "num_res_blocks": 2,
+            "channel_mult": [1, 2, 2, 2],
+            "attention_resolutions": "16",
+            "num_heads": 4,
+            "num_head_channels": 64,
+        }
+        model_params = {**default_config, **self.flow_model_config}
 
         self.flow_model = UNetModel(
             dim=(channels, image_size, image_size),
             num_channels=num_channels,
-            num_res_blocks=2,
-            channel_mult=[1, 2, 2, 2],
-            num_heads=4,
-            num_head_channels=64,
-            attention_resolutions="16",
+            num_res_blocks=model_params["num_res_blocks"],
+            channel_mult=model_params["channel_mult"],
+            num_heads=model_params["num_heads"],
+            num_head_channels=model_params["num_head_channels"],
+            attention_resolutions=model_params["attention_resolutions"],
             dropout=0.0,
             num_classes=num_classes,
             class_cond=True,
         ).to(self.device)
-
         self.value_model = ValueModel(
             dim=(channels, image_size, image_size),
             num_channels=num_channels,
