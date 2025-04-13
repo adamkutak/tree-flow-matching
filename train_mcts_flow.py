@@ -277,7 +277,7 @@ def calculate_metrics(
                 num_keep=num_keep,
                 # warp_scale=0.5,
                 dt_std=0.1,
-                selector="mean",
+                selector="inception_score",
                 use_global=True,
                 branch_start_time=0,
                 branch_dt=0.1,

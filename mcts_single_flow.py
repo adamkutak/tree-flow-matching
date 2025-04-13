@@ -870,230 +870,230 @@ class MCTSFlowSampler:
         print(f"{desc} - Flow Loss: {final_loss:.4f}")
         return final_loss
 
-    def batch_sample_wdt_with_selector(
-        self,
-        class_label,
-        batch_size=16,
-        num_branches=4,
-        num_keep=2,
-        dt_std=0.1,
-        selector="fid",
-        use_global=False,
-        branch_start_time=0.0,
-        branch_dt=None,  # New parameter
-    ):
-        """
-        Enhanced sampling method with configurable selection criteria and delayed branching.
+    # def batch_sample_wdt_with_selector(
+    #     self,
+    #     class_label,
+    #     batch_size=16,
+    #     num_branches=4,
+    #     num_keep=2,
+    #     dt_std=0.1,
+    #     selector="fid",
+    #     use_global=False,
+    #     branch_start_time=0.0,
+    #     branch_dt=None,  # New parameter
+    # ):
+    #     """
+    #     Enhanced sampling method with configurable selection criteria and delayed branching.
 
-        Args:
-            class_label: Target class to generate
-            batch_size: Number of final samples to generate
-            num_branches: Number of branches per batch element (constant throughout)
-            num_keep: Number of samples to keep before expansion
-            dt_std: Standard deviation for sampling different dt values
-            selector: Selection criteria - one of ["fid", "mahalanobis", "mean"]
-            use_global: Whether to use global statistics instead of class-specific ones
-            branch_start_time: Time point at which to start branching (0.0 to 1.0)
-            branch_dt: Step size to use after branching begins (if None, uses base_dt)
-        Returns:
-            Tensor of shape [batch_size, C, H, W]
-        """
-        if num_branches == 1 and num_keep == 1:
-            return self.regular_batch_sample(class_label, batch_size)
+    #     Args:
+    #         class_label: Target class to generate
+    #         batch_size: Number of final samples to generate
+    #         num_branches: Number of branches per batch element (constant throughout)
+    #         num_keep: Number of samples to keep before expansion
+    #         dt_std: Standard deviation for sampling different dt values
+    #         selector: Selection criteria - one of ["fid", "mahalanobis", "mean"]
+    #         use_global: Whether to use global statistics instead of class-specific ones
+    #         branch_start_time: Time point at which to start branching (0.0 to 1.0)
+    #         branch_dt: Step size to use after branching begins (if None, uses base_dt)
+    #     Returns:
+    #         Tensor of shape [batch_size, C, H, W]
+    #     """
+    #     if num_branches == 1 and num_keep == 1:
+    #         return self.regular_batch_sample(class_label, batch_size)
 
-        assert (
-            num_branches % num_keep == 0
-        ), "num_branches must be divisible by num_keep"
-        assert 0.0 <= branch_start_time < 1.0, "branch_start_time must be in [0, 1)"
+    #     assert (
+    #         num_branches % num_keep == 0
+    #     ), "num_branches must be divisible by num_keep"
+    #     assert 0.0 <= branch_start_time < 1.0, "branch_start_time must be in [0, 1)"
 
-        # Select the appropriate scoring function based on parameters
-        if selector == "fid":
-            score_fn = (
-                self.batch_compute_global_fid_change
-                if use_global
-                else lambda x, y: self.batch_compute_fid_change(x, y)
-            )
-        elif selector == "mahalanobis":
-            score_fn = (
-                self.batch_compute_global_mahalanobis_distance
-                if use_global
-                else lambda x, y: self.batch_compute_mahalanobis_distance(x, y)
-            )
-        elif selector == "mean":
-            score_fn = (
-                self.batch_compute_global_mean_difference
-                if use_global
-                else lambda x, y: self.batch_compute_mean_difference(x, y)
-            )
-        else:
-            raise ValueError(f"Unknown selector: {selector}")
+    #     # Select the appropriate scoring function based on parameters
+    #     if selector == "fid":
+    #         score_fn = (
+    #             self.batch_compute_global_fid_change
+    #             if use_global
+    #             else lambda x, y: self.batch_compute_fid_change(x, y)
+    #         )
+    #     elif selector == "mahalanobis":
+    #         score_fn = (
+    #             self.batch_compute_global_mahalanobis_distance
+    #             if use_global
+    #             else lambda x, y: self.batch_compute_mahalanobis_distance(x, y)
+    #         )
+    #     elif selector == "mean":
+    #         score_fn = (
+    #             self.batch_compute_global_mean_difference
+    #             if use_global
+    #             else lambda x, y: self.batch_compute_mean_difference(x, y)
+    #         )
+    #     else:
+    #         raise ValueError(f"Unknown selector: {selector}")
 
-        expansion_factor = num_branches // num_keep
-        self.flow_model.eval()
+    #     expansion_factor = num_branches // num_keep
+    #     self.flow_model.eval()
 
-        with torch.no_grad():
-            # Start with just batch_size samples until branching time
-            current_samples = torch.randn(
-                batch_size,
-                self.channels,
-                self.image_size,
-                self.image_size,
-                device=self.device,
-            )
-            current_label = torch.full((batch_size,), class_label, device=self.device)
-            current_times = torch.zeros(batch_size, device=self.device)
+    #     with torch.no_grad():
+    #         # Start with just batch_size samples until branching time
+    #         current_samples = torch.randn(
+    #             batch_size,
+    #             self.channels,
+    #             self.image_size,
+    #             self.image_size,
+    #             device=self.device,
+    #         )
+    #         current_label = torch.full((batch_size,), class_label, device=self.device)
+    #         current_times = torch.zeros(batch_size, device=self.device)
 
-            base_dt = 1 / self.num_timesteps
-            # Use provided branch_dt or default to base_dt
-            branch_dt = branch_dt if branch_dt is not None else base_dt
+    #         base_dt = 1 / self.num_timesteps
+    #         # Use provided branch_dt or default to base_dt
+    #         branch_dt = branch_dt if branch_dt is not None else base_dt
 
-            # Regular flow matching until branch_start_time
-            while torch.all(current_times < branch_start_time):
-                velocity = self.flow_model(
-                    current_times, current_samples, current_label
-                )
+    #         # Regular flow matching until branch_start_time
+    #         while torch.all(current_times < branch_start_time):
+    #             velocity = self.flow_model(
+    #                 current_times, current_samples, current_label
+    #             )
 
-                # Use fixed dt until branching starts
-                dt = min(base_dt, branch_start_time - current_times[0].item())
-                current_samples = current_samples + velocity * dt
-                current_times += dt
+    #             # Use fixed dt until branching starts
+    #             dt = min(base_dt, branch_start_time - current_times[0].item())
+    #             current_samples = current_samples + velocity * dt
+    #             current_times += dt
 
-            # Expand to full number of branches when we reach branching time
-            if current_times[0].item() >= branch_start_time:
-                current_samples = current_samples.repeat_interleave(num_branches, dim=0)
-                current_label = current_label.repeat_interleave(num_branches)
-                current_times = current_times.repeat_interleave(num_branches)
-                batch_indices = torch.arange(
-                    batch_size, device=self.device
-                ).repeat_interleave(num_branches)
+    #         # Expand to full number of branches when we reach branching time
+    #         if current_times[0].item() >= branch_start_time:
+    #             current_samples = current_samples.repeat_interleave(num_branches, dim=0)
+    #             current_label = current_label.repeat_interleave(num_branches)
+    #             current_times = current_times.repeat_interleave(num_branches)
+    #             batch_indices = torch.arange(
+    #                 batch_size, device=self.device
+    #             ).repeat_interleave(num_branches)
 
-            # Continue with branching until the end
-            while torch.any(current_times < 1.0):
-                # STEP 1: Take a random step to create branches
-                velocity = self.flow_model(
-                    current_times, current_samples, current_label
-                )
+    #         # Continue with branching until the end
+    #         while torch.any(current_times < 1.0):
+    #             # STEP 1: Take a random step to create branches
+    #             velocity = self.flow_model(
+    #                 current_times, current_samples, current_label
+    #             )
 
-                # Sample different dt values for each sample, using branch_dt as mean
-                dts = torch.normal(
-                    mean=branch_dt,
-                    std=dt_std * branch_dt,
-                    size=(len(current_samples),),
-                    device=self.device,
-                )
-                dts = torch.clamp(
-                    dts,
-                    min=torch.tensor(0.0, device=self.device),
-                    max=(1.0 - current_times) / 2,  # Ensure room for alignment
-                )
+    #             # Sample different dt values for each sample, using branch_dt as mean
+    #             dts = torch.normal(
+    #                 mean=branch_dt,
+    #                 std=dt_std * branch_dt,
+    #                 size=(len(current_samples),),
+    #                 device=self.device,
+    #             )
+    #             dts = torch.clamp(
+    #                 dts,
+    #                 min=torch.tensor(0.0, device=self.device),
+    #                 max=(1.0 - current_times) / 2,  # Ensure room for alignment
+    #             )
 
-                # Apply different step sizes to create branches
-                branched_samples = current_samples + velocity * dts.view(-1, 1, 1, 1)
-                branched_times = current_times + dts
+    #             # Apply different step sizes to create branches
+    #             branched_samples = current_samples + velocity * dts.view(-1, 1, 1, 1)
+    #             branched_times = current_times + dts
 
-                # STEP 2: Align all branches to the same timepoint
-                target_time = (
-                    torch.min(current_times) + 2 * branch_dt
-                )  # Use branch_dt here too
-                target_time = torch.min(
-                    target_time, torch.tensor(1.0, device=self.device)
-                )
+    #             # STEP 2: Align all branches to the same timepoint
+    #             target_time = (
+    #                 torch.min(current_times) + 2 * branch_dt
+    #             )  # Use branch_dt here too
+    #             target_time = torch.min(
+    #                 target_time, torch.tensor(1.0, device=self.device)
+    #             )
 
-                # Calculate dt to reach the target time
-                dt_to_target = target_time - branched_times
+    #             # Calculate dt to reach the target time
+    #             dt_to_target = target_time - branched_times
 
-                # Get velocity for alignment step
-                velocity = self.flow_model(
-                    branched_times, branched_samples, current_label
-                )
+    #             # Get velocity for alignment step
+    #             velocity = self.flow_model(
+    #                 branched_times, branched_samples, current_label
+    #             )
 
-                # Apply the step to align all branches
-                aligned_samples = branched_samples + velocity * dt_to_target.view(
-                    -1, 1, 1, 1
-                )
-                aligned_times = torch.full(
-                    (len(branched_times),), target_time.item(), device=self.device
-                )
+    #             # Apply the step to align all branches
+    #             aligned_samples = branched_samples + velocity * dt_to_target.view(
+    #                 -1, 1, 1, 1
+    #             )
+    #             aligned_times = torch.full(
+    #                 (len(branched_times),), target_time.item(), device=self.device
+    #             )
 
-                # Verify all branches are at the same time
-                time_diff = torch.max(torch.abs(aligned_times - target_time))
-                if time_diff > 1e-8:
-                    print(
-                        f"WARNING: Branches not at same time. Max difference: {time_diff.item():.8f}"
-                    )
+    #             # Verify all branches are at the same time
+    #             time_diff = torch.max(torch.abs(aligned_times - target_time))
+    #             if time_diff > 1e-8:
+    #                 print(
+    #                     f"WARNING: Branches not at same time. Max difference: {time_diff.item():.8f}"
+    #                 )
 
-                # Calculate scores using the selected scoring function
-                if use_global:
-                    scores = score_fn(aligned_samples)
-                else:
-                    scores = score_fn(aligned_samples, current_label)
+    #             # Calculate scores using the selected scoring function
+    #             if use_global:
+    #                 scores = score_fn(aligned_samples)
+    #             else:
+    #                 scores = score_fn(aligned_samples, current_label)
 
-                # Select top num_keep samples for each batch element
-                selected_samples = []
-                selected_times = []
+    #             # Select top num_keep samples for each batch element
+    #             selected_samples = []
+    #             selected_times = []
 
-                for batch_idx in range(batch_size):
-                    # Get samples for this batch element
-                    batch_mask = batch_indices == batch_idx
-                    batch_samples = aligned_samples[batch_mask]
-                    batch_scores = scores[batch_mask]
-                    batch_times = aligned_times[batch_mask]
+    #             for batch_idx in range(batch_size):
+    #                 # Get samples for this batch element
+    #                 batch_mask = batch_indices == batch_idx
+    #                 batch_samples = aligned_samples[batch_mask]
+    #                 batch_scores = scores[batch_mask]
+    #                 batch_times = aligned_times[batch_mask]
 
-                    # Select top num_keep samples
-                    top_k_values, top_k_indices = torch.topk(
-                        batch_scores, k=min(num_keep, len(batch_scores)), dim=0
-                    )
+    #                 # Select top num_keep samples
+    #                 top_k_values, top_k_indices = torch.topk(
+    #                     batch_scores, k=min(num_keep, len(batch_scores)), dim=0
+    #                 )
 
-                    selected_samples.append(batch_samples[top_k_indices])
-                    selected_times.append(batch_times[top_k_indices])
+    #                 selected_samples.append(batch_samples[top_k_indices])
+    #                 selected_times.append(batch_times[top_k_indices])
 
-                # Stack selected samples and times
-                current_samples = torch.cat(selected_samples, dim=0)
-                current_times = torch.cat(selected_times, dim=0)
+    #             # Stack selected samples and times
+    #             current_samples = torch.cat(selected_samples, dim=0)
+    #             current_times = torch.cat(selected_times, dim=0)
 
-                # Expand each kept sample into expansion_factor new samples
-                current_samples = current_samples.repeat_interleave(
-                    expansion_factor, dim=0
-                )
-                current_times = current_times.repeat_interleave(expansion_factor)
-                current_label = torch.full(
-                    (batch_size * num_branches,), class_label, device=self.device
-                )
-                batch_indices = torch.arange(
-                    batch_size, device=self.device
-                ).repeat_interleave(num_branches)
+    #             # Expand each kept sample into expansion_factor new samples
+    #             current_samples = current_samples.repeat_interleave(
+    #                 expansion_factor, dim=0
+    #             )
+    #             current_times = current_times.repeat_interleave(expansion_factor)
+    #             current_label = torch.full(
+    #                 (batch_size * num_branches,), class_label, device=self.device
+    #             )
+    #             batch_indices = torch.arange(
+    #                 batch_size, device=self.device
+    #             ).repeat_interleave(num_branches)
 
-                # Break if all samples have reached t=1
-                if torch.all(current_times >= 1.0):
-                    break
+    #             # Break if all samples have reached t=1
+    #             if torch.all(current_times >= 1.0):
+    #                 break
 
-            # Final selection - take best sample from each batch element
-            final_samples = []
+    #         # Final selection - take best sample from each batch element
+    #         final_samples = []
 
-            if not torch.all(torch.abs(current_times - 1.0) < 1e-8):
-                print("WARNING: Not all samples reached t=1 after simulation")
-                print(f"Current times: {current_times}")
-                print(
-                    f"Min time: {current_times.min().item():.6f}, Max time: {current_times.max().item():.6f}"
-                )
-                print(
-                    f"Number of samples not at 1.0: {torch.sum(torch.abs(current_times - 1.0) >= 1e-8).item()}"
-                )
+    #         if not torch.all(torch.abs(current_times - 1.0) < 1e-8):
+    #             print("WARNING: Not all samples reached t=1 after simulation")
+    #             print(f"Current times: {current_times}")
+    #             print(
+    #                 f"Min time: {current_times.min().item():.6f}, Max time: {current_times.max().item():.6f}"
+    #             )
+    #             print(
+    #                 f"Number of samples not at 1.0: {torch.sum(torch.abs(current_times - 1.0) >= 1e-8).item()}"
+    #             )
 
-            # Calculate final scores for all samples
-            if use_global:
-                final_scores = score_fn(current_samples)
-            else:
-                final_scores = score_fn(current_samples, current_label)
+    #         # Calculate final scores for all samples
+    #         if use_global:
+    #             final_scores = score_fn(current_samples)
+    #         else:
+    #             final_scores = score_fn(current_samples, current_label)
 
-            for batch_idx in range(batch_size):
-                batch_mask = batch_indices == batch_idx
-                batch_samples = current_samples[batch_mask]
-                batch_scores = final_scores[batch_mask]
-                best_idx = torch.argmax(batch_scores)
-                final_samples.append(batch_samples[best_idx])
+    #         for batch_idx in range(batch_size):
+    #             batch_mask = batch_indices == batch_idx
+    #             batch_samples = current_samples[batch_mask]
+    #             batch_scores = final_scores[batch_mask]
+    #             best_idx = torch.argmax(batch_scores)
+    #             final_samples.append(batch_samples[best_idx])
 
-            return torch.stack(final_samples)  # shape: [batch_size, C, H, W]
+    #         return torch.stack(final_samples)  # shape: [batch_size, C, H, W]
 
     def batch_sample_with_path_exploration(
         self,
@@ -1665,7 +1665,6 @@ class MCTSFlowSampler:
 
         self.flow_model.eval()
         base_dt = 1 / self.num_timesteps
-        print("base_dt", base_dt)
 
         with torch.no_grad():
             # Generate num_branches batches of samples
