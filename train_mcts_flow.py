@@ -218,64 +218,6 @@ def visualize_samples(all_samples_dict, class_label, real_images, figsize=(15, 1
     plt.show()
 
 
-# def evaluate_samples(sampler, num_samples=10, branch_keep_pairs=None, num_classes=10):
-#     """Evaluate sample quality for CIFAR-10 data using the model's quality score"""
-#     if branch_keep_pairs is None:
-#         branch_keep_pairs = [(3, 2), (8, 3), (16, 7)]
-
-#     # Choose a single random class for evaluation
-#     class_label = np.random.randint(num_classes)
-
-#     # Load real CIFAR-10 images for visualization
-#     transform = transforms.Compose(
-#         [transforms.ToTensor(), transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))]
-#     )
-#     cifar10 = datasets.CIFAR10(
-#         root="./data", train=True, download=True, transform=transform
-#     )
-
-#     # Get images only from the selected class
-#     class_indices = [i for i, (_, label) in enumerate(cifar10) if label == class_label]
-#     selected_indices = np.random.choice(class_indices, num_samples, replace=True)
-#     real_images = torch.stack([cifar10[i][0] for i in selected_indices]).to(
-#         sampler.device
-#     )
-
-#     print(f"\nEvaluating samples for class {class_label}:")
-
-#     # Dictionary to store samples for visualization
-#     all_samples_dict = {}
-
-#     for num_branches, num_keep in branch_keep_pairs:
-#         print(f"\nTesting with branches={num_branches}, keep={num_keep}")
-#         samples = sampler.batch_sample(
-#             class_label=class_label,
-#             batch_size=num_samples,
-#             num_branches=num_branches,
-#             num_keep=num_keep,
-#         )
-
-#         with torch.no_grad():
-#             scores = sampler.compute_sample_quality(
-#                 samples,
-#                 torch.full(
-#                     (num_samples,),
-#                     class_label,
-#                     device=sampler.device,
-#                 ),
-#             )
-
-#         all_samples_dict[(num_branches, num_keep)] = samples
-
-#         # Print statistics
-#         mean_score = scores.mean().item()
-#         std_score = scores.std().item()
-#         print(f"Quality score: {mean_score:.4f} ± {std_score:.4f}")
-
-#     # Visualize all samples in a single plot, including real images
-#     visualize_samples(all_samples_dict, class_label, real_images)
-
-
 def calculate_metrics(
     sampler, num_branches, num_keep, device, n_samples=2000, sigma=0.1, fid=None
 ):
@@ -356,9 +298,6 @@ def calculate_metrics(
     fid_score = fid.compute()
     avg_mahalanobis = sum(mahalanobis_distances) / len(mahalanobis_distances)
 
-    # Calculate Inception Score
-    print("Calculating Inception Score...")
-    # Re-collect all generated samples on the device for IS calculation
     generated_tensor_device = torch.stack(generated_samples).to(device)
     inception_score, inception_std = calculate_inception_score(
         generated_tensor_device, device=device, batch_size=metric_batch_size, splits=10
@@ -637,7 +576,7 @@ def main():
         image_size=image_size,
         channels=channels,
         device=device,
-        num_timesteps=10,
+        num_timesteps=20,
         num_classes=num_classes,
         buffer_size=10,
         load_models=True,
