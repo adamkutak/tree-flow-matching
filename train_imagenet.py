@@ -16,7 +16,7 @@ def train_large_flow_model(
     num_epochs=1000,
     batch_size=128,
     device="cuda:0",
-    save_interval=50,
+    save_interval=2,
     num_channels=256,
     learning_rate=5e-4,
     num_timesteps=50,
