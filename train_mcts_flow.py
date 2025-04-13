@@ -301,9 +301,9 @@ def calculate_metrics(
 
         # Generate full batches
         for _ in range(num_batches):
-            sample = sampler.regular_batch_sample(
-                class_label=class_label, batch_size=generation_batch_size
-            )
+            # sample = sampler.regular_batch_sample(
+            #     class_label=class_label, batch_size=generation_batch_size
+            # )
             # sample = sampler.batch_sample_with_path_exploration_timewarp(
             #     class_label=class_label,
             #     batch_size=generation_batch_size,
@@ -328,40 +328,18 @@ def calculate_metrics(
             #     branch_start_time=0,
             #     branch_dt=0.05,
             # )
-            # sample = sampler.batch_sample_with_random_search(
-            #     class_label=class_label,
-            #     batch_size=generation_batch_size,
-            #     num_branches=num_branches,
-            #     num_keep=num_keep,
-            #     # warp_scale=0.5,
-            #     dt_std=0.1,
-            #     selector="mean",
-            #     use_global=True,
-            #     branch_start_time=0,
-            #     branch_dt=0.1,
-            # )
-            # sample = sampler.batch_sample_with_path_exploration_batch_fid(
-            #     class_label=class_label,
-            #     batch_size=generation_batch_size,
-            #     num_branches=num_branches,
-            #     num_scoring_batches=4 * num_branches,
-            #     dt_std=0.1,
-            # )
-            # sample = sampler.batch_sample_with_path_exploration_timewarp_batch_fid(
-            #     class_label=class_label,
-            #     batch_size=generation_batch_size,
-            #     num_branches=num_branches,
-            #     num_scoring_batches=4 * num_branches,
-            #     warp_scale=0.5,
-            # )
-
-            # sample = sampler.batch_sample_with_random_search_batch_fid_direct(
-            #     class_label=class_label,
-            #     batch_size=generation_batch_size,
-            #     num_branches=num_branches,
-            #     num_scoring_batches=4 * num_branches,
-            # )
-            # Compute Mahalanobis distance for this batch
+            sample = sampler.batch_sample_with_random_search(
+                class_label=class_label,
+                batch_size=generation_batch_size,
+                num_branches=num_branches,
+                num_keep=num_keep,
+                # warp_scale=0.5,
+                dt_std=0.1,
+                selector="mean",
+                use_global=True,
+                branch_start_time=0,
+                branch_dt=0.1,
+            )
             mahalanobis_dist = sampler.batch_compute_global_mean_difference(sample)
             mahalanobis_distances.extend(mahalanobis_dist.cpu().tolist())
             generated_samples.extend(sample.cpu())
@@ -421,8 +399,16 @@ def calculate_metrics(
         "fid": fid_score.item(),
     }
 
-    # Add Inception Score to the return values
-    return fid_score, avg_mahalanobis, fid_components, inception_score, inception_std
+    # Create metrics dictionary for return value
+    metrics = {
+        "fid_score": fid_score.item(),
+        "avg_mahalanobis": avg_mahalanobis,
+        "fid_components": fid_components,
+        "inception_score": inception_score,
+        "inception_std": inception_std,
+    }
+
+    return metrics
 
 
 def calculate_metrics_refined(
@@ -600,7 +586,7 @@ def calculate_metrics_refined(
 def main():
     # Configuration
     dataset_name = "cifar10"  # Options: "cifar10" or "imagenet32"
-    device = torch.device("cuda:5" if torch.cuda.is_available() else "cpu")
+    device = torch.device("cuda:1" if torch.cuda.is_available() else "cpu")
     print(f"Using device: {device}")
 
     # Set dataset-specific parameters
@@ -711,31 +697,24 @@ def main():
         # )
 
         for num_branches, num_keep in branch_keep_pairs:
-            # (
-            #     fid_score,
-            #     avg_mahalanobis,
-            #     fid_components,
-            #     inception_score,
-            #     inception_std,
-            # ) = calculate_metrics(
-            #     sampler,
-            #     num_branches,
-            #     num_keep,
-            #     device,
-            #     sigma=0,
-            #     n_samples=640,
-            #     fid=fid,
-            # )
-
-            metrics = calculate_metrics_refined(
+            metrics = calculate_metrics(
                 sampler,
-                n_samples=320,
-                refinement_batch_size=32,
-                num_branches=num_branches,
-                num_iterations=1,
-                device=device,
+                num_branches,
+                num_keep,
+                device,
+                sigma=0,
+                n_samples=640,
                 fid=fid,
             )
+            # metrics = calculate_metrics_refined(
+            #     sampler,
+            #     n_samples=320,
+            #     refinement_batch_size=32,
+            #     num_branches=num_branches,
+            #     num_iterations=1,
+            #     device=device,
+            #     fid=fid,
+            # )
 
             # Extract metrics
             fid_score = metrics["fid_score"]

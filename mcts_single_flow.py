@@ -206,6 +206,12 @@ class MCTSFlowSampler:
         ).to(device)
         self.inception.eval()
 
+        # 2. For logits (used for Inception Score calculation)
+        self.inception_logits_model = NoTrainInceptionV3(
+            name="inception-v3-compat", features_list=["logits"]
+        ).to(device)
+        self.inception_logits_model.eval()
+
         if inception_layer not in layer_to_dim:
             raise ValueError(
                 f"Unsupported inception layer: {inception_layer}. "
@@ -576,6 +582,39 @@ class MCTSFlowSampler:
             mean_differences.append(-distance)
 
         return torch.tensor(mean_differences, device=images.device)
+
+    def batch_compute_inception_score(self, images):
+        """
+        Compute a simplified per-image score based on entropy of class predictions.
+        Lower entropy means more confident predictions, which is desirable.
+
+        Args:
+            images: Tensor of shape [batch_size, C, H, W]
+
+        Returns:
+            Tensor of scores (higher is better for optimization)
+        """
+        import torch.nn.functional as F
+
+        with torch.no_grad():
+            # NoTrainInceptionV3 expects uint8 images in [0, 255] range
+            if images.dtype != torch.uint8:
+                images_uint8 = (images * 255).byte()
+            else:
+                images_uint8 = images
+
+            # Get predictions and apply softmax
+            logits = self.inception_logits_model(images_uint8)
+            probs = F.softmax(logits, dim=1)
+
+            # Calculate negative entropy for each image
+            # entropy = -sum(p * log(p))
+            # We use negative entropy so higher values are better
+            log_probs = torch.log(probs + 1e-7)
+            entropy = -torch.sum(probs * log_probs, dim=1)
+
+            # Return negative entropy (higher = more confident predictions = better)
+            return -entropy
 
     def _load_or_fit_pca(self):
         """Load or fit a PCA model for dimensionality reduction."""
@@ -2022,6 +2061,9 @@ class MCTSFlowSampler:
                 if use_global
                 else lambda x, y: self.batch_compute_mean_difference(x, y)
             )
+        elif selector == "inception_score":
+            score_fn = self.batch_compute_inception_score
+            use_global = True
         else:
             raise ValueError(f"Unknown selector: {selector}")
 
