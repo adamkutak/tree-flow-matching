@@ -203,7 +203,7 @@ class MCTSFlowSampler:
             print("No global FID statistics found in the loaded file")
             self.has_global_stats = False
 
-        self.initialize_class_buffers(buffer_size)
+        # self.initialize_class_buffers(buffer_size)
 
     def compute_mahalanobis_distance(self, features, class_idx):
         """
