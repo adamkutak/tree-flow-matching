@@ -1153,6 +1153,9 @@ class MCTSFlowSampler:
                 if use_global
                 else lambda x, y: self.batch_compute_mean_difference(x, y)
             )
+        elif selector == "inception_score":
+            score_fn = self.batch_compute_inception_score
+            use_global = True
         else:
             raise ValueError(f"Unknown selector: {selector}")
 
@@ -1363,6 +1366,9 @@ class MCTSFlowSampler:
                 if use_global
                 else lambda x, y: self.batch_compute_mean_difference(x, y)
             )
+        elif selector == "inception_score":
+            score_fn = self.batch_compute_inception_score
+            use_global = True
         else:
             raise ValueError(f"Unknown selector: {selector}")
 

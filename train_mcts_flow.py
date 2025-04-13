@@ -275,7 +275,6 @@ def calculate_metrics(
                 batch_size=generation_batch_size,
                 num_branches=num_branches,
                 num_keep=num_keep,
-                # warp_scale=0.5,
                 dt_std=0.1,
                 selector="inception_score",
                 use_global=True,
