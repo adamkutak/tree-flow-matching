@@ -154,7 +154,7 @@ if __name__ == "__main__":
         num_epochs=200,
         batch_size=128,
         device=device,
-        save_interval=50,
+        save_interval=2,
         num_channels=256,
         num_timesteps=10,
         learning_rate=2e-4,
