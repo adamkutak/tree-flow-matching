@@ -1150,6 +1150,43 @@ class MCTSFlowSampler:
 
     #         return torch.stack(final_samples)  # shape: [batch_size, C, H, W]
 
+    def _get_score_function(self, selector, use_global=False):
+        """
+        Helper function to get the appropriate scoring function based on selector
+        and global flag. Returns the scoring function and updated use_global flag.
+
+        Args:
+            selector (str): Selection criteria - one of ["fid", "mahalanobis", "mean",
+                            "inception_score", "dino_score"]
+            use_global (bool): Whether to use global statistics instead of class-specific ones
+
+        Returns:
+            tuple: (score_function, use_global) - The scoring function and possibly updated use_global flag
+        """
+        if selector == "fid":
+            if use_global:
+                return self.batch_compute_global_fid_change, True
+            else:
+                return lambda x, y: self.batch_compute_fid_change(x, y), False
+        elif selector == "mahalanobis":
+            if use_global:
+                return self.batch_compute_global_mahalanobis_distance, True
+            else:
+                return lambda x, y: self.batch_compute_mahalanobis_distance(x, y), False
+        elif selector == "mean":
+            if use_global:
+                return self.batch_compute_global_mean_difference, True
+            else:
+                return lambda x, y: self.batch_compute_mean_difference(x, y), False
+        elif selector == "inception_score":
+            # Inception score is always global
+            return self.batch_compute_inception_score, True
+        elif selector == "dino_score":
+            # DINO score is always global
+            return self.batch_compute_dino_score, True
+        else:
+            raise ValueError(f"Unknown selector: {selector}")
+
     def batch_sample_with_path_exploration(
         self,
         class_label,
