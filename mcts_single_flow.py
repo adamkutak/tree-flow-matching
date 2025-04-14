@@ -206,33 +206,12 @@ class MCTSFlowSampler:
 
         if load_dino:
             print("Loading DINO model...")
-            import torch.nn as nn
             from torchvision.models import vit_b_16
 
             # Load the ViT model with the linear head for classification
             self.dino_model = vit_b_16(weights="IMAGENET1K_SWAG_LINEAR_V1").to(
                 self.device
             )
-
-            # Save the classification head
-            self.dino_head = self.dino_model.heads
-
-            # Modify the model to output intermediate features
-            class DINOFeatureExtractor(nn.Module):
-                def __init__(self, base_model):
-                    super().__init__()
-                    self.base_model = base_model
-
-                def forward(self, x):
-                    # Extract features
-                    features = self.base_model.forward_features(x)
-                    cls_token = features[:, 0]  # Get CLS token
-
-                    # Return features and classification logits
-                    return cls_token, self.base_model.heads(cls_token)
-
-            # Replace the model with our feature extractor
-            self.dino_model = DINOFeatureExtractor(self.dino_model).to(self.device)
             self.dino_model.eval()
 
         # self.initialize_class_buffers(buffer_size)
@@ -561,49 +540,46 @@ class MCTSFlowSampler:
             # Return negative entropy (higher = more confident predictions = better)
             return -entropy
 
-    def batch_compute_dino_score(self, images, class_labels=None):
-        """
-        Compute DINO-based scores following Oquab et al.
-        Uses the pre-trained linear classification head.
 
-        Args:
-            images: Tensor of shape [batch_size, C, H, W]
-            class_labels: Optional tensor of class indices. If None, returns logits for all classes.
+def batch_compute_dino_score(self, images, class_labels=None):
+    """
+    Compute DINO-based scores using the pre-trained linear classification head.
 
-        Returns:
-            Tensor of scores (higher is better for optimization)
-        """
-        import torch.nn.functional as F
+    Args:
+        images: Tensor of shape [batch_size, C, H, W]
+        class_labels: Optional tensor of class indices. If None, returns logits for all classes.
 
-        with torch.no_grad():
-            # Preprocess images for DINO
-            if images.min() < 0:
-                # Assume images are in [-1, 1] range
-                processed_images = (images + 1) / 2
-            else:
-                processed_images = images
+    Returns:
+        Tensor of scores (higher is better for optimization)
+    """
+    import torch.nn.functional as F
 
-            # Resize to 224x224 as expected by ViT
-            if processed_images.shape[-1] != 224:
-                processed_images = F.interpolate(
-                    processed_images,
-                    size=(224, 224),
-                    mode="bilinear",
-                    align_corners=False,
-                )
+    with torch.no_grad():
+        # Preprocess images for DINO
+        if images.min() < 0:
+            # Assume images are in [-1, 1] range
+            processed_images = (images + 1) / 2
+        else:
+            processed_images = images
 
-            # Extract DINO features and get classification logits
-            features, logits = self.dino_model(processed_images)
+        # Resize to 224x224 as expected by ViT
+        if processed_images.shape[-1] != 224:
+            processed_images = F.interpolate(
+                processed_images, size=(224, 224), mode="bilinear", align_corners=False
+            )
 
-            if class_labels is not None:
-                # Return only the logit for the specified class
-                batch_indices = torch.arange(len(images), device=self.device)
-                scores = logits[batch_indices, class_labels]
-            else:
-                # If no class labels provided, return all logits (or max logit)
-                scores = torch.max(logits, dim=1)[0]
+        # Extract DINO features and get classification logits
+        logits = self.dino_model(processed_images)
 
-            return scores
+        if class_labels is not None:
+            # Return only the logit for the specified class
+            batch_indices = torch.arange(len(images), device=self.device)
+            scores = logits[batch_indices, class_labels]
+        else:
+            # If no class labels provided, return all logits (or max logit)
+            scores = torch.max(logits, dim=1)[0]
+
+        return scores
 
     def _load_or_fit_pca(self):
         """Load or fit a PCA model for dimensionality reduction."""
