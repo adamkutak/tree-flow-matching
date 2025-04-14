@@ -1171,12 +1171,12 @@ class MCTSFlowSampler:
         4. Continues from selected branches at the next timestep
 
         Args:
-            class_label: Target class to generate
+            class_label: Tensor of class labels for each sample
             batch_size: Number of final samples to generate
             num_branches: Number of branches per batch element at each step
             num_keep: Number of samples to keep before next branching
             dt_std: Standard deviation for sampling different dt values
-            selector: Selection criteria - one of ["fid", "mahalanobis", "mean"]
+            selector: Selection criteria - options include "fid", "mahalanobis", "mean", "inception_score", "dino_score"
             use_global: Whether to use global statistics instead of class-specific ones
             branch_start_time: Time point at which to start branching (0.0 to 1.0)
             branch_dt: Step size to use after branching begins (if None, uses base_dt)
@@ -1189,33 +1189,7 @@ class MCTSFlowSampler:
         ), "num_branches must be divisible by num_keep"
         assert 0.0 <= branch_start_time < 1.0, "branch_start_time must be in [0, 1)"
 
-        # Select scoring function
-        if selector == "fid":
-            score_fn = (
-                self.batch_compute_global_fid_change
-                if use_global
-                else lambda x, y: self.batch_compute_fid_change(x, y)
-            )
-        elif selector == "mahalanobis":
-            score_fn = (
-                self.batch_compute_global_mahalanobis_distance
-                if use_global
-                else lambda x, y: self.batch_compute_mahalanobis_distance(x, y)
-            )
-        elif selector == "mean":
-            score_fn = (
-                self.batch_compute_global_mean_difference
-                if use_global
-                else lambda x, y: self.batch_compute_mean_difference(x, y)
-            )
-        elif selector == "inception_score":
-            score_fn = self.batch_compute_inception_score
-            use_global = True
-        elif selector == "dino_score":
-            score_fn = self.batch_compute_dino_score
-            use_global = True
-        else:
-            raise ValueError(f"Unknown selector: {selector}")
+        score_fn, use_global = self._get_score_function(selector, use_global)
 
         self.flow_model.eval()
         base_dt = 1 / self.num_timesteps
@@ -1231,7 +1205,8 @@ class MCTSFlowSampler:
                 device=self.device,
             )
             current_times = torch.zeros(batch_size, device=self.device)
-            current_label = torch.full((batch_size,), class_label, device=self.device)
+            # Class label is already a tensor of batch_size
+            current_label = class_label
 
             # Regular flow until branch_start_time
             while torch.all(current_times < branch_start_time):
@@ -1249,6 +1224,7 @@ class MCTSFlowSampler:
                     num_branches, dim=0
                 )
                 branched_times = current_times.repeat_interleave(num_branches)
+                # Repeat each label num_branches times
                 branched_label = current_label.repeat_interleave(num_branches)
                 batch_indices = torch.arange(
                     len(current_samples), device=self.device
@@ -1302,7 +1278,7 @@ class MCTSFlowSampler:
                     simulated_times[active_mask] = simulated_times[active_mask] + dt
 
                 # Evaluate final samples
-                if use_global:
+                if selector in ["inception_score", "dino_score"] or use_global:
                     final_scores = score_fn(simulated_samples)
                 else:
                     final_scores = score_fn(simulated_samples, branched_label)
@@ -1310,7 +1286,7 @@ class MCTSFlowSampler:
                 # Select best branches for each batch element
                 selected_samples = []
                 selected_times = []
-                selected_indices = []
+                selected_labels = []  # Need to track labels too
 
                 for idx in range(len(current_samples)):
                     # Get branches for this batch element
@@ -1319,6 +1295,7 @@ class MCTSFlowSampler:
                         batch_mask
                     ]  # Use branched, not simulated
                     batch_times = branched_times[batch_mask]
+                    batch_labels = branched_label[batch_mask]  # Keep track of labels
                     batch_scores = final_scores[batch_mask]
 
                     # Select top num_keep branches based on final scores
@@ -1328,16 +1305,16 @@ class MCTSFlowSampler:
 
                     selected_samples.append(batch_samples[top_k_indices])
                     selected_times.append(batch_times[top_k_indices])
-                    selected_indices.extend(
-                        torch.where(batch_mask)[0][top_k_indices].tolist()
-                    )
+                    selected_labels.append(
+                        batch_labels[top_k_indices]
+                    )  # Keep selected labels
 
                 # Update current state with selected branches
                 current_samples = torch.cat(selected_samples, dim=0)
                 current_times = torch.cat(selected_times, dim=0)
-                current_label = torch.full(
-                    (len(current_samples),), class_label, device=self.device
-                )
+                current_label = torch.cat(
+                    selected_labels, dim=0
+                )  # Update with selected labels
 
                 # Break if all samples have reached t=1
                 if torch.all(current_times >= 1.0):
@@ -1347,11 +1324,12 @@ class MCTSFlowSampler:
             final_samples = []
 
             # Evaluate final samples one last time
-            if use_global:
+            if selector in ["inception_score", "dino_score"] or use_global:
                 final_scores = score_fn(current_samples)
             else:
                 final_scores = score_fn(current_samples, current_label)
 
+            # Need to track both original batch indices and corresponding labels
             batch_indices = torch.arange(
                 batch_size, device=self.device
             ).repeat_interleave(num_keep)
@@ -1363,6 +1341,7 @@ class MCTSFlowSampler:
                 samples_by_batch[i] = {
                     "samples": current_samples[batch_mask],
                     "scores": final_scores[batch_mask],
+                    "labels": current_label[batch_mask],  # Keep track of labels
                 }
 
             # Select best sample for each batch element
@@ -1390,6 +1369,18 @@ class MCTSFlowSampler:
         Enhanced sampling method using time warping path exploration.
         Supports num_branches > 4.
         Applies chain rule for time warping: dx/dt = v(x, f(t)) * f'(t).
+
+        Args:
+            class_label: Tensor of class labels for each sample
+            batch_size: Number of final samples to generate
+            num_branches: Number of branches per batch element at each step
+            num_keep: Number of samples to keep before next branching
+            warp_scale: Scale factor for time warping
+            selector: Selection criteria - options include "fid", "mahalanobis", "mean", "inception_score", "dino_score"
+            use_global: Whether to use global statistics instead of class-specific ones
+            branch_start_time: Time point at which to start branching (0.0 to 1.0)
+            branch_dt: Step size to use after branching begins (if None, uses base_dt)
+            sqrt_epsilon: Small value for numerical stability
         """
         if num_branches == 1 and num_keep == 1:
             return self.regular_batch_sample(class_label, batch_size)
@@ -1405,33 +1396,7 @@ class MCTSFlowSampler:
         )
         # --- End Warp Function Definitions ---
 
-        # Select scoring function
-        if selector == "fid":
-            score_fn = (
-                self.batch_compute_global_fid_change
-                if use_global
-                else lambda x, y: self.batch_compute_fid_change(x, y)
-            )
-        elif selector == "mahalanobis":
-            score_fn = (
-                self.batch_compute_global_mahalanobis_distance
-                if use_global
-                else lambda x, y: self.batch_compute_mahalanobis_distance(x, y)
-            )
-        elif selector == "mean":
-            score_fn = (
-                self.batch_compute_global_mean_difference
-                if use_global
-                else lambda x, y: self.batch_compute_mean_difference(x, y)
-            )
-        elif selector == "inception_score":
-            score_fn = self.batch_compute_inception_score
-            use_global = True
-        elif selector == "dino_score":
-            score_fn = self.batch_compute_dino_score
-            use_global = True
-        else:
-            raise ValueError(f"Unknown selector: {selector}")
+        score_fn, use_global = self._get_score_function(selector, use_global)
 
         self.flow_model.eval()
         actual_dt_step = (
@@ -1439,7 +1404,7 @@ class MCTSFlowSampler:
         )
 
         with torch.no_grad():
-            # Initialize (same as before)
+            # Initialize with tensor class labels
             current_samples = torch.randn(
                 batch_size,
                 self.channels,
@@ -1448,7 +1413,8 @@ class MCTSFlowSampler:
                 device=self.device,
             )
             current_times = torch.zeros(batch_size, device=self.device)
-            current_label = torch.full((batch_size,), class_label, device=self.device)
+            # Class label is already a tensor of batch_size
+            current_label = class_label
 
             # Regular flow until branch_start_time (same as before)
             base_dt = 1 / self.num_timesteps  # Keep base_dt for this initial phase
@@ -1481,13 +1447,15 @@ class MCTSFlowSampler:
 
                 active_samples = current_samples[active_batch_mask]
                 active_times = current_times[active_batch_mask]
-                active_label = current_label[active_batch_mask]
+                active_label = current_label[active_batch_mask]  # Get active labels
                 num_active = len(active_samples)
 
                 # --- 1. Create Branches ---
                 branched_samples = active_samples.repeat_interleave(num_branches, dim=0)
                 branched_times = active_times.repeat_interleave(num_branches)
-                branched_label = active_label.repeat_interleave(num_branches)
+                branched_label = active_label.repeat_interleave(
+                    num_branches
+                )  # Repeat active labels
                 branch_indices_map = torch.arange(
                     num_active, device=self.device
                 ).repeat_interleave(num_branches)
@@ -1587,15 +1555,15 @@ class MCTSFlowSampler:
                     simulated_times[sim_active_mask] = active_sim_times + dt_sim
 
                 # --- 4. Score Simulated Samples ---
-                if use_global:
+                if selector in ["inception_score", "dino_score"] or use_global:
                     final_scores = score_fn(simulated_samples)
                 else:
-                    # Ensure labels match simulated samples
                     final_scores = score_fn(simulated_samples, branched_label)
 
                 # --- 5. Select Best Branches ---
                 selected_samples_list = []
                 selected_times_list = []
+                selected_labels_list = []  # Track labels
 
                 for idx in range(num_active):  # Iterate through original active samples
                     # Find all branches originating from the idx-th active sample
@@ -1603,6 +1571,7 @@ class MCTSFlowSampler:
                     # Get the states AFTER THE FIRST BRANCHING STEP for these branches
                     batch_branched_samples = branched_samples[mask]
                     batch_branched_times = branched_times[mask]
+                    batch_branched_labels = branched_label[mask]  # Keep labels
                     # Get the scores from the SIMULATED results for these branches
                     batch_scores = final_scores[mask]
 
@@ -1616,6 +1585,9 @@ class MCTSFlowSampler:
                     # Keep the state from *after the branching step*
                     selected_samples_list.append(batch_branched_samples[top_k_indices])
                     selected_times_list.append(batch_branched_times[top_k_indices])
+                    selected_labels_list.append(
+                        batch_branched_labels[top_k_indices]
+                    )  # Keep labels
 
                 # --- 6. Update Current State ---
                 if not selected_samples_list:  # Handle empty case
@@ -1624,14 +1596,16 @@ class MCTSFlowSampler:
                 # Update the state for the *next iteration* using the selected branches
                 next_samples = torch.cat(selected_samples_list, dim=0)
                 next_times = torch.cat(selected_times_list, dim=0)
-                next_label = torch.full(
-                    (len(next_samples),), class_label, device=self.device
-                )
+                next_label = torch.cat(
+                    selected_labels_list, dim=0
+                )  # Use concat for labels
 
                 # Replace the finished/processed samples with the new selected ones
                 new_current_samples = torch.zeros_like(current_samples)
                 new_current_times = torch.zeros_like(current_times)
-                new_current_label = torch.zeros_like(current_label)
+                new_current_label = torch.zeros_like(
+                    current_label
+                )  # Keep label tensor shape
 
                 # Keep samples that were already >= 1.0
                 finished_mask = ~active_batch_mask
@@ -1643,16 +1617,14 @@ class MCTSFlowSampler:
                 # Add the newly selected samples (results of the branching)
                 new_current_samples[active_batch_mask] = next_samples
                 new_current_times[active_batch_mask] = next_times
-                new_current_label[active_batch_mask] = (
-                    next_label  # Assuming label stays same
-                )
+                new_current_label[active_batch_mask] = next_label
 
                 current_samples = new_current_samples
                 current_times = new_current_times
                 current_label = new_current_label
 
             # --- Final Selection (after loop finishes) ---
-            if use_global:
+            if selector in ["inception_score", "dino_score"] or use_global:
                 final_scores = score_fn(current_samples)
             else:
                 final_scores = score_fn(current_samples, current_label)
@@ -1661,7 +1633,6 @@ class MCTSFlowSampler:
             samples_per_original = (
                 current_samples.shape[0] // batch_size
             )  # Should be num_keep
-            # assert samples_per_original == num_keep # This might fail if some finished early and weren't replaced
 
             # Correct way to handle potentially varying number of samples per batch item
             current_batch_indices = torch.arange(
@@ -1715,33 +1686,7 @@ class MCTSFlowSampler:
         if num_branches == 1 and num_keep == 1:
             return self.regular_batch_sample(class_label, batch_size)
 
-        # Select scoring function
-        if selector == "fid":
-            score_fn = (
-                self.batch_compute_global_fid_change
-                if use_global
-                else lambda x, y: self.batch_compute_fid_change(x, y)
-            )
-        elif selector == "mahalanobis":
-            score_fn = (
-                self.batch_compute_global_mahalanobis_distance
-                if use_global
-                else lambda x, y: self.batch_compute_mahalanobis_distance(x, y)
-            )
-        elif selector == "mean":
-            score_fn = (
-                self.batch_compute_global_mean_difference
-                if use_global
-                else lambda x, y: self.batch_compute_mean_difference(x, y)
-            )
-        elif selector == "inception_score":
-            score_fn = self.batch_compute_inception_score
-            use_global = True
-        elif selector == "dino_score":
-            score_fn = self.batch_compute_dino_score
-            use_global = True
-        else:
-            raise ValueError(f"Unknown selector: {selector}")
+        score_fn, use_global = self._get_score_function(selector, use_global)
 
         self.flow_model.eval()
         base_dt = 1 / self.num_timesteps

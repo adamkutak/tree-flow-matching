@@ -317,7 +317,6 @@ def calculate_metrics(
     inception_score, inception_std = calculate_inception_score(
         generated_tensor_device, device=device, batch_size=metric_batch_size, splits=10
     )
-    print(f"Inception Score: {inception_score:.4f} ± {inception_std:.4f}")
 
     # Clean up to free memory
     generated_tensor_device = None
@@ -434,7 +433,6 @@ def calculate_metrics_refined(
     inception_score, inception_std = calculate_inception_score(
         final_samples, device=device, batch_size=metric_batch_size, splits=10
     )
-    print(f"Inception Score: {inception_score:.4f} ± {inception_std:.4f}")
 
     # --- Calculate Final Mahalanobis/Mean Difference ---
     print("Calculating final Mean Difference...")
