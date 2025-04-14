@@ -235,10 +235,6 @@ class MCTSFlowSampler:
             self.dino_model = DINOFeatureExtractor(self.dino_model).to(self.device)
             self.dino_model.eval()
 
-            # Also load the self-supervised DINO model
-            print("Loading DINO self-supervised model...")
-            self.dino_self_model = vit_b_16(weights="DINO_VITB16").to(self.device)
-
         # self.initialize_class_buffers(buffer_size)
 
     def compute_mahalanobis_distance(self, features, class_idx):
