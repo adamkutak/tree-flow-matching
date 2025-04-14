@@ -1211,6 +1211,9 @@ class MCTSFlowSampler:
         elif selector == "inception_score":
             score_fn = self.batch_compute_inception_score
             use_global = True
+        elif selector == "dino_score":
+            score_fn = self.batch_compute_dino_score
+            use_global = True
         else:
             raise ValueError(f"Unknown selector: {selector}")
 
@@ -1423,6 +1426,9 @@ class MCTSFlowSampler:
             )
         elif selector == "inception_score":
             score_fn = self.batch_compute_inception_score
+            use_global = True
+        elif selector == "dino_score":
+            score_fn = self.batch_compute_dino_score
             use_global = True
         else:
             raise ValueError(f"Unknown selector: {selector}")
