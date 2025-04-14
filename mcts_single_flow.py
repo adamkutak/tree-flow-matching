@@ -1695,17 +1695,27 @@ class MCTSFlowSampler:
         """
         Simple random search sampling method that:
         1. Runs num_branches independent flow matching batches
-        2. Evaluates all samples using Mahalanobis distance
+        2. Evaluates all samples using selected metric
         3. Returns the best batch_size samples
 
-        Args are kept the same as batch_sample_with_path_exploration for compatibility,
-        though many are unused in this simpler implementation.
+        Args:
+            class_label: Target class(es) to generate. Can be a single integer or a tensor of class labels.
+            batch_size: Number of final samples to generate
+            num_branches: Number of branches to evaluate per sample
+            num_keep: Unused but kept for compatibility
+            dt_std: Unused but kept for compatibility
+            selector: Selection criteria - "fid", "mahalanobis", "mean", "inception_score", or "dino_score"
+            use_global: Whether to use global statistics instead of class-specific ones
+            branch_start_time: Unused but kept for compatibility
+            branch_dt: Unused but kept for compatibility
         """
+        # Check if class_label is a tensor or a single integer
+        is_tensor = torch.is_tensor(class_label)
 
         if num_branches == 1 and num_keep == 1:
             return self.regular_batch_sample(class_label, batch_size)
 
-        # Select scoring function (kept for compatibility)
+        # Select scoring function
         if selector == "fid":
             score_fn = (
                 self.batch_compute_global_fid_change
@@ -1739,6 +1749,7 @@ class MCTSFlowSampler:
         with torch.no_grad():
             # Generate num_branches batches of samples
             all_samples = []
+            all_labels = []
 
             for _ in range(num_branches):
                 # Initialize one batch of samples
@@ -1749,9 +1760,14 @@ class MCTSFlowSampler:
                     self.image_size,
                     device=self.device,
                 )
-                current_label = torch.full(
-                    (batch_size,), class_label, device=self.device
-                )
+
+                # Handle both tensor and single class label cases
+                if is_tensor:
+                    current_label = class_label
+                else:
+                    current_label = torch.full(
+                        (batch_size,), class_label, device=self.device
+                    )
 
                 # Regular flow matching for this batch
                 for step, t in enumerate(self.timesteps[:-1]):
@@ -1762,17 +1778,25 @@ class MCTSFlowSampler:
                     current_samples = current_samples + velocity * base_dt
 
                 all_samples.append(current_samples)
+                all_labels.append(current_label)
 
             # Stack all batches
             all_samples = torch.cat(
                 all_samples, dim=0
             )  # shape: [batch_size * num_branches, C, H, W]
-            all_labels = torch.full(
-                (batch_size * num_branches,), class_label, device=self.device
-            )
+
+            # Stack or repeat labels as needed
+            if is_tensor:
+                # If class_label was a tensor, repeat it for each branch
+                all_labels = torch.cat([class_label] * num_branches, dim=0)
+            else:
+                # If class_label was a single value, create a tensor of that value
+                all_labels = torch.full(
+                    (batch_size * num_branches,), class_label, device=self.device
+                )
 
             # Score all samples
-            if use_global:
+            if use_global or selector in ["inception_score", "dino_score"]:
                 scores = score_fn(all_samples)
             else:
                 scores = score_fn(all_samples, all_labels)
@@ -3002,7 +3026,14 @@ class MCTSFlowSampler:
     def regular_batch_sample(self, class_label, batch_size=16):
         """
         Regular flow matching sampling without branching.
+
+        Args:
+            class_label: Target class(es) to generate. Can be a single integer or a tensor of class labels.
+            batch_size: Number of samples to generate
         """
+        # Check if class_label is a tensor or a single integer
+        is_tensor = torch.is_tensor(class_label)
+
         self.flow_model.eval()
 
         with torch.no_grad():
@@ -3014,7 +3045,14 @@ class MCTSFlowSampler:
                 self.image_size,
                 device=self.device,
             )
-            current_label = torch.full((batch_size,), class_label, device=self.device)
+
+            # Handle both tensor and single class label cases
+            if is_tensor:
+                current_label = class_label
+            else:
+                current_label = torch.full(
+                    (batch_size,), class_label, device=self.device
+                )
 
             # Generate samples using timesteps
             for step, t in enumerate(self.timesteps[:-1]):

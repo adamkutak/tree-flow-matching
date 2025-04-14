@@ -222,67 +222,84 @@ def calculate_metrics(
     sampler, num_branches, num_keep, device, n_samples=2000, sigma=0.1, fid=None
 ):
     """
-    Calculate FID metrics, Inception Score, and average Mahalanobis distance for a specific branch/keep configuration across all classes.
+    Calculate FID metrics, Inception Score, and average Mahalanobis distance.
+    For datasets with many classes (like ImageNet), randomly samples class labels.
     """
     fid.reset()
 
-    # Generate samples evenly across all classes
-    samples_per_class = n_samples // sampler.num_classes
+    # Configuration for sample generation
     generation_batch_size = 64
     metric_batch_size = 64
     generated_samples = []
     mahalanobis_distances = []
 
+    selector = "dino_score"
+
     print(
         f"\nGenerating {n_samples} samples for branches={num_branches}, keep={num_keep}"
     )
 
-    # Generate samples for each class
-    for class_label in range(sampler.num_classes):
-        num_batches = samples_per_class // generation_batch_size
+    # Calculate number of batches to generate
+    num_batches = n_samples // generation_batch_size
+    # Handle any remainder
+    if n_samples % generation_batch_size != 0:
+        num_batches += 1
 
-        # Generate full batches
-        for _ in range(num_batches):
-            # sample = sampler.regular_batch_sample(
-            #     class_label=class_label, batch_size=generation_batch_size
-            # )
-            # sample = sampler.batch_sample_with_path_exploration_timewarp(
-            #     class_label=class_label,
-            #     batch_size=generation_batch_size,
-            #     num_branches=num_branches,
-            #     num_keep=num_keep,
-            #     warp_scale=0.5,
-            #     # dt_std=0.1,
-            #     selector="mean",
-            #     use_global=True,
-            #     branch_start_time=0,
-            #     branch_dt=0.05,
-            # )
-            # sample = sampler.batch_sample_with_path_exploration(
-            #     class_label=class_label,
-            #     batch_size=generation_batch_size,
-            #     num_branches=num_branches,
-            #     num_keep=num_keep,
-            #     # warp_scale=0.5,
-            #     dt_std=0.1,
-            #     selector="mean",
-            #     use_global=True,
-            #     branch_start_time=0,
-            #     branch_dt=0.05,
-            # )
-            sample = sampler.batch_sample_with_random_search(
-                class_label=class_label,
-                batch_size=generation_batch_size,
-                num_branches=num_branches,
-                num_keep=num_keep,
-                selector="dino_score",
-                use_global=True,
-                branch_start_time=0,
-                branch_dt=0.1,
-            )
-            mahalanobis_dist = sampler.batch_compute_global_mean_difference(sample)
-            mahalanobis_distances.extend(mahalanobis_dist.cpu().tolist())
-            generated_samples.extend(sample.cpu())
+    # Generate samples using random class labels
+    for batch_idx in range(num_batches):
+        # Adjust batch size for the last batch if needed
+        current_batch_size = min(
+            generation_batch_size, n_samples - batch_idx * generation_batch_size
+        )
+
+        # Randomly sample class labels uniformly
+        random_class_labels = torch.randint(
+            0, sampler.num_classes, (current_batch_size,), device=device
+        )
+
+        # Generate samples using the random class labels
+        # sample = sampler.regular_batch_sample(
+        #     class_label=class_label, batch_size=generation_batch_size
+        # )
+        # sample = sampler.batch_sample_with_path_exploration_timewarp(
+        #     class_label=class_label,
+        #     batch_size=generation_batch_size,
+        #     num_branches=num_branches,
+        #     num_keep=num_keep,
+        #     warp_scale=0.5,
+        #     # dt_std=0.1,
+        #     selector="mean",
+        #     use_global=True,
+        #     branch_start_time=0,
+        #     branch_dt=0.05,
+        # )
+        # sample = sampler.batch_sample_with_path_exploration(
+        #     class_label=class_label,
+        #     batch_size=generation_batch_size,
+        #     num_branches=num_branches,
+        #     num_keep=num_keep,
+        #     # warp_scale=0.5,
+        #     dt_std=0.1,
+        #     selector="mean",
+        #     use_global=True,
+        #     branch_start_time=0,
+        #     branch_dt=0.05,
+        # )
+        sample = sampler.batch_sample_with_random_search(
+            class_label=random_class_labels,  # Pass tensor of labels instead of single label
+            batch_size=current_batch_size,
+            num_branches=num_branches,
+            num_keep=num_keep,
+            selector=selector,
+            use_global=True,
+            branch_start_time=0,
+            branch_dt=0.1,
+        )
+
+        # Compute metrics
+        mahalanobis_dist = sampler.batch_compute_global_mean_difference(sample)
+        mahalanobis_distances.extend(mahalanobis_dist.cpu().tolist())
+        generated_samples.extend(sample.cpu())
 
     # Process generated samples in batches for FID metrics
     generated_tensor = torch.stack(generated_samples)
