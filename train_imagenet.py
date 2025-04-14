@@ -151,7 +151,7 @@ if __name__ == "__main__":
     print(f"Using device: {device}")
 
     train_large_flow_model(
-        num_epochs=200,
+        num_epochs=198,
         batch_size=128,
         device=device,
         save_interval=2,
