@@ -540,46 +540,48 @@ class MCTSFlowSampler:
             # Return negative entropy (higher = more confident predictions = better)
             return -entropy
 
+    def batch_compute_dino_score(self, images, class_labels=None):
+        """
+        Compute DINO-based scores using the pre-trained linear classification head.
 
-def batch_compute_dino_score(self, images, class_labels=None):
-    """
-    Compute DINO-based scores using the pre-trained linear classification head.
+        Args:
+            images: Tensor of shape [batch_size, C, H, W]
+            class_labels: Optional tensor of class indices. If None, returns logits for all classes.
 
-    Args:
-        images: Tensor of shape [batch_size, C, H, W]
-        class_labels: Optional tensor of class indices. If None, returns logits for all classes.
+        Returns:
+            Tensor of scores (higher is better for optimization)
+        """
+        import torch.nn.functional as F
 
-    Returns:
-        Tensor of scores (higher is better for optimization)
-    """
-    import torch.nn.functional as F
+        with torch.no_grad():
+            # Preprocess images for DINO
+            if images.min() < 0:
+                # Assume images are in [-1, 1] range
+                processed_images = (images + 1) / 2
+            else:
+                processed_images = images
 
-    with torch.no_grad():
-        # Preprocess images for DINO
-        if images.min() < 0:
-            # Assume images are in [-1, 1] range
-            processed_images = (images + 1) / 2
-        else:
-            processed_images = images
+            # Resize to 224x224 as expected by ViT
+            if processed_images.shape[-1] != 224:
+                processed_images = F.interpolate(
+                    processed_images,
+                    size=(224, 224),
+                    mode="bilinear",
+                    align_corners=False,
+                )
 
-        # Resize to 224x224 as expected by ViT
-        if processed_images.shape[-1] != 224:
-            processed_images = F.interpolate(
-                processed_images, size=(224, 224), mode="bilinear", align_corners=False
-            )
+            # Extract DINO features and get classification logits
+            logits = self.dino_model(processed_images)
 
-        # Extract DINO features and get classification logits
-        logits = self.dino_model(processed_images)
+            if class_labels is not None:
+                # Return only the logit for the specified class
+                batch_indices = torch.arange(len(images), device=self.device)
+                scores = logits[batch_indices, class_labels]
+            else:
+                # If no class labels provided, return all logits (or max logit)
+                scores = torch.max(logits, dim=1)[0]
 
-        if class_labels is not None:
-            # Return only the logit for the specified class
-            batch_indices = torch.arange(len(images), device=self.device)
-            scores = logits[batch_indices, class_labels]
-        else:
-            # If no class labels provided, return all logits (or max logit)
-            scores = torch.max(logits, dim=1)[0]
-
-        return scores
+            return scores
 
     def _load_or_fit_pca(self):
         """Load or fit a PCA model for dimensionality reduction."""
