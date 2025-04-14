@@ -605,7 +605,7 @@ def main():
         )
 
     # Sample size for real images - use fewer for ImageNet32 due to its larger size
-    sample_size = 50000 if dataset_name.lower() == "cifar10" else 5000
+    sample_size = 10000 if dataset_name.lower() == "cifar10" else 50000
 
     # Randomly sample real images
     indices = np.random.choice(len(real_dataset), sample_size, replace=False)
