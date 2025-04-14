@@ -122,27 +122,27 @@ def train_large_flow_model(
             torch.save(sampler.flow_model.state_dict(), save_path)
             print(f"Model saved to {save_path}")
 
-            print("Evaluating metrics...")
-            # Test with regular flow matching (no branching)
-            fid_score = calculate_metrics(
-                sampler,
-                num_branches=1,
-                num_keep=1,
-                device=device,
-                n_samples=5000,
-                sigma=0.0,
-                fid=fid,
-            )
+            # print("Evaluating metrics...")
+            # # Test with regular flow matching (no branching)
+            # fid_score = calculate_metrics(
+            #     sampler,
+            #     num_branches=1,
+            #     num_keep=1,
+            #     device=device,
+            #     n_samples=5000,
+            #     sigma=0.0,
+            #     fid=fid,
+            # )
 
-            metrics_history.append(
-                {
-                    "epoch": epoch + 1,
-                    "fid_score": fid_score.item(),
-                }
-            )
+            # metrics_history.append(
+            #     {
+            #         "epoch": epoch + 1,
+            #         "fid_score": fid_score.item(),
+            #     }
+            # )
 
-            print(f"Metrics at epoch {epoch + 1}:")
-            print(f"   FID Score: {fid_score:.4f}")
+            # print(f"Metrics at epoch {epoch + 1}:")
+            # print(f"   FID Score: {fid_score:.4f}")
 
 
 if __name__ == "__main__":
