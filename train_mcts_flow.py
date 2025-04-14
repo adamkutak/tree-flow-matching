@@ -218,150 +218,88 @@ def visualize_samples(all_samples_dict, class_label, real_images, figsize=(15, 1
     plt.show()
 
 
-# def evaluate_samples(sampler, num_samples=10, branch_keep_pairs=None, num_classes=10):
-#     """Evaluate sample quality for CIFAR-10 data using the model's quality score"""
-#     if branch_keep_pairs is None:
-#         branch_keep_pairs = [(3, 2), (8, 3), (16, 7)]
-
-#     # Choose a single random class for evaluation
-#     class_label = np.random.randint(num_classes)
-
-#     # Load real CIFAR-10 images for visualization
-#     transform = transforms.Compose(
-#         [transforms.ToTensor(), transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))]
-#     )
-#     cifar10 = datasets.CIFAR10(
-#         root="./data", train=True, download=True, transform=transform
-#     )
-
-#     # Get images only from the selected class
-#     class_indices = [i for i, (_, label) in enumerate(cifar10) if label == class_label]
-#     selected_indices = np.random.choice(class_indices, num_samples, replace=True)
-#     real_images = torch.stack([cifar10[i][0] for i in selected_indices]).to(
-#         sampler.device
-#     )
-
-#     print(f"\nEvaluating samples for class {class_label}:")
-
-#     # Dictionary to store samples for visualization
-#     all_samples_dict = {}
-
-#     for num_branches, num_keep in branch_keep_pairs:
-#         print(f"\nTesting with branches={num_branches}, keep={num_keep}")
-#         samples = sampler.batch_sample(
-#             class_label=class_label,
-#             batch_size=num_samples,
-#             num_branches=num_branches,
-#             num_keep=num_keep,
-#         )
-
-#         with torch.no_grad():
-#             scores = sampler.compute_sample_quality(
-#                 samples,
-#                 torch.full(
-#                     (num_samples,),
-#                     class_label,
-#                     device=sampler.device,
-#                 ),
-#             )
-
-#         all_samples_dict[(num_branches, num_keep)] = samples
-
-#         # Print statistics
-#         mean_score = scores.mean().item()
-#         std_score = scores.std().item()
-#         print(f"Quality score: {mean_score:.4f} ± {std_score:.4f}")
-
-#     # Visualize all samples in a single plot, including real images
-#     visualize_samples(all_samples_dict, class_label, real_images)
-
-
 def calculate_metrics(
     sampler, num_branches, num_keep, device, n_samples=2000, sigma=0.1, fid=None
 ):
     """
-    Calculate FID metrics and average Mahalanobis distance for a specific branch/keep configuration across all classes.
+    Calculate FID metrics, Inception Score, and average Mahalanobis distance.
+    For datasets with many classes (like ImageNet), randomly samples class labels.
     """
     fid.reset()
 
-    # Generate samples evenly across all classes
-    samples_per_class = n_samples // sampler.num_classes
+    # Configuration for sample generation
     generation_batch_size = 64
     metric_batch_size = 64
     generated_samples = []
     mahalanobis_distances = []
 
+    selector = "dino_score"
+
     print(
         f"\nGenerating {n_samples} samples for branches={num_branches}, keep={num_keep}"
     )
 
-    # Generate samples for each class
-    for class_label in range(sampler.num_classes):
-        num_batches = samples_per_class // generation_batch_size
+    # Calculate number of batches to generate
+    num_batches = n_samples // generation_batch_size
+    # Handle any remainder
+    if n_samples % generation_batch_size != 0:
+        num_batches += 1
 
-        # Generate full batches
-        for _ in range(num_batches):
-            # sample = sampler.batch_sample_with_path_exploration_timewarp(
-            #     class_label=class_label,
-            #     batch_size=generation_batch_size,
-            #     num_branches=num_branches,
-            #     num_keep=num_keep,
-            #     warp_scale=0.5,
-            #     # dt_std=0.1,
-            #     selector="mean",
-            #     use_global=True,
-            #     branch_start_time=0,
-            #     branch_dt=0.05,
-            # )
-            # sample = sampler.batch_sample_with_path_exploration(
-            #     class_label=class_label,
-            #     batch_size=generation_batch_size,
-            #     num_branches=num_branches,
-            #     num_keep=num_keep,
-            #     # warp_scale=0.5,
-            #     dt_std=0.1,
-            #     selector="mean",
-            #     use_global=True,
-            #     branch_start_time=0,
-            #     branch_dt=0.05,
-            # )
-            # sample = sampler.batch_sample_with_random_search(
-            #     class_label=class_label,
-            #     batch_size=generation_batch_size,
-            #     num_branches=num_branches,
-            #     num_keep=num_keep,
-            #     # warp_scale=0.5,
-            #     dt_std=0.1,
-            #     selector="mean",
-            #     use_global=True,
-            #     branch_start_time=0,
-            #     branch_dt=0.1,
-            # )
-            # sample = sampler.batch_sample_with_path_exploration_batch_fid(
-            #     class_label=class_label,
-            #     batch_size=generation_batch_size,
-            #     num_branches=num_branches,
-            #     num_scoring_batches=4 * num_branches,
-            #     dt_std=0.1,
-            # )
-            # sample = sampler.batch_sample_with_path_exploration_timewarp_batch_fid(
-            #     class_label=class_label,
-            #     batch_size=generation_batch_size,
-            #     num_branches=num_branches,
-            #     num_scoring_batches=4 * num_branches,
-            #     warp_scale=0.5,
-            # )
+    # Generate samples using random class labels
+    for batch_idx in range(num_batches):
+        # Adjust batch size for the last batch if needed
+        current_batch_size = min(
+            generation_batch_size, n_samples - batch_idx * generation_batch_size
+        )
 
-            sample = sampler.batch_sample_with_random_search_batch_fid_direct(
-                class_label=class_label,
-                batch_size=generation_batch_size,
-                num_branches=num_branches,
-                num_scoring_batches=4 * num_branches,
-            )
-            # Compute Mahalanobis distance for this batch
-            mahalanobis_dist = sampler.batch_compute_global_mean_difference(sample)
-            mahalanobis_distances.extend(mahalanobis_dist.cpu().tolist())
-            generated_samples.extend(sample.cpu())
+        # Randomly sample class labels uniformly
+        random_class_labels = torch.randint(
+            0, sampler.num_classes, (current_batch_size,), device=device
+        )
+
+        # Generate samples using the random class labels
+        # sample = sampler.regular_batch_sample(
+        #     class_label=class_label, batch_size=generation_batch_size
+        # )
+        # sample = sampler.batch_sample_with_path_exploration_timewarp(
+        #     class_label=class_label,
+        #     batch_size=generation_batch_size,
+        #     num_branches=num_branches,
+        #     num_keep=num_keep,
+        #     warp_scale=0.5,
+        #     # dt_std=0.1,
+        #     selector="mean",
+        #     use_global=True,
+        #     branch_start_time=0,
+        #     branch_dt=0.05,
+        # )
+        # sample = sampler.batch_sample_with_path_exploration(
+        #     class_label=class_label,
+        #     batch_size=generation_batch_size,
+        #     num_branches=num_branches,
+        #     num_keep=num_keep,
+        #     # warp_scale=0.5,
+        #     dt_std=0.1,
+        #     selector="mean",
+        #     use_global=True,
+        #     branch_start_time=0,
+        #     branch_dt=0.05,
+        # )
+        sample = sampler.batch_sample_with_random_search(
+            class_label=random_class_labels,  # Pass tensor of labels instead of single label
+            batch_size=current_batch_size,
+            num_branches=num_branches,
+            num_keep=num_keep,
+            selector=selector,
+            use_global=True,
+            branch_start_time=0,
+            branch_dt=0.1,
+        )
+
+        # Compute metrics
+        mahalanobis_dist = sampler.batch_compute_global_mean_difference(sample)
+        mahalanobis_distances.extend(mahalanobis_dist.cpu().tolist())
+        generated_samples.extend(sample.cpu())
 
     # Process generated samples in batches for FID metrics
     generated_tensor = torch.stack(generated_samples)
@@ -374,6 +312,15 @@ def calculate_metrics(
     # Compute final scores
     fid_score = fid.compute()
     avg_mahalanobis = sum(mahalanobis_distances) / len(mahalanobis_distances)
+
+    generated_tensor_device = torch.stack(generated_samples).to(device)
+    inception_score, inception_std = calculate_inception_score(
+        generated_tensor_device, device=device, batch_size=metric_batch_size, splits=10
+    )
+
+    # Clean up to free memory
+    generated_tensor_device = None
+    torch.cuda.empty_cache()
 
     # Calculate means and covariances
     mean_real = fid.real_features_sum / fid.real_features_num_samples
@@ -405,7 +352,16 @@ def calculate_metrics(
         "fid": fid_score.item(),
     }
 
-    return fid_score, avg_mahalanobis, fid_components
+    # Create metrics dictionary for return value
+    metrics = {
+        "fid_score": fid_score.item(),
+        "avg_mahalanobis": avg_mahalanobis,
+        "fid_components": fid_components,
+        "inception_score": inception_score,
+        "inception_std": inception_std,
+    }
+
+    return metrics
 
 
 def calculate_metrics_refined(
@@ -433,9 +389,32 @@ def calculate_metrics_refined(
         n_samples=n_samples,
         refinement_batch_size=refinement_batch_size,
         num_branches=num_branches,
+        num_batches=4 * num_branches,
         num_iterations=num_iterations,
         use_global=use_global_stats,
     )
+    # final_samples = sampler.batch_sample_refine_global_fid_path_explore(
+    #     n_samples=n_samples,
+    #     refinement_batch_size=refinement_batch_size,
+    #     num_branches=num_branches,
+    #     num_batches=4 * num_branches,
+    #     branch_start_time=0.5,
+    #     branch_dt=0.1,
+    #     dt_std=0.7,
+    #     num_iterations=num_iterations,
+    #     use_global=use_global_stats,
+    # )
+    # final_samples = sampler.batch_sample_refine_global_fid_timewarp(
+    #     n_samples=n_samples,
+    #     refinement_batch_size=refinement_batch_size,
+    #     num_branches=num_branches,
+    #     num_batches=4 * num_branches,
+    #     branch_dt=0.1,
+    #     warp_scale=0.5,
+    #     num_iterations=num_iterations,
+    #     use_global=use_global_stats,
+    #     branch_start_time=0.5,
+    # )
 
     metric_batch_size = 128  # Batch size for feeding samples to FID object
 
@@ -446,9 +425,14 @@ def calculate_metrics_refined(
         fid.update(batch, real=False)  # Feed fake samples
 
     # Compute final FID score using the object's method
-    # This might internally compute means/covariances needed for components
     final_fid_score = fid.compute()
     print(f"Final FID Score: {final_fid_score:.4f}")
+
+    # --- Calculate Inception Score ---
+    print("Calculating Inception Score...")
+    inception_score, inception_std = calculate_inception_score(
+        final_samples, device=device, batch_size=metric_batch_size, splits=10
+    )
 
     # --- Calculate Final Mahalanobis/Mean Difference ---
     print("Calculating final Mean Difference...")
@@ -540,35 +524,64 @@ def calculate_metrics_refined(
             "fid": final_fid_score.item(),
         }
 
-    return final_fid_score, avg_mahalanobis, fid_components
+    metrics = {
+        "fid_score": final_fid_score.item(),
+        "avg_mahalanobis": avg_mahalanobis,
+        "fid_components": fid_components,
+        "inception_score": inception_score,
+        "inception_std": inception_std,
+    }
+
+    return metrics
 
 
 def main():
-    device = torch.device("cuda:1" if torch.cuda.is_available() else "cpu")
+    # Configuration
+    dataset_name = "cifar10"  # Options: "cifar10" or "imagenet32"
+    device = torch.device("cuda:5" if torch.cuda.is_available() else "cpu")
     print(f"Using device: {device}")
 
-    # Set random seeds for reproducibility
-    # torch.manual_seed(42)
-    # np.random.seed(42)
+    # Set dataset-specific parameters
+    if dataset_name.lower() == "cifar10":
+        num_classes = 10
+        print("Using CIFAR-10 dataset")
+    elif dataset_name.lower() == "imagenet32":
+        num_classes = 1000
+        print("Using ImageNet32 dataset")
+    else:
+        raise ValueError(f"Unsupported dataset: {dataset_name}")
 
-    # CIFAR-10 dimensions and setup
+    # Common parameters
     image_size = 32
     channels = 3
-    num_classes = 10
 
-    # Setup CIFAR-10 dataset with appropriate transforms
+    # Setup dataset with appropriate transforms
     transform = transforms.Compose(
         [
             transforms.ToTensor(),
             transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
         ]
     )
-    train_dataset = datasets.CIFAR10(
-        root="./data", train=True, download=True, transform=transform
-    )
-    train_loader = DataLoader(train_dataset, batch_size=128, shuffle=True)
 
-    # Initialize sampler with CIFAR-10 dimensions
+    # Load the appropriate dataset
+    if dataset_name.lower() == "cifar10":
+        train_dataset = datasets.CIFAR10(
+            root="./data", train=True, download=True, transform=transform
+        )
+    else:  # ImageNet32
+        from imagenet_dataset import ImageNet32Dataset
+
+        train_dataset = ImageNet32Dataset(
+            root_dir="./data", train=True, transform=transform
+        )
+
+    train_loader = DataLoader(
+        train_dataset, batch_size=128, shuffle=True, num_workers=4
+    )
+
+    # Initialize sampler with appropriate dimensions and dataset
+    flow_model_name = f"flow_model_{dataset_name}.pt"
+
     sampler = MCTSFlowSampler(
         image_size=image_size,
         channels=channels,
@@ -577,10 +590,10 @@ def main():
         num_classes=num_classes,
         buffer_size=10,
         load_models=True,
-        flow_model="large_flow_model.pt",
-        value_model=None,
+        flow_model=flow_model_name,
         num_channels=256,
         inception_layer=3,
+        dataset=dataset_name,
     )
 
     # Training configuration
@@ -592,17 +605,29 @@ def main():
     fid = FID.FrechetInceptionDistance(normalize=True, reset_real_features=False).to(
         device
     )
-    cifar10 = datasets.CIFAR10(
-        root="./data", train=True, download=True, transform=transform
-    )
+
+    # Load real images for FID calculation
+    if dataset_name.lower() == "cifar10":
+        real_dataset = datasets.CIFAR10(
+            root="./data", train=True, download=True, transform=transform
+        )
+    else:  # ImageNet32
+        from imagenet_dataset import ImageNet32Dataset
+
+        real_dataset = ImageNet32Dataset(
+            root_dir="./data", train=True, transform=transform
+        )
+
+    # Sample size for real images - use fewer for ImageNet32 due to its larger size
+    sample_size = 10000 if dataset_name.lower() == "cifar10" else 50000
 
     # Randomly sample real images
-    indices = np.random.choice(len(cifar10), 20000, replace=False)
-    real_images = torch.stack([cifar10[i][0] for i in indices]).to(device)
+    indices = np.random.choice(len(real_dataset), sample_size, replace=False)
+    real_images = torch.stack([real_dataset[i][0] for i in indices]).to(device)
 
     # Process real images in batches
     real_batch_size = 100
-    print("Processing real images...")
+    print(f"Processing {sample_size} real images from {dataset_name}...")
     for i in range(0, len(real_images), real_batch_size):
         batch = real_images[i : i + real_batch_size]
         fid.update(batch, real=True)
@@ -620,24 +645,32 @@ def main():
         # )
 
         for num_branches, num_keep in branch_keep_pairs:
-            # fid_score, avg_mahalanobis, fid_components = calculate_metrics(
-            #     sampler,
-            #     num_branches,
-            #     num_keep,
-            #     device,
-            #     sigma=0,
-            #     n_samples=640,
-            #     fid=fid,
-            # )
-            fid_score, avg_mahalanobis, fid_components = calculate_metrics_refined(
+            metrics = calculate_metrics(
                 sampler,
+                num_branches,
+                num_keep,
+                device,
+                sigma=0,
                 n_samples=640,
-                refinement_batch_size=32,
-                num_branches=num_branches,
-                num_iterations=2,
-                device=device,
                 fid=fid,
             )
+            # metrics = calculate_metrics_refined(
+            #     sampler,
+            #     n_samples=320,
+            #     refinement_batch_size=32,
+            #     num_branches=num_branches,
+            #     num_iterations=1,
+            #     device=device,
+            #     fid=fid,
+            # )
+
+            # Extract metrics
+            fid_score = metrics["fid_score"]
+            avg_mahalanobis = metrics["avg_mahalanobis"]
+            fid_components = metrics["fid_components"]
+            inception_score = metrics["inception_score"]
+            inception_std = metrics["inception_std"]
+
             print(f"\nCycle {cycle + 1} - (branches={num_branches}, keep={num_keep}):")
             print(f"FID Components:")
             print(f"  a (mean term) = {fid_components['a']:.4f}")
@@ -648,6 +681,70 @@ def main():
                 f"  Verification: {fid_components['a'] + fid_components['b'] - 2*fid_components['c']:.4f}"
             )
             print(f"Average Mahalanobis Distance: {avg_mahalanobis:.4f}")
+            print(f"Inception Score: {inception_score:.4f} ± {inception_std:.4f}")
+
+
+def calculate_inception_score(images, device, batch_size=32, splits=10):
+    """
+    Calculate the Inception Score of generated images using the NoTrainInceptionV3 model from torchmetrics.
+
+    Args:
+        images: Tensor of images, normalized to Inception's expectations (shape [N, C, H, W])
+        device: Device to compute on
+        batch_size: Batch size for Inception model
+        splits: Number of splits to calculate mean and std
+
+    Returns:
+        mean_score: Average Inception Score
+        std_score: Standard deviation of Inception Score
+    """
+    from torchmetrics.image.fid import NoTrainInceptionV3
+    import torch.nn.functional as F
+
+    # Load inception model - use the full model (no feature list) to get logits
+    inception_model = NoTrainInceptionV3(
+        name="inception-v3-compat", features_list=["logits"]
+    ).to(device)
+    inception_model.eval()
+
+    # Function to get predictions
+    def get_pred(x):
+        with torch.no_grad():
+            # NoTrainInceptionV3 expects uint8 images in [0, 255] range
+            if x.dtype != torch.uint8:
+                x = (x * 255).byte()
+
+            # Get predictions and apply softmax
+            pred = inception_model(x)  # This returns logits
+            pred = F.softmax(pred, dim=1)
+            return pred
+
+    # Get predictions for all images in batches
+    all_preds = []
+    n_batches = len(images) // batch_size + (0 if len(images) % batch_size == 0 else 1)
+
+    for i in range(n_batches):
+        batch = images[i * batch_size : min((i + 1) * batch_size, len(images))]
+        all_preds.append(get_pred(batch))
+
+    all_preds = torch.cat(all_preds, dim=0).cpu().numpy()
+
+    # Calculate scores for each split
+    scores = []
+    split_size = all_preds.shape[0] // splits
+
+    for k in range(splits):
+        part = all_preds[k * split_size : (k + 1) * split_size]
+        py = np.mean(part, axis=0)
+        scores.append(
+            np.exp(
+                np.mean(
+                    np.sum(part * (np.log(part + 1e-7) - np.log(py + 1e-7)), axis=1)
+                )
+            )
+        )
+
+    return np.mean(scores), np.std(scores)
 
 
 if __name__ == "__main__":
