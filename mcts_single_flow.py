@@ -1750,7 +1750,7 @@ class MCTSFlowSampler:
             # Calculate scores for each complete batch
             all_scores = []
             for branch_samples in all_samples:
-                if use_global or selector in ["inception_score", "dino_score"]:
+                if use_global:
                     scores = score_fn(branch_samples)
                 else:
                     scores = score_fn(branch_samples, class_label)
