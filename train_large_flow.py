@@ -8,7 +8,7 @@ import os
 import numpy as np
 
 from mcts_single_flow import MCTSFlowSampler
-from train_mcts_flow import calculate_metrics
+from run_mcts_flow import calculate_metrics
 import torchmetrics.image.fid as FID
 
 
