@@ -233,7 +233,7 @@ def calculate_metrics(
     generated_samples = []
     mahalanobis_distances = []
 
-    selector = "dino_score"
+    selector = "inception_score"
 
     print(
         f"\nGenerating {n_samples} samples for branches={num_branches}, keep={num_keep}"
