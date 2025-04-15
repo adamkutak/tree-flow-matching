@@ -576,13 +576,8 @@ class MCTSFlowSampler:
             # Pass images to the model
             logits = self.dino_model(processed_images)
 
-            if class_labels is not None:
-                # Return only the logit for the specified class
-                batch_indices = torch.arange(len(images), device=self.device)
-                scores = logits[batch_indices, class_labels]
-            else:
-                # If no class labels provided, return the maximum logit
-                scores = torch.max(logits, dim=1)[0]
+            batch_indices = torch.arange(len(images), device=self.device)
+            scores = logits[batch_indices, class_labels]
 
             return scores
 
