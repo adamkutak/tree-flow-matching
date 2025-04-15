@@ -537,11 +537,10 @@ def calculate_metrics_refined(
 
 def main():
     # Configuration
-    dataset_name = "cifar10"  # Options: "cifar10" or "imagenet32"
-    device = torch.device("cuda:5" if torch.cuda.is_available() else "cpu")
+    dataset_name = "imagenet32"  # Options: "cifar10" or "imagenet32"
+    device = torch.device("cuda:2" if torch.cuda.is_available() else "cpu")
     print(f"Using device: {device}")
 
-    # Set dataset-specific parameters
     if dataset_name.lower() == "cifar10":
         num_classes = 10
         print("Using CIFAR-10 dataset")
@@ -594,6 +593,14 @@ def main():
         num_channels=256,
         inception_layer=3,
         dataset=dataset_name,
+        flow_model_config=(
+            {
+                "num_res_blocks": 3,
+                "attention_resolutions": "16,8",
+            }
+            if dataset_name.lower() == "imagenet32"
+            else None
+        ),
     )
 
     # Training configuration
