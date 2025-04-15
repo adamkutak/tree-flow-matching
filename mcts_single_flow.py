@@ -507,13 +507,16 @@ class MCTSFlowSampler:
 
         return torch.tensor(mean_differences, device=images.device)
 
-    def batch_compute_inception_score(self, images):
+    def batch_compute_inception_score(self, images, class_labels=None):
         """
-        Compute a simplified per-image score based on entropy of class predictions.
-        Lower entropy means more confident predictions, which is desirable.
+        Compute the class confidence score for each image.
+        Uses either the probability of the highest predicted class (if class_labels=None)
+        or the probability of the specified target class.
 
         Args:
             images: Tensor of shape [batch_size, C, H, W]
+            class_labels: Optional tensor of class indices. If provided, returns the
+                        confidence for those specific classes.
 
         Returns:
             Tensor of scores (higher is better for optimization)
@@ -531,15 +534,16 @@ class MCTSFlowSampler:
             logits = self.inception_logits_model(images_uint8)
             probs = F.softmax(logits, dim=1)
 
-            # Calculate negative entropy for each image
-            # entropy = -sum(p * log(p))
-            # We use negative entropy so higher values are better
-            log_probs = torch.log(probs + 1e-7)
-            entropy = -torch.sum(probs * log_probs, dim=1)
+            if class_labels is not None:
+                # Get the probability for the specific target class for each image
+                batch_indices = torch.arange(len(images), device=self.device)
+                confidence_scores = probs[batch_indices, class_labels]
+            else:
+                # Get the maximum probability (confidence) for each image
+                confidence_scores, _ = torch.max(probs, dim=1)
 
-            # Return negative entropy (higher = more confident predictions = better)
-            breakpoint()
-            return -entropy
+            # Higher confidence is better
+            return confidence_scores
 
     def batch_compute_dino_score(self, images, class_labels=None):
         """
