@@ -545,7 +545,7 @@ class MCTSFlowSampler:
     def batch_compute_dino_score(self, images, class_labels=None):
         """
         Compute scores using the official DINOv2 model's linear classification head.
-        Passes images directly to the model without resizing.
+        Resizes images to be compatible with the model's patch size (14x14).
 
         Args:
             images: Tensor of shape [batch_size, C, H, W]
@@ -554,15 +554,26 @@ class MCTSFlowSampler:
         Returns:
             Tensor of scores (higher is better for optimization)
         """
+        import torch.nn.functional as F
+
         with torch.no_grad():
-            # Basic preprocessing - just ensure images are in [0,1] range
+            # Basic preprocessing - ensure images are in [0,1] range
             if images.min() < 0:
                 # Assume images are in [-1, 1] range
                 processed_images = (images + 1) / 2
             else:
                 processed_images = images
 
-            # Pass images directly to the model without resizing
+            # Resize to a size that's divisible by the patch size (14)
+            # 224 or 448 are good choices (both divisible by 14)
+            processed_images = F.interpolate(
+                processed_images,
+                size=(224, 224),  # Multiple of 14 (16 patches)
+                mode="bilinear",
+                align_corners=False,
+            )
+
+            # Pass images to the model
             logits = self.dino_model(processed_images)
 
             if class_labels is not None:
