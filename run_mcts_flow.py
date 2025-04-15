@@ -578,8 +578,11 @@ def main():
         train_dataset, batch_size=128, shuffle=True, num_workers=4
     )
 
-    # Initialize sampler with appropriate dimensions and dataset
-    flow_model_name = f"flow_model_{dataset_name}.pt"
+    # TODO: remove this once we rename the imagenet32 model
+    if dataset_name.lower() == "imagenet32":
+        flow_model_name = "large_flow_model_imagenet32.pt"
+    else:
+        flow_model_name = f"flow_model_{dataset_name}.pt"
 
     sampler = MCTSFlowSampler(
         image_size=image_size,
