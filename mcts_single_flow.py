@@ -579,6 +579,8 @@ class MCTSFlowSampler:
             batch_indices = torch.arange(len(images), device=self.device)
             scores = logits[batch_indices, class_labels]
 
+            breakpoint()
+
             return scores
 
     def _load_or_fit_pca(self):
