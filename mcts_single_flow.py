@@ -206,14 +206,11 @@ class MCTSFlowSampler:
 
         if load_dino:
             print("Loading DINO model...")
-            from torchvision.models import vit_b_16
-
-            # Load the ViT model with the linear head for classification
-            self.dino_model = vit_b_16(weights="IMAGENET1K_SWAG_LINEAR_V1").to(
-                self.device
+            self.dino_model = torch.hub.load(
+                "facebookresearch/dinov2", "dinov2_vitb14_lc"
             )
+            self.dino_model = self.dino_model.to(self.device)
             self.dino_model.eval()
-
         # self.initialize_class_buffers(buffer_size)
 
     def compute_mahalanobis_distance(self, features, class_idx):
@@ -547,35 +544,25 @@ class MCTSFlowSampler:
 
     def batch_compute_dino_score(self, images, class_labels=None):
         """
-        Compute DINO-based scores using the pre-trained linear classification head.
+        Compute scores using the official DINOv2 model's linear classification head.
+        Passes images directly to the model without resizing.
 
         Args:
             images: Tensor of shape [batch_size, C, H, W]
-            class_labels: Optional tensor of class indices. If None, returns logits for all classes.
+            class_labels: Optional tensor of class indices. If None, returns max logit.
 
         Returns:
             Tensor of scores (higher is better for optimization)
         """
-        import torch.nn.functional as F
-
         with torch.no_grad():
-            # Preprocess images for DINO
+            # Basic preprocessing - just ensure images are in [0,1] range
             if images.min() < 0:
                 # Assume images are in [-1, 1] range
                 processed_images = (images + 1) / 2
             else:
                 processed_images = images
 
-            # Resize to 224x224 as expected by ViT
-            if processed_images.shape[-1] != 224:
-                processed_images = F.interpolate(
-                    processed_images,
-                    size=(224, 224),
-                    mode="bilinear",
-                    align_corners=False,
-                )
-
-            # Extract DINO features and get classification logits
+            # Pass images directly to the model without resizing
             logits = self.dino_model(processed_images)
 
             if class_labels is not None:
@@ -583,7 +570,7 @@ class MCTSFlowSampler:
                 batch_indices = torch.arange(len(images), device=self.device)
                 scores = logits[batch_indices, class_labels]
             else:
-                # If no class labels provided, return all logits (or max logit)
+                # If no class labels provided, return the maximum logit
                 scores = torch.max(logits, dim=1)[0]
 
             return scores
