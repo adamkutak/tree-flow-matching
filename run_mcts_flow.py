@@ -591,7 +591,7 @@ def main():
         load_models=True,
         flow_model=flow_model_name,
         num_channels=256,
-        inception_layer=3,
+        inception_layer=0,
         dataset=dataset_name,
         flow_model_config=(
             {
