@@ -1685,21 +1685,17 @@ class MCTSFlowSampler:
         class_label,
         batch_size=16,
         num_branches=4,
-        num_keep=2,  # Unused but kept for compatibility
-        dt_std=0.1,  # Unused but kept for compatibility
         selector="fid",
         use_global=False,
-        branch_start_time=0.0,  # Unused but kept for compatibility
-        branch_dt=None,  # Unused but kept for compatibility
     ):
         """
         Simple random search sampling method that:
         1. Runs num_branches independent flow matching batches
         2. Evaluates all samples using selected metric
-        3. Returns the best batch_size samples
+        3. Returns the best sample for each class position
 
         Args:
-            class_label: Target class(es) to generate. Can be a single integer or a tensor of class labels.
+            class_label: Tensor of class labels for the batch
             batch_size: Number of final samples to generate
             num_branches: Number of branches to evaluate per sample
             num_keep: Unused but kept for compatibility
@@ -1709,10 +1705,11 @@ class MCTSFlowSampler:
             branch_start_time: Unused but kept for compatibility
             branch_dt: Unused but kept for compatibility
         """
-        # Check if class_label is a tensor or a single integer
-        is_tensor = torch.is_tensor(class_label)
+        assert (
+            len(class_label) == batch_size
+        ), "class_label tensor length must match batch_size"
 
-        if num_branches == 1 and num_keep == 1:
+        if num_branches == 1:
             return self.regular_batch_sample(class_label, batch_size)
 
         score_fn, use_global = self._get_score_function(selector, use_global)
@@ -1723,7 +1720,6 @@ class MCTSFlowSampler:
         with torch.no_grad():
             # Generate num_branches batches of samples
             all_samples = []
-            all_labels = []
 
             for _ in range(num_branches):
                 # Initialize one batch of samples
@@ -1735,49 +1731,43 @@ class MCTSFlowSampler:
                     device=self.device,
                 )
 
-                # Handle both tensor and single class label cases
-                if is_tensor:
-                    current_label = class_label
-                else:
-                    current_label = torch.full(
-                        (batch_size,), class_label, device=self.device
-                    )
-
                 # Regular flow matching for this batch
                 for step, t in enumerate(self.timesteps[:-1]):
                     t_batch = torch.full((batch_size,), t.item(), device=self.device)
 
                     # Flow step
-                    velocity = self.flow_model(t_batch, current_samples, current_label)
+                    velocity = self.flow_model(t_batch, current_samples, class_label)
                     current_samples = current_samples + velocity * base_dt
 
                 all_samples.append(current_samples)
-                all_labels.append(current_label)
 
-            # Stack all batches
-            all_samples = torch.cat(
-                all_samples, dim=0
-            )  # shape: [batch_size * num_branches, C, H, W]
+            # Calculate scores for each complete batch
+            all_scores = []
+            for branch_samples in all_samples:
+                if use_global or selector in ["inception_score", "dino_score"]:
+                    scores = score_fn(branch_samples)
+                else:
+                    scores = score_fn(branch_samples, class_label)
+                all_scores.append(scores)
 
-            # Stack or repeat labels as needed
-            if is_tensor:
-                # If class_label was a tensor, repeat it for each branch
-                all_labels = torch.cat([class_label] * num_branches, dim=0)
-            else:
-                # If class_label was a single value, create a tensor of that value
-                all_labels = torch.full(
-                    (batch_size * num_branches,), class_label, device=self.device
-                )
+            # Stack scores for each batch [num_branches, batch_size]
+            all_scores = torch.stack(all_scores, dim=0)
 
-            # Score all samples
-            if use_global or selector in ["inception_score", "dino_score"]:
-                scores = score_fn(all_samples)
-            else:
-                scores = score_fn(all_samples, all_labels)
+            # Find best branch for each position
+            best_branch_indices = torch.argmax(all_scores, dim=0)  # Shape: [batch_size]
 
-            # Select the best batch_size samples
-            top_k_values, top_k_indices = torch.topk(scores, k=batch_size, dim=0)
-            final_samples = all_samples[top_k_indices]
+            # Construct final batch by selecting best sample for each position
+            final_samples = torch.zeros(
+                batch_size,
+                self.channels,
+                self.image_size,
+                self.image_size,
+                device=self.device,
+            )
+
+            for i in range(batch_size):
+                best_branch = best_branch_indices[i]
+                final_samples[i] = all_samples[best_branch][i]
 
             return final_samples
 
