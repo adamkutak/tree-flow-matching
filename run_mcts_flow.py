@@ -289,11 +289,8 @@ def calculate_metrics(
             class_label=random_class_labels,  # Pass tensor of labels instead of single label
             batch_size=current_batch_size,
             num_branches=num_branches,
-            num_keep=num_keep,
             selector=selector,
             use_global=True,
-            branch_start_time=0,
-            branch_dt=0.1,
         )
 
         # Compute metrics
