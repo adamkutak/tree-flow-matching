@@ -80,7 +80,7 @@ def train_large_flow_model(
         buffer_size=10,
         num_channels=num_channels,
         learning_rate=learning_rate,
-        load_models=True,
+        load_models=False,
         dataset="imagenet32",  # Specify we're using ImageNet32
         flow_model_config={
             "num_res_blocks": 3,

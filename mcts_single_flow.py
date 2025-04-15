@@ -68,7 +68,6 @@ class MCTSFlowSampler:
         }
         model_params = {**default_config, **self.flow_model_config}
 
-        breakpoint()
         self.flow_model = UNetModel(
             dim=(channels, image_size, image_size),
             num_channels=num_channels,
