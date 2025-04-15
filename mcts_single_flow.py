@@ -538,6 +538,7 @@ class MCTSFlowSampler:
             entropy = -torch.sum(probs * log_probs, dim=1)
 
             # Return negative entropy (higher = more confident predictions = better)
+            breakpoint()
             return -entropy
 
     def batch_compute_dino_score(self, images, class_labels=None):
