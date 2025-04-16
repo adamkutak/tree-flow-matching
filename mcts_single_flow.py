@@ -1302,7 +1302,7 @@ class MCTSFlowSampler:
                     simulated_times[active_mask] = simulated_times[active_mask] + dt
 
                 # Evaluate final samples
-                if selector in ["inception_score", "dino_score"] or use_global:
+                if use_global:
                     final_scores = score_fn(simulated_samples)
                 else:
                     final_scores = score_fn(simulated_samples, branched_label)
@@ -1579,7 +1579,7 @@ class MCTSFlowSampler:
                     simulated_times[sim_active_mask] = active_sim_times + dt_sim
 
                 # --- 4. Score Simulated Samples ---
-                if selector in ["inception_score", "dino_score"] or use_global:
+                if use_global:
                     final_scores = score_fn(simulated_samples)
                 else:
                     final_scores = score_fn(simulated_samples, branched_label)
