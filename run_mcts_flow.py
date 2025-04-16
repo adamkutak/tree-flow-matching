@@ -574,6 +574,7 @@ def main():
     train_loader = DataLoader(
         train_dataset, batch_size=128, shuffle=True, num_workers=4
     )
+    breakpoint()
 
     # TODO: remove this once we rename the imagenet32 model
     if dataset_name.lower() == "imagenet32":
