@@ -566,21 +566,8 @@ def main():
     transform = transforms.Compose(
         [
             transforms.ToTensor(),
-            # Note: For DINO model evaluation, we'll add normalization below
         ]
     )
-
-    # Load the dataset
-    if dataset_name.lower() == "cifar10":
-        real_dataset = datasets.CIFAR10(
-            root="./data", train=True, download=True, transform=transform
-        )
-    else:  # ImageNet32
-        from imagenet_dataset import ImageNet32Dataset
-
-        real_dataset = ImageNet32Dataset(
-            root_dir="./data", train=True, transform=transform
-        )
 
     # TODO: remove this once we rename the imagenet32 model
     if dataset_name.lower() == "imagenet32":
@@ -609,86 +596,6 @@ def main():
             else None
         ),
     )
-
-    # Testing DINO model accuracy on real dataset samples
-    print("\n=== Testing DINO model accuracy on real dataset samples ===")
-
-    # Create normalized transform for DINO evaluation
-    # This is important as the DINO model expects normalized images
-    dino_transform = transforms.Compose(
-        [
-            transforms.ToTensor(),
-        ]
-    )
-
-    # Load the dataset with normalization for DINO evaluation
-    if dataset_name.lower() == "cifar10":
-        dino_test_dataset = datasets.CIFAR10(
-            root="./data", train=False, download=True, transform=dino_transform
-        )
-    else:  # ImageNet32
-        dino_test_dataset = ImageNet32Dataset(
-            root_dir="./data", train=False, transform=dino_transform
-        )
-
-    dino_test_loader = DataLoader(
-        dino_test_dataset, batch_size=64, shuffle=True, num_workers=2
-    )
-
-    # Test DINO on a few batches
-    num_batches_to_test = 10
-    total_correct = 0
-    total_samples = 0
-
-    print(
-        f"Testing DINO model on {num_batches_to_test} batches from {dataset_name} test set..."
-    )
-
-    for batch_idx, (images, labels) in enumerate(dino_test_loader):
-        if batch_idx >= num_batches_to_test:
-            break
-
-        images = images.to(device)
-        labels = labels.to(device)
-
-        # Get predictions for manual accuracy calculation
-        with torch.no_grad():
-            processed_images = (
-                F.interpolate(
-                    images,
-                    size=(224, 224),
-                    mode="bilinear",
-                    align_corners=False,
-                )
-                * 255
-            )
-            logits = sampler.dino_model(processed_images)
-            predictions = torch.argmax(logits, dim=1)
-
-            # Count correct predictions
-            correct = (predictions == labels).sum().item()
-            total_correct += correct
-            total_samples += len(images)
-
-            # Print detailed stats for this batch
-            print(
-                f"Batch {batch_idx+1}: {correct}/{len(images)} correct ({correct/len(images)*100:.2f}%)"
-            )
-
-            # Print top-5 accuracy as well
-            _, top5_preds = torch.topk(logits, 5, dim=1)
-            top5_correct = sum(
-                [label in top5 for label, top5 in zip(labels, top5_preds)]
-            )
-            print(
-                f"Top-5 Accuracy: {top5_correct}/{len(images)} ({top5_correct/len(images)*100:.2f}%)"
-            )
-
-    # Print overall stats
-    if total_samples > 0:
-        print(
-            f"\nOverall DINO Accuracy on {total_samples} samples: {total_correct}/{total_samples} ({total_correct/total_samples*100:.2f}%)"
-        )
 
     # Training configuration
     n_epochs_per_cycle = 1

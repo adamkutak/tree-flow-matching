@@ -563,18 +563,18 @@ class MCTSFlowSampler:
             # Pass images to the model
             logits = self.dino_model(processed_images)
 
-            # Calculate accuracy statistics
+            # TEST: for testing DINO accuracy
             # Get the predicted class (highest logit) for each image
-            predicted_classes = torch.argmax(logits, dim=1)
+            # predicted_classes = torch.argmax(logits, dim=1)
 
-            # Compare with target class_labels
-            correct_predictions = predicted_classes == class_labels
+            # # Compare with target class_labels
+            # correct_predictions = predicted_classes == class_labels
 
-            # Count correct predictions
-            num_correct = correct_predictions.sum().item()
-            accuracy = num_correct / len(images) * 100
+            # # Count correct predictions
+            # num_correct = correct_predictions.sum().item()
+            # accuracy = num_correct / len(images) * 100
 
-            print(f"DINO Accuracy: {num_correct}/{len(images)} ({accuracy:.2f}%)")
+            # print(f"DINO Accuracy: {num_correct}/{len(images)} ({accuracy:.2f}%)")
 
             # Get scores for the specified class labels
             batch_indices = torch.arange(len(images), device=self.device)
