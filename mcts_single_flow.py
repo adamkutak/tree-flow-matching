@@ -551,7 +551,7 @@ class MCTSFlowSampler:
         """
         import torch.nn.functional as F
 
-        images = (self.unnormalize_images(images) * 255).byte()
+        images = self.unnormalize_images(images) * 255
 
         with torch.no_grad():
             # Resize to a size that's divisible by the patch size (14)
@@ -560,7 +560,7 @@ class MCTSFlowSampler:
                 size=(224, 224),  # Multiple of 14 (16 patches)
                 mode="bilinear",
                 align_corners=False,
-            )
+            ).byte()
 
             # Pass images to the model
             logits = self.dino_model(processed_images)
