@@ -288,7 +288,7 @@ def calculate_metrics(
                 num_branches=num_branches,
                 num_keep=num_keep,
                 dt_std=0.1,
-                selector="selector"
+                selector=selector,
                 use_global=True,
                 branch_start_time=0,
                 branch_dt=0.05,
