@@ -1348,7 +1348,7 @@ class MCTSFlowSampler:
             final_samples = []
 
             # Evaluate final samples one last time
-            if selector in ["inception_score", "dino_score"] or use_global:
+            if use_global:
                 final_scores = score_fn(current_samples)
             else:
                 final_scores = score_fn(current_samples, current_label)
@@ -1648,7 +1648,7 @@ class MCTSFlowSampler:
                 current_label = new_current_label
 
             # --- Final Selection (after loop finishes) ---
-            if selector in ["inception_score", "dino_score"] or use_global:
+            if use_global:
                 final_scores = score_fn(current_samples)
             else:
                 final_scores = score_fn(current_samples, current_label)
