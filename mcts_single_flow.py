@@ -551,6 +551,8 @@ class MCTSFlowSampler:
         """
         import torch.nn.functional as F
 
+        images = self.unnormalize_images(images)
+
         with torch.no_grad():
             # Resize to a size that's divisible by the patch size (14)
             processed_images = F.interpolate(
