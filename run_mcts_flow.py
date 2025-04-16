@@ -287,10 +287,10 @@ def calculate_metrics(
                 batch_size=generation_batch_size,
                 num_branches=num_branches,
                 num_keep=num_keep,
-                dt_std=0.1,
+                dt_std=0.7,
                 selector=selector,
                 use_global=True,
-                branch_start_time=0,
+                branch_start_time=0.5,
                 branch_dt=0.1,
             )
         elif sample_method == "random_search":
@@ -544,7 +544,7 @@ def calculate_metrics_refined(
 def main():
     # Configuration
     dataset_name = "imagenet32"  # Options: "cifar10" or "imagenet32"
-    selector = "dino_score"
+    selector = "inception_score"
     sample_method = "path_exploration_timewarp"
     device = torch.device("cuda:2" if torch.cuda.is_available() else "cpu")
     print(f"Using device: {device}")
