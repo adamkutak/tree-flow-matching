@@ -544,8 +544,8 @@ def calculate_metrics_refined(
 def main():
     # Configuration
     dataset_name = "imagenet32"  # Options: "cifar10" or "imagenet32"
-    selector = "dino_score"
-    sample_method = "path_exploration_timewarp"
+    selector = "inception_score"
+    sample_method = "random_search"
     device = torch.device("cuda:2" if torch.cuda.is_available() else "cpu")
     print(f"Using device: {device}")
 
@@ -579,7 +579,7 @@ def main():
         image_size=image_size,
         channels=channels,
         device=device,
-        num_timesteps=20,
+        num_timesteps=10,
         num_classes=num_classes,
         buffer_size=10,
         load_models=True,
