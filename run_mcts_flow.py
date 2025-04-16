@@ -653,11 +653,14 @@ def main():
 
         # Get predictions for manual accuracy calculation
         with torch.no_grad():
-            processed_images = F.interpolate(
-                images,
-                size=(224, 224),
-                mode="bilinear",
-                align_corners=False,
+            processed_images = (
+                F.interpolate(
+                    images,
+                    size=(224, 224),
+                    mode="bilinear",
+                    align_corners=False,
+                )
+                * 255
             )
             logits = sampler.dino_model(processed_images)
             predictions = torch.argmax(logits, dim=1)
