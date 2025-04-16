@@ -80,10 +80,7 @@ def compute_dataset_statistics(dataset_name, feature_dim=64, pca_dim=None):
 
     with torch.no_grad():
         for images, labels in tqdm(dataloader):
-            breakpoint()
             images = images.to(device)
-            # Scale images to [0, 255] range as uint8 as expected by torchmetrics implementation
-            breakpoint()
             images = (images * 255).byte()
 
             # Get features
