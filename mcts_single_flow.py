@@ -567,6 +567,7 @@ class MCTSFlowSampler:
             logits = self.dino_model(processed_images)
 
             batch_indices = torch.arange(len(images), device=self.device)
+            breakpoint()
             scores = logits[batch_indices, class_labels]
 
             return scores
