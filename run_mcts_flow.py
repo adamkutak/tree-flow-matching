@@ -291,7 +291,7 @@ def calculate_metrics(
                 selector=selector,
                 use_global=True,
                 branch_start_time=0,
-                branch_dt=0.05,
+                branch_dt=0.1,
             )
         elif sample_method == "random_search":
             sample = sampler.batch_sample_with_random_search(
