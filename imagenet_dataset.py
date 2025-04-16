@@ -15,8 +15,8 @@ class ImageNet32Dataset(Dataset):
             self.data_dir = os.path.join(root_dir, "Imagenet32_train")
             self.batch_files = [f"train_data_batch_{i}" for i in range(1, 11)]
         else:
-            self.data_dir = os.path.join(root_dir, "Imagenet32_val")
-            self.batch_files = ["val_data"]
+            self.data_dir = root_dir
+            self.batch_files = ["Imagenet32_val"]
 
         self.data = []
         self.targets = []
