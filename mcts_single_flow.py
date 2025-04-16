@@ -875,7 +875,7 @@ class MCTSFlowSampler:
         )
         return fid
 
-    def 1calculate_frechet_distance(self, mu1, sigma1, mu2, sigma2):
+    def calculate_frechet_distance(self, mu1, sigma1, mu2, sigma2):
         """Calculate the Frechet distance between two distributions."""
         diff = mu1 - mu2
         covmean = sqrtm(sigma1.dot(sigma2))
@@ -1376,7 +1376,7 @@ class MCTSFlowSampler:
                 best_idx = torch.argmax(batch_data["scores"])
                 final_samples.append(batch_data["samples"][best_idx])
 
-            return torch.stack(final_samples)
+            return self.unnormalize_images(torch.stack(final_samples))
 
     def batch_sample_with_path_exploration_timewarp(
         self,
@@ -1675,7 +1675,7 @@ class MCTSFlowSampler:
                 best_idx_in_batch = torch.argmax(batch_final_scores)
                 final_samples.append(batch_final_samples[best_idx_in_batch])
 
-            return torch.stack(final_samples)
+            return self.unnormalize_images(torch.stack(final_samples))
 
     def batch_sample_with_random_search(
         self,
@@ -1766,7 +1766,7 @@ class MCTSFlowSampler:
                 best_branch = best_branch_indices[i]
                 final_samples[i] = all_samples[best_branch][i]
 
-            return final_samples
+            return self.unnormalize_images(final_samples)
 
     # ---------------------------------------------------------
     # Section for minimizing FID over the entire set of samples using iterative refinement
@@ -2058,7 +2058,7 @@ class MCTSFlowSampler:
                 f"--- End Pass {pass_num + 1}: Made {num_swaps_this_pass} swaps. Current FID: {current_global_fid:.4f} ---"
             )
 
-        return initial_pool_samples
+        return self.unnormalize_images(initial_pool_samples)
 
     def batch_sample_refine_global_fid_path_explore(
         self,
@@ -2474,7 +2474,7 @@ class MCTSFlowSampler:
                 f"--- End Pass {pass_num + 1}: Made {num_swaps_this_pass} swaps. Current FID: {current_global_fid:.4f} ---"
             )
 
-        return initial_pool_samples
+        return self.unnormalize_images(initial_pool_samples)
 
     def batch_sample_refine_global_fid_timewarp(
         self,
@@ -2961,7 +2961,7 @@ class MCTSFlowSampler:
                 f"--- End Pass {pass_num + 1}: Made {num_swaps_this_pass} swaps. Current FID: {current_global_fid:.4f} ---"
             )
 
-        return initial_pool_samples
+        return self.unnormalize_images(initial_pool_samples)
 
     def compute_fid_from_features(
         self, features_gen, target_mu, target_sigma, eps=1e-6
