@@ -49,7 +49,7 @@ def compute_dataset_statistics(dataset_name, feature_dim=64, pca_dim=None):
     )
     inception.eval()
 
-    device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+    device = torch.device("cuda:2" if torch.cuda.is_available() else "cpu")
     inception = inception.to(device)
 
     # Transform for dataset
@@ -83,6 +83,7 @@ def compute_dataset_statistics(dataset_name, feature_dim=64, pca_dim=None):
         for images, labels in tqdm(dataloader):
             images = images.to(device)
             # Scale images to [0, 255] range as uint8 as expected by torchmetrics implementation
+            breakpoint()
             images = (images * 255).byte()
 
             # Get features
