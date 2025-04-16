@@ -1169,7 +1169,7 @@ class MCTSFlowSampler:
             # Inception score is always global
             return self.batch_compute_inception_score, True
         elif selector == "dino_score":
-            # DINO score is always global
+            # DINO score is always not global (we use the class labels)
             return lambda x, y: self.batch_compute_dino_score(x, y), False
         else:
             raise ValueError(f"Unknown selector: {selector}")

@@ -220,7 +220,15 @@ def visualize_samples(all_samples_dict, class_label, real_images, figsize=(15, 1
 
 
 def calculate_metrics(
-    sampler, num_branches, num_keep, device, n_samples=2000, sigma=0.1, fid=None
+    sampler,
+    num_branches,
+    num_keep,
+    device,
+    n_samples=2000,
+    sigma=0.1,
+    fid=None,
+    selector="dino_score",
+    sample_method="regular",
 ):
     """
     Calculate FID metrics, Inception Score, and average Mahalanobis distance.
@@ -233,8 +241,6 @@ def calculate_metrics(
     metric_batch_size = 64
     generated_samples = []
     mahalanobis_distances = []
-
-    selector = "dino_score"
 
     print(
         f"\nGenerating {n_samples} samples for branches={num_branches}, keep={num_keep}"
@@ -259,40 +265,42 @@ def calculate_metrics(
         )
 
         # Generate samples using the random class labels
-        # sample = sampler.regular_batch_sample(
-        #     class_label=class_label, batch_size=generation_batch_size
-        # )
-        # sample = sampler.batch_sample_with_path_exploration_timewarp(
-        #     class_label=random_class_labels,
-        #     batch_size=generation_batch_size,
-        #     num_branches=num_branches,
-        #     num_keep=num_keep,
-        #     warp_scale=0.5,
-        #     # dt_std=0.1,
-        #     selector=selector,
-        #     use_global=True,
-        #     branch_start_time=0.5,
-        #     branch_dt=0.1,
-        # )
-        # sample = sampler.batch_sample_with_path_exploration(
-        #     class_label=random_class_labels,
-        #     batch_size=generation_batch_size,
-        #     num_branches=num_branches,
-        #     num_keep=num_keep,
-        #     # warp_scale=0.5,
-        #     dt_std=0.1,
-        #     selector="selector"
-        #     use_global=True,
-        #     branch_start_time=0,
-        #     branch_dt=0.05,
-        # )
-        sample = sampler.batch_sample_with_random_search(
-            class_label=random_class_labels,  # Pass tensor of labels instead of single label
-            batch_size=current_batch_size,
-            num_branches=num_branches,
-            selector=selector,
-            use_global=True,
-        )
+        if sample_method == "regular":
+            sample = sampler.regular_batch_sample(
+                class_label=random_class_labels, batch_size=generation_batch_size
+            )
+        elif sample_method == "path_exploration_timewarp":
+            sample = sampler.batch_sample_with_path_exploration_timewarp(
+                class_label=random_class_labels,
+                batch_size=generation_batch_size,
+                num_branches=num_branches,
+                num_keep=num_keep,
+                warp_scale=0.5,
+                selector=selector,
+                use_global=True,
+                branch_start_time=0.5,
+                branch_dt=0.1,
+            )
+        elif sample_method == "path_exploration":
+            sample = sampler.batch_sample_with_path_exploration(
+                class_label=random_class_labels,
+                batch_size=generation_batch_size,
+                num_branches=num_branches,
+                num_keep=num_keep,
+                dt_std=0.1,
+                selector="selector"
+                use_global=True,
+                branch_start_time=0,
+                branch_dt=0.05,
+            )
+        elif sample_method == "random_search":
+            sample = sampler.batch_sample_with_random_search(
+                class_label=random_class_labels,  # Pass tensor of labels instead of single label
+                batch_size=current_batch_size,
+                num_branches=num_branches,
+                selector=selector,
+                use_global=True,
+            )
 
         # Compute metrics
         mahalanobis_dist = sampler.batch_compute_global_mean_difference(sample)
@@ -536,6 +544,8 @@ def calculate_metrics_refined(
 def main():
     # Configuration
     dataset_name = "imagenet32"  # Options: "cifar10" or "imagenet32"
+    selector = "dino_score"
+    sample_method = "path_exploration_timewarp"
     device = torch.device("cuda:2" if torch.cuda.is_available() else "cpu")
     print(f"Using device: {device}")
 
@@ -633,6 +643,8 @@ def main():
                 sigma=0,
                 n_samples=640,
                 fid=fid,
+                selector=selector,
+                sample_method=sample_method,
             )
             # metrics = calculate_metrics_refined(
             #     sampler,
