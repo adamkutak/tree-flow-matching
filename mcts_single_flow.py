@@ -552,12 +552,12 @@ class MCTSFlowSampler:
         import torch.nn.functional as F
 
         with torch.no_grad():
-            processed_images = self.unnormalize_images(images)
+            # processed_images = self.unnormalize_images(images)
 
             # Resize to a size that's divisible by the patch size (14)
             # 224 or 448 are good choices (both divisible by 14)
             processed_images = F.interpolate(
-                processed_images,
+                images,
                 size=(224, 224),  # Multiple of 14 (16 patches)
                 mode="bilinear",
                 align_corners=False,
