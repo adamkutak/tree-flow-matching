@@ -537,14 +537,14 @@ class MCTSFlowSampler:
             # Higher confidence is better
             return confidence_scores
 
-    def batch_compute_dino_score(self, images, class_labels=None):
+    def batch_compute_dino_score(self, images, class_labels):
         """
         Compute scores using the official DINOv2 model's linear classification head.
         Resizes images to be compatible with the model's patch size (14x14).
 
         Args:
             images: Tensor of shape [batch_size, C, H, W]
-            class_labels: Optional tensor of class indices. If None, returns max logit.
+            class_labels: Tensor of class indices
 
         Returns:
             Tensor of scores (higher is better for optimization)
@@ -552,10 +552,7 @@ class MCTSFlowSampler:
         import torch.nn.functional as F
 
         with torch.no_grad():
-            processed_images = self.unnormalize_images(images)
-
             # Resize to a size that's divisible by the patch size (14)
-            # 224 or 448 are good choices (both divisible by 14)
             processed_images = F.interpolate(
                 images,
                 size=(224, 224),  # Multiple of 14 (16 patches)
@@ -566,8 +563,21 @@ class MCTSFlowSampler:
             # Pass images to the model
             logits = self.dino_model(processed_images)
 
+            # Calculate accuracy statistics
+            # Get the predicted class (highest logit) for each image
+            predicted_classes = torch.argmax(logits, dim=1)
+
+            # Compare with target class_labels
+            correct_predictions = predicted_classes == class_labels
+
+            # Count correct predictions
+            num_correct = correct_predictions.sum().item()
+            accuracy = num_correct / len(images) * 100
+
+            print(f"DINO Accuracy: {num_correct}/{len(images)} ({accuracy:.2f}%)")
+
+            # Get scores for the specified class labels
             batch_indices = torch.arange(len(images), device=self.device)
-            breakpoint()
             scores = logits[batch_indices, class_labels]
 
             return scores
