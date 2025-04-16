@@ -13,6 +13,7 @@ import torch.nn.functional as F
 import torchmetrics.image.fid as FID
 import torchmetrics.image.inception as IS
 from torchvision import datasets, transforms
+from imagenet_dataset import ImageNet32Dataset
 
 
 class SyntheticRewardNet(nn.Module):
@@ -555,26 +556,8 @@ def main():
     transform = transforms.Compose(
         [
             transforms.ToTensor(),
-            transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
         ]
     )
-
-    # Load the appropriate dataset
-    if dataset_name.lower() == "cifar10":
-        train_dataset = datasets.CIFAR10(
-            root="./data", train=True, download=True, transform=transform
-        )
-    else:  # ImageNet32
-        from imagenet_dataset import ImageNet32Dataset
-
-        train_dataset = ImageNet32Dataset(
-            root_dir="./data", train=True, transform=transform
-        )
-
-    train_loader = DataLoader(
-        train_dataset, batch_size=128, shuffle=True, num_workers=4
-    )
-    breakpoint()
 
     # TODO: remove this once we rename the imagenet32 model
     if dataset_name.lower() == "imagenet32":
@@ -620,13 +603,11 @@ def main():
             root="./data", train=True, download=True, transform=transform
         )
     else:  # ImageNet32
-        from imagenet_dataset import ImageNet32Dataset
-
         real_dataset = ImageNet32Dataset(
             root_dir="./data", train=True, transform=transform
         )
 
-    # Sample size for real images - use fewer for ImageNet32 due to its larger size
+    # Sample size for real images
     sample_size = 10000 if dataset_name.lower() == "cifar10" else 50000
 
     # Randomly sample real images
@@ -642,15 +623,6 @@ def main():
 
     for cycle in range(n_training_cycles):
         print(f"\nTraining Cycle {cycle + 1}/{n_training_cycles}")
-
-        # sampler.train(
-        #     train_loader,
-        #     n_epochs=n_epochs_per_cycle,
-        #     initial_flow_epochs=0,
-        #     value_epochs=10,
-        #     flow_epochs=10,
-        #     use_tqdm=True,
-        # )
 
         for num_branches, num_keep in branch_keep_pairs:
             metrics = calculate_metrics(

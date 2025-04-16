@@ -38,7 +38,7 @@ def train_large_flow_model(
     )
     print(f"Using {num_timesteps} timesteps for flow matching")
 
-    # Setup CIFAR-10 dataset with appropriate transforms
+    # Setup CIFAR-10 dataset with appropriate transforms for model training
     transform = transforms.Compose(
         [
             transforms.ToTensor(),
@@ -46,18 +46,33 @@ def train_large_flow_model(
         ]
     )
 
+    # Setup a separate transform for FID calculation (just ToTensor, no normalization)
+    fid_transform = transforms.Compose(
+        [
+            transforms.ToTensor(),
+        ]
+    )
+
+    # Load datasets with appropriate transforms
     train_dataset = datasets.CIFAR10(
         root="./data", train=True, download=True, transform=transform
     )
+
+    # Separate dataset for FID computation without normalization
+    fid_dataset = datasets.CIFAR10(
+        root="./data", train=True, download=True, transform=fid_transform
+    )
+
     train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
 
     # Initialize metrics
     fid = FID.FrechetInceptionDistance(normalize=True, reset_real_features=False).to(
         device
     )
-    # Randomly sample real images
-    indices = np.random.choice(len(train_dataset), 5000, replace=False)
-    real_images = torch.stack([train_dataset[i][0] for i in indices]).to(device)
+
+    # Randomly sample real images from the unnormalized dataset for FID
+    indices = np.random.choice(len(fid_dataset), 5000, replace=False)
+    real_images = torch.stack([fid_dataset[i][0] for i in indices]).to(device)
 
     # Process real images in batches
     real_batch_size = 100
@@ -112,7 +127,7 @@ def train_large_flow_model(
             print(f"Model saved to {save_path}")
 
             print("Evaluating metrics...")
-            # Test with regular flow matching (no branching)
+            # Modify the calculate_metrics function call to handle unnormalization
             fid_score = calculate_metrics(
                 sampler,
                 num_branches=1,

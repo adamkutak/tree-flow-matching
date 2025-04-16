@@ -19,7 +19,6 @@ import torchvision.models as models
 import pickle
 from scipy.linalg import sqrtm
 from pytorch_fid import fid_score
-from pytorch_fid.inception import InceptionV3
 from torchmetrics.image.fid import NoTrainInceptionV3
 
 
@@ -521,14 +520,10 @@ class MCTSFlowSampler:
         import torch.nn.functional as F
 
         with torch.no_grad():
-            # NoTrainInceptionV3 expects uint8 images in [0, 255] range
-            if images.dtype != torch.uint8:
-                images_uint8 = (images * 255).byte()
-            else:
-                images_uint8 = images
+            images = (self.unnormalize_images(images) * 255).byte()
 
             # Get predictions and apply softmax
-            logits = self.inception_logits_model(images_uint8)
+            logits = self.inception_logits_model(images)
             probs = F.softmax(logits, dim=1)
 
             if class_labels is not None:
@@ -557,12 +552,7 @@ class MCTSFlowSampler:
         import torch.nn.functional as F
 
         with torch.no_grad():
-            # Basic preprocessing - ensure images are in [0,1] range
-            if images.min() < 0:
-                # Assume images are in [-1, 1] range
-                processed_images = (images + 1) / 2
-            else:
-                processed_images = images
+            processed_images = self.unnormalize_images(images)
 
             # Resize to a size that's divisible by the patch size (14)
             # 224 or 448 are good choices (both divisible by 14)
@@ -699,8 +689,7 @@ class MCTSFlowSampler:
 
     def extract_inception_features(self, images):
         """Extract inception features using torchmetrics InceptionV3 with optional PCA reduction."""
-        # Convert to byte tensor in range [0, 255] as expected by torchmetrics implementation
-        images = (images * 255).byte()
+        images = (self.unnormalize_images(images) * 255).byte()
 
         with torch.no_grad():
             features = self.inception(images)
@@ -886,7 +875,7 @@ class MCTSFlowSampler:
         )
         return fid
 
-    def calculate_frechet_distance(self, mu1, sigma1, mu2, sigma2):
+    def 1calculate_frechet_distance(self, mu1, sigma1, mu2, sigma2):
         """Calculate the Frechet distance between two distributions."""
         diff = mu1 - mu2
         covmean = sqrtm(sigma1.dot(sigma2))
@@ -2995,6 +2984,22 @@ class MCTSFlowSampler:
         )
         return max(0, fid_value)  # Clamp negative FID
 
+    def unnormalize_images(self, images):
+        """
+        Unnormalize images from ImageNet stats back to [0,1] range.
+
+        Args:
+            images: Tensor of shape [batch_size, C, H, W] normalized with ImageNet stats
+
+        Returns:
+            Unnormalized images in [0,1] range
+        """
+        mean = torch.tensor([0.485, 0.456, 0.406], device=self.device).view(1, 3, 1, 1)
+        std = torch.tensor([0.229, 0.224, 0.225], device=self.device).view(1, 3, 1, 1)
+
+        unnormalized = images * std + mean
+        return torch.clamp(unnormalized, 0.0, 1.0)
+
     def regular_batch_sample(self, class_label, batch_size=16):
         """
         Regular flow matching sampling without branching.
@@ -3035,7 +3040,7 @@ class MCTSFlowSampler:
                 velocity = self.flow_model(t_batch, current_samples, current_label)
                 current_samples = current_samples + velocity * dt
 
-            return current_samples
+            return self.unnormalize_images(current_samples)
 
     def save_models(self, path="saved_models"):
         """Save flow and value models separately."""

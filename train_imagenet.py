@@ -38,7 +38,7 @@ def train_large_flow_model(
     )
     print(f"Using {num_timesteps} timesteps for flow matching")
 
-    # Setup ImageNet 32x32 dataset with appropriate transforms
+    # Setup ImageNet 32x32 dataset with appropriate transforms for model training
     transform = transforms.Compose(
         [
             transforms.ToTensor(),
@@ -46,10 +46,23 @@ def train_large_flow_model(
         ]
     )
 
-    # Use the ImageNet32Dataset class
+    # Setup a separate transform for FID calculation (just ToTensor, no normalization)
+    fid_transform = transforms.Compose(
+        [
+            transforms.ToTensor(),
+        ]
+    )
+
+    # Use the ImageNet32Dataset class with the appropriate transforms
     train_dataset = ImageNet32Dataset(
         root_dir="./data", train=True, transform=transform
     )
+
+    # Separate dataset for FID computation without normalization
+    fid_dataset = ImageNet32Dataset(
+        root_dir="./data", train=True, transform=fid_transform
+    )
+
     train_loader = DataLoader(
         train_dataset, batch_size=batch_size, shuffle=True, num_workers=4
     )
@@ -59,9 +72,9 @@ def train_large_flow_model(
         device
     )
 
-    # Randomly sample real images
-    indices = np.random.choice(len(train_dataset), 5000, replace=False)
-    real_images = torch.stack([train_dataset[i][0] for i in indices]).to(device)
+    # Randomly sample real images from the unnormalized dataset for FID
+    indices = np.random.choice(len(fid_dataset), 5000, replace=False)
+    real_images = torch.stack([fid_dataset[i][0] for i in indices]).to(device)
 
     # Process real images in batches
     real_batch_size = 100
@@ -123,7 +136,7 @@ def train_large_flow_model(
             print(f"Model saved to {save_path}")
 
             # print("Evaluating metrics...")
-            # # Test with regular flow matching (no branching)
+            # # Modify the calculate_metrics function call to handle unnormalization
             # fid_score = calculate_metrics(
             #     sampler,
             #     num_branches=1,
@@ -134,12 +147,10 @@ def train_large_flow_model(
             #     fid=fid,
             # )
 
-            # metrics_history.append(
-            #     {
-            #         "epoch": epoch + 1,
-            #         "fid_score": fid_score.item(),
-            #     }
-            # )
+            # metrics_history.append({
+            #     "epoch": epoch + 1,
+            #     "fid_score": fid_score.item(),
+            # })
 
             # print(f"Metrics at epoch {epoch + 1}:")
             # print(f"   FID Score: {fid_score:.4f}")
