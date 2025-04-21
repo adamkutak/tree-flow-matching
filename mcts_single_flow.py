@@ -20,6 +20,7 @@ import pickle
 from scipy.linalg import sqrtm
 from pytorch_fid import fid_score
 from torchmetrics.image.fid import NoTrainInceptionV3
+from dino_v2_classifier_training import DINOv2Classifier
 
 
 class MCTSFlowSampler:
@@ -41,6 +42,7 @@ class MCTSFlowSampler:
         dataset="cifar10",
         flow_model_config=None,
         load_dino=False,
+        dino_classifier_path="saved_models/dino_imagenet32_best.pt",
     ):
         # Check if CUDA is available and set device
         if torch.cuda.is_available():
@@ -204,12 +206,30 @@ class MCTSFlowSampler:
             self.has_global_stats = False
 
         if load_dino:
-            print("Loading DINO model...")
-            self.dino_model = torch.hub.load(
-                "facebookresearch/dinov2", "dinov2_vitb14_lc"
-            )
-            self.dino_model = self.dino_model.to(self.device)
-            self.dino_model.eval()
+            try:
+                print("Loading custom-trained DINOv2 classifier for ImageNet32...")
+                # Create model instance
+                self.dino_model = DINOv2Classifier(num_classes=num_classes).to(device)
+
+                # Load the trained weights if path is provided
+                if dino_classifier_path is not None and os.path.exists(
+                    dino_classifier_path
+                ):
+                    self.dino_model.load_state_dict(
+                        torch.load(dino_classifier_path, map_location=device)
+                    )
+                    print(
+                        f"Loaded custom DINOv2 classifier from {dino_classifier_path}"
+                    )
+                else:
+                    print(
+                        "Warning: No classifier weights provided. Using untrained classifier."
+                    )
+
+                self.dino_model.eval()  # Set to evaluation mode
+            except Exception as e:
+                print(f"Error loading custom DINOv2 classifier: {e}")
+
         # self.initialize_class_buffers(buffer_size)
 
     def compute_mahalanobis_distance(self, features, class_idx):
@@ -537,11 +557,9 @@ class MCTSFlowSampler:
             # Higher confidence is better
             return confidence_scores
 
-    # TODO: The dino score does not work because it acheieves 0% classification accuract for imagenet32
     def batch_compute_dino_score(self, images, class_labels):
         """
-        Compute scores using the official DINOv2 model's linear classification head.
-        Resizes images to be compatible with the model's patch size (14x14).
+        Compute scores using the custom-trained DINOv2 classifier for ImageNet32.
 
         Args:
             images: Tensor of shape [batch_size, C, H, W]
@@ -553,71 +571,23 @@ class MCTSFlowSampler:
         import torch.nn.functional as F
 
         with torch.no_grad():
-            # Resize to a size that's divisible by the patch size (14)
-            processed_images = F.interpolate(
-                images,
-                size=(224, 224),  # Multiple of 14 (16 patches)
-                mode="bilinear",
-                align_corners=False,
-            )
+            # Forward pass through the custom DINOv2 classifier
+            # The model already handles resizing internally
+            logits = self.dino_model(images)
 
-            # Pass images to the model
-            logits = self.dino_model(processed_images)
-
-            # TEST: for testing DINO accuracy
-            # Get the predicted class (highest logit) for each image
-            # predicted_classes = torch.argmax(logits, dim=1)
-
-            # # Compare with target class_labels
-            # correct_predictions = predicted_classes == class_labels
-
-            # # Count correct predictions
-            # num_correct = correct_predictions.sum().item()
-            # accuracy = num_correct / len(images) * 100
-
-            # print(f"DINO Accuracy: {num_correct}/{len(images)} ({accuracy:.2f}%)")
+            # Optional: Calculate and print accuracy for monitoring
+            if getattr(self, "debug_mode", False):
+                predicted_classes = torch.argmax(logits, dim=1)
+                correct_predictions = predicted_classes == class_labels
+                num_correct = correct_predictions.sum().item()
+                accuracy = num_correct / len(images) * 100
+                print(
+                    f"Custom DINOv2 Accuracy: {num_correct}/{len(images)} ({accuracy:.2f}%)"
+                )
 
             # Get scores for the specified class labels
             batch_indices = torch.arange(len(images), device=self.device)
             scores = logits[batch_indices, class_labels]
-
-            return scores
-
-    def batch_compute_inception_classifier_score(self, images, class_labels):
-        """
-        Compute scores using the InceptionV3 model as a classifier.
-        Uses the class confidence scores for the specified class labels.
-
-        Args:
-            images: Tensor of shape [batch_size, C, H, W]
-            class_labels: Tensor of class indices
-
-        Returns:
-            Tensor of scores (higher is better for optimization)
-        """
-        import torch.nn.functional as F
-
-        with torch.no_grad():
-            # Unnormalize and convert to uint8 as expected by InceptionV3
-            images = (self.unnormalize_images(images) * 255).byte()
-
-            # Get predictions from InceptionV3
-            logits = self.inception_logits_model(images)
-            probs = F.softmax(logits, dim=1)
-
-            # Optional: Calculate and print accuracy for monitoring
-            predicted_classes = torch.argmax(probs, dim=1)
-            correct_predictions = predicted_classes == class_labels
-            num_correct = correct_predictions.sum().item()
-            accuracy = num_correct / len(images) * 100
-            print(
-                f"Inception Classifier Accuracy: {num_correct}/{len(images)} ({accuracy:.2f}%)"
-            )
-            breakpoint()
-
-            # Get scores for the specified class labels (confidence for the target class)
-            batch_indices = torch.arange(len(images), device=self.device)
-            scores = probs[batch_indices, class_labels]
 
             return scores
 
@@ -1220,12 +1190,6 @@ class MCTSFlowSampler:
         elif selector == "dino_score":
             # DINO score is always not global (we use the class labels)
             return lambda x, y: self.batch_compute_dino_score(x, y), False
-        elif selector == "inception_classifier":
-            # Inception classifier score is always not global (we use the class labels)
-            return (
-                lambda x, y: self.batch_compute_inception_classifier_score(x, y),
-                False,
-            )
         else:
             raise ValueError(f"Unknown selector: {selector}")
 

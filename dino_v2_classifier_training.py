@@ -30,8 +30,14 @@ class DINOv2Classifier(nn.Module):
         self.classifier = nn.Linear(feature_dim, num_classes)
 
     def forward(self, x):
+        """
+        Forward pass through the DINOv2 classifier.
+
+        Args:
+            x: Tensor of shape [batch_size, C, H, W], normalized with ImageNet stats
+                (mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+        """
         # Resize images to be compatible with DINO's patch size (14x14)
-        # DINOv2 expects 224x224 or larger
         if x.size(-1) < 224:
             x = nn.functional.interpolate(
                 x, size=(224, 224), mode="bilinear", align_corners=False
