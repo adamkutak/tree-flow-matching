@@ -41,7 +41,7 @@ class MCTSFlowSampler:
         pca_dim=None,
         dataset="cifar10",
         flow_model_config=None,
-        load_dino=False,
+        load_dino=True,
         dino_classifier_path="saved_models/dino_imagenet32_best.pt",
     ):
         # Check if CUDA is available and set device
@@ -1320,6 +1320,7 @@ class MCTSFlowSampler:
                     ] + velocity * dt.view(-1, 1, 1, 1)
                     simulated_times[active_mask] = simulated_times[active_mask] + dt
 
+                breakpoint()
                 # Evaluate final samples
                 if use_global:
                     final_scores = score_fn(simulated_samples)
