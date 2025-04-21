@@ -545,7 +545,7 @@ def main():
     # Configuration
     dataset_name = "imagenet32"  # Options: "cifar10" or "imagenet32"
     selector = "inception_score"
-    sample_method = "random_search"
+    sample_method = "path_exploration"
     device = torch.device("cuda:2" if torch.cuda.is_available() else "cpu")
     print(f"Using device: {device}")
 
