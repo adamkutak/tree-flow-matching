@@ -613,6 +613,7 @@ class MCTSFlowSampler:
             print(
                 f"Inception Classifier Accuracy: {num_correct}/{len(images)} ({accuracy:.2f}%)"
             )
+            breakpoint()
 
             # Get scores for the specified class labels (confidence for the target class)
             batch_indices = torch.arange(len(images), device=self.device)
@@ -623,7 +624,6 @@ class MCTSFlowSampler:
     def _load_or_fit_pca(self):
         """Load or fit a PCA model for dimensionality reduction."""
         import pickle
-        from sklearn.decomposition import PCA
 
         pca_file = f"inception_pca_{self.feature_dim}to{self.pca_dim}.pkl"
 
