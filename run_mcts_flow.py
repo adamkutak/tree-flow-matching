@@ -618,7 +618,7 @@ def main():
         )
 
     # Sample size for real images
-    sample_size = 10000 if dataset_name.lower() == "cifar10" else 50000
+    sample_size = 10000 if dataset_name.lower() == "cifar10" else 10000
 
     # Randomly sample real images
     indices = np.random.choice(len(real_dataset), sample_size, replace=False)
