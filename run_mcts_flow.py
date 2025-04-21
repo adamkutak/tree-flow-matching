@@ -544,7 +544,7 @@ def calculate_metrics_refined(
 def main():
     # Configuration
     dataset_name = "imagenet32"  # Options: "cifar10" or "imagenet32"
-    selector = "dino_score"
+    selector = "inception_classifier"
     sample_method = "random_search"
     device = torch.device("cuda:2" if torch.cuda.is_available() else "cpu")
     print(f"Using device: {device}")
@@ -595,7 +595,6 @@ def main():
             if dataset_name.lower() == "imagenet32"
             else None
         ),
-        load_dino=False,
     )
 
     # Training configuration

@@ -40,7 +40,7 @@ class MCTSFlowSampler:
         pca_dim=None,
         dataset="cifar10",
         flow_model_config=None,
-        load_dino=True,
+        load_dino=False,
     ):
         # Check if CUDA is available and set device
         if torch.cuda.is_available():
@@ -537,6 +537,7 @@ class MCTSFlowSampler:
             # Higher confidence is better
             return confidence_scores
 
+    # TODO: The dino score does not work because it acheieves 0% classification accuract for imagenet32
     def batch_compute_dino_score(self, images, class_labels):
         """
         Compute scores using the official DINOv2 model's linear classification head.
@@ -579,6 +580,43 @@ class MCTSFlowSampler:
             # Get scores for the specified class labels
             batch_indices = torch.arange(len(images), device=self.device)
             scores = logits[batch_indices, class_labels]
+
+            return scores
+
+    def batch_compute_inception_classifier_score(self, images, class_labels):
+        """
+        Compute scores using the InceptionV3 model as a classifier.
+        Uses the class confidence scores for the specified class labels.
+
+        Args:
+            images: Tensor of shape [batch_size, C, H, W]
+            class_labels: Tensor of class indices
+
+        Returns:
+            Tensor of scores (higher is better for optimization)
+        """
+        import torch.nn.functional as F
+
+        with torch.no_grad():
+            # Unnormalize and convert to uint8 as expected by InceptionV3
+            images = (self.unnormalize_images(images) * 255).byte()
+
+            # Get predictions from InceptionV3
+            logits = self.inception_logits_model(images)
+            probs = F.softmax(logits, dim=1)
+
+            # Optional: Calculate and print accuracy for monitoring
+            predicted_classes = torch.argmax(probs, dim=1)
+            correct_predictions = predicted_classes == class_labels
+            num_correct = correct_predictions.sum().item()
+            accuracy = num_correct / len(images) * 100
+            print(
+                f"Inception Classifier Accuracy: {num_correct}/{len(images)} ({accuracy:.2f}%)"
+            )
+
+            # Get scores for the specified class labels (confidence for the target class)
+            batch_indices = torch.arange(len(images), device=self.device)
+            scores = probs[batch_indices, class_labels]
 
             return scores
 
@@ -1182,6 +1220,12 @@ class MCTSFlowSampler:
         elif selector == "dino_score":
             # DINO score is always not global (we use the class labels)
             return lambda x, y: self.batch_compute_dino_score(x, y), False
+        elif selector == "inception_classifier_score":
+            # Inception classifier score is always not global (we use the class labels)
+            return (
+                lambda x, y: self.batch_compute_inception_classifier_score(x, y),
+                False,
+            )
         else:
             raise ValueError(f"Unknown selector: {selector}")
 
