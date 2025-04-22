@@ -92,7 +92,7 @@ def train_dino_classifier(
     best_accuracy = 0.0
 
     if os.path.exists(best_model_path):
-        model.load_state_dict(torch.load(best_model_path))
+        model.load_state_dict(torch.load(best_model_path, weights_only=True))
         print(f"Loaded existing model from {best_model_path}")
 
         # Evaluate the loaded model to get its accuracy
