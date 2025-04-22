@@ -275,7 +275,7 @@ def calculate_metrics(
                 batch_size=generation_batch_size,
                 num_branches=num_branches,
                 num_keep=num_keep,
-                warp_scale=0.5,
+                warp_scale=1,
                 selector=selector,
                 use_global=True,
                 branch_start_time=0.5,
