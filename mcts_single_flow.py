@@ -3256,7 +3256,7 @@ class MCTSFlowSampler:
         # Ensure we only return n functions if the loop overshoots (shouldn't happen with while)
         return warp_fns[:n], warp_deriv_fns[:n]
 
-    def _get_continuous_endpoint_preserving_warp_functions(
+    def _get_continuous_warp_functions(
         self, n, device, current_time, current_warped_time=None, sqrt_epsilon=1e-4
     ):
         """
