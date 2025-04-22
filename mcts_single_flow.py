@@ -571,15 +571,13 @@ class MCTSFlowSampler:
         Returns:
             Tensor of scores (higher is better for optimization)
         """
-        import torch.nn.functional as F
-
-        self.debug_mode = True
 
         with torch.no_grad():
             # Forward pass through the custom DINOv2 classifier
             # The model already handles resizing internally
             logits = self.dino_model(images)
 
+            self.debug_mode = True
             # Optional: Calculate and print accuracy for monitoring
             if getattr(self, "debug_mode", False):
                 # Top-1 accuracy
