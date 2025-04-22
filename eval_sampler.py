@@ -153,6 +153,8 @@ def evaluate_sampler(args):
             branch_dt=args.branch_dt,
             branch_start_time=args.branch_start_time,
             fid=fid,
+            dataset=dataset,
+            args=args,
         )
     elif args.eval_mode == "batch_optimization":
         results = evaluate_batch_optimization(
@@ -168,6 +170,8 @@ def evaluate_sampler(args):
             branch_start_time=args.branch_start_time,
             dt_std=args.dt_std,
             warp_scale=args.warp_scale,
+            dataset=dataset,
+            args=args,
         )
     else:
         raise ValueError(f"Unsupported evaluation mode: {args.eval_mode}")
@@ -198,6 +202,8 @@ def evaluate_single_samples(
     branch_dt,
     branch_start_time,
     fid,
+    dataset,  # Add dataset parameter
+    args,  # Add args parameter
 ):
     """
     Evaluate sampling methods that select individual samples
@@ -212,6 +218,8 @@ def evaluate_single_samples(
         branch_dt: Time step size for branching
         branch_start_time: Time to start branching
         fid: FID instance for calculation
+        dataset: Dataset containing real samples
+        args: Command line arguments
 
     Returns:
         Dictionary of results
@@ -239,11 +247,17 @@ def evaluate_single_samples(
             branch_dt=branch_dt,
             branch_start_time=branch_start_time,
             fid=fid,
+            dataset=dataset,
         )
 
         # Store results for this branch/keep pair
         pair_key = f"{num_branches}_{num_keep}"
-        results["branch_pairs"][pair_key] = metrics
+        results["branch_pairs"][pair_key] = {
+            "fid_score": metrics["fid_score"],
+            "inception_score": metrics["inception_score"],
+            "inception_std": metrics["inception_std"],
+            "avg_mahalanobis": metrics["avg_mahalanobis"],
+        }
 
         # Print metrics for this configuration
         print(f"\nResults for branches={num_branches}, keep={num_keep}:")
@@ -252,6 +266,16 @@ def evaluate_single_samples(
             f"Inception Score: {metrics['inception_score']:.4f} ± {metrics['inception_std']:.4f}"
         )
         print(f"Average Mahalanobis Distance: {metrics['avg_mahalanobis']:.4f}")
+
+        # Create and save sample comparison plot
+        save_sample_comparison_plot(
+            generated_samples=metrics["samples"],
+            dataset=dataset,
+            class_labels=metrics["class_labels"],
+            args=args,
+            metrics=metrics,
+            num_display=16,  # Display 4x4 grid by default
+        )
 
     return results
 
@@ -269,6 +293,8 @@ def evaluate_batch_optimization(
     branch_start_time=0.5,
     dt_std=0.7,
     warp_scale=0.5,
+    dataset=None,  # Add dataset parameter
+    args=None,  # Add args parameter
 ):
     """
     Evaluate batch optimization methods
@@ -286,6 +312,8 @@ def evaluate_batch_optimization(
         branch_start_time: Time to start branching
         dt_std: Standard deviation for time steps in path exploration
         warp_scale: Scale factor for time warping
+        dataset: Dataset containing real samples
+        args: Command line arguments
 
     Returns:
         Dictionary of results
@@ -306,6 +334,9 @@ def evaluate_batch_optimization(
         print(f"\nEvaluating with branches={num_branches}, batches={num_batches}")
 
         fid.reset()
+        random_class_labels = torch.randint(
+            0, sampler.num_classes, (n_samples,), device=device
+        )
 
         # Map the sample_method to the appropriate batch optimization function
         if sample_method == "random_search":
@@ -346,6 +377,76 @@ def evaluate_batch_optimization(
                 f"Unsupported sample method for batch optimization: {sample_method}"
             )
 
+        # Process final samples to compute metrics
+        metrics = process_batch_samples(
+            sampler, final_samples, random_class_labels, device, fid
+        )
+
+        # Store results for this branch/batch pair
+        pair_key = f"{num_branches}_{num_batches}"
+        results["branch_pairs"][pair_key] = metrics
+
+        # Print metrics for this configuration
+        print(f"\nResults for branches={num_branches}, batches={num_batches}:")
+        print(f"FID Score: {metrics['fid_score']:.4f}")
+        print(
+            f"Inception Score: {metrics['inception_score']:.4f} ± {metrics['inception_std']:.4f}"
+        )
+        print(f"Average Mahalanobis Distance: {metrics['avg_mahalanobis']:.4f}")
+
+        # Create and save sample comparison plot
+        save_sample_comparison_plot(
+            generated_samples=final_samples.cpu(),
+            dataset=dataset,
+            class_labels=random_class_labels,
+            args=args,
+            metrics=metrics,
+            num_display=16,  # Display 4x4 grid by default
+        )
+
+    return results
+
+
+def process_batch_samples(sampler, samples, class_labels, device, fid):
+    """
+    Process batch optimization samples and compute metrics
+
+    Args:
+        sampler: The MCTSFlowSampler instance
+        samples: Generated samples
+        class_labels: Class labels for the samples
+        device: Device to use for computation
+        fid: FID instance for calculation
+
+    Returns:
+        Dictionary of metrics
+    """
+    metric_batch_size = 64
+
+    # Compute mahalanobis distances
+    mahalanobis_dist = sampler.batch_compute_global_mean_difference(samples)
+    avg_mahalanobis = mahalanobis_dist.mean().item()
+
+    # Process samples for FID
+    for i in range(0, len(samples), metric_batch_size):
+        batch = samples[i : i + metric_batch_size]
+        fid.update(batch, real=False)
+
+    # Compute FID score
+    fid_score = fid.compute().item()
+
+    # Compute Inception Score
+    inception_score, inception_std = calculate_inception_score(
+        samples, device=device, batch_size=metric_batch_size, splits=10
+    )
+
+    return {
+        "fid_score": fid_score,
+        "inception_score": inception_score,
+        "inception_std": inception_std,
+        "avg_mahalanobis": avg_mahalanobis,
+    }
+
 
 def generate_and_compute_metrics(
     sampler,
@@ -358,6 +459,7 @@ def generate_and_compute_metrics(
     branch_dt,
     branch_start_time,
     fid,
+    dataset=None,  # Add dataset parameter
 ):
     """
     Generate samples and compute metrics
@@ -373,6 +475,7 @@ def generate_and_compute_metrics(
         branch_dt: Time step size for branching
         branch_start_time: Time to start branching
         fid: FID instance for calculation
+        dataset: Dataset containing real samples
 
     Returns:
         Dictionary of metrics
@@ -383,6 +486,7 @@ def generate_and_compute_metrics(
     metric_batch_size = 64
     generated_samples = []
     mahalanobis_distances = []
+    all_class_labels = []
 
     # Calculate number of batches to generate
     num_batches = n_samples // generation_batch_size
@@ -402,6 +506,7 @@ def generate_and_compute_metrics(
         random_class_labels = torch.randint(
             0, sampler.num_classes, (current_batch_size,), device=device
         )
+        all_class_labels.append(random_class_labels)
 
         # Generate samples using the specified method
         if sample_method == "regular":
@@ -467,17 +572,136 @@ def generate_and_compute_metrics(
     # Compute average Mahalanobis distance
     avg_mahalanobis = sum(mahalanobis_distances) / len(mahalanobis_distances)
 
+    # Combine all class labels
+    all_class_labels = torch.cat(all_class_labels, dim=0)
+
+    # Return results including samples and labels for plotting
+    results = {
+        "fid_score": fid_score,
+        "inception_score": inception_score,
+        "inception_std": inception_std,
+        "avg_mahalanobis": avg_mahalanobis,
+        "samples": generated_samples,
+        "class_labels": all_class_labels,
+    }
+
     # Clean up memory
     generated_tensor = None
     generated_tensor_device = None
     torch.cuda.empty_cache()
 
-    return {
-        "fid_score": fid_score,
-        "inception_score": inception_score,
-        "inception_std": inception_std,
-        "avg_mahalanobis": avg_mahalanobis,
-    }
+    return results
+
+
+def save_sample_comparison_plot(
+    generated_samples, dataset, class_labels, args, metrics, num_display=16
+):
+    """
+    Save a plot comparing generated samples with real samples from the same classes.
+
+    Args:
+        generated_samples: List of generated tensor samples
+        dataset: The dataset containing real samples
+        class_labels: Class labels for the generated samples
+        args: Command line arguments
+        metrics: Dictionary of metrics for this configuration
+        num_display: Number of samples to display (must be a perfect square)
+    """
+    import matplotlib.pyplot as plt
+    import matplotlib.gridspec as gridspec
+    import math
+
+    # Convert num_display to the nearest perfect square if it's not already
+    grid_size = int(math.sqrt(num_display))
+    num_display = grid_size * grid_size
+
+    # Only display a subset of the samples
+    subset_indices = np.random.choice(
+        len(generated_samples), num_display, replace=False
+    )
+    subset_samples = [generated_samples[i] for i in subset_indices]
+    subset_labels = class_labels[subset_indices].cpu().numpy()
+
+    # Create a figure with two subplots side by side
+    fig = plt.figure(figsize=(grid_size * 2, grid_size * 2))
+    plt.suptitle(
+        f"Sample Comparison - {args.dataset} - {args.sample_method}\n"
+        f"FID: {metrics['fid_score']:.2f}, IS: {metrics['inception_score']:.2f}±{metrics['inception_std']:.2f}"
+    )
+
+    # Configure the grid
+    outer_grid = gridspec.GridSpec(1, 2, wspace=0.2, width_ratios=[1, 1])
+
+    # Left subplot for generated samples
+    gen_grid = gridspec.GridSpecFromSubplotSpec(
+        grid_size, grid_size, subplot_spec=outer_grid[0], wspace=0.1, hspace=0.1
+    )
+
+    # Right subplot for real samples
+    real_grid = gridspec.GridSpecFromSubplotSpec(
+        grid_size, grid_size, subplot_spec=outer_grid[1], wspace=0.1, hspace=0.1
+    )
+
+    # Plot generated samples
+    for i in range(num_display):
+        ax = plt.Subplot(fig, gen_grid[i])
+        img = subset_samples[i].permute(1, 2, 0).cpu().numpy()
+        # Normalize to [0, 1] range
+        img = np.clip(img, 0, 1)
+        ax.imshow(img)
+        ax.set_xticks([])
+        ax.set_yticks([])
+        if i < grid_size:
+            ax.set_title("Generated", fontsize=8)
+        fig.add_subplot(ax)
+
+    # Find real samples from the same classes
+    real_samples = []
+    for class_id in subset_labels:
+        # Find indices of samples with the same class
+        if args.dataset.lower() == "cifar10":
+            class_indices = [
+                i for i, (_, label) in enumerate(dataset) if label == class_id
+            ]
+        else:  # ImageNet32
+            class_indices = [
+                i for i, (_, label) in enumerate(dataset) if label == class_id
+            ]
+
+        if class_indices:
+            # Randomly select one sample from this class
+            idx = np.random.choice(class_indices)
+            real_samples.append(dataset[idx][0])
+        else:
+            # If no sample found, use a black image
+            real_samples.append(torch.zeros(3, 32, 32))
+
+    # Plot real samples
+    for i in range(num_display):
+        ax = plt.Subplot(fig, real_grid[i])
+        img = real_samples[i].permute(1, 2, 0).cpu().numpy()
+        # Normalize to [0, 1] range
+        img = np.clip(img, 0, 1)
+        ax.imshow(img)
+        ax.set_xticks([])
+        ax.set_yticks([])
+        if i < grid_size:
+            ax.set_title("Real (class " + str(subset_labels[i]) + ")", fontsize=8)
+        fig.add_subplot(ax)
+
+    # Save the figure
+    plot_dir = os.path.join(args.output_dir, "plots")
+    os.makedirs(plot_dir, exist_ok=True)
+
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    filepath = os.path.join(
+        plot_dir,
+        f"{args.dataset}_{args.sample_method}_b{args.branch_pairs[0][0]}_k{args.branch_pairs[0][1]}_{timestamp}.png",
+    )
+    plt.savefig(filepath, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+
+    print(f"Sample comparison plot saved to {filepath}")
 
 
 if __name__ == "__main__":
