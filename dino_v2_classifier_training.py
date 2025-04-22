@@ -55,7 +55,7 @@ class DINOv2Classifier(nn.Module):
 def train_dino_classifier(
     device="cuda:0",
     batch_size=64,
-    num_epochs=100,
+    num_epochs=50,
     lr=0.001,
     save_interval=1,
     save_dir="./saved_models",
@@ -241,7 +241,7 @@ if __name__ == "__main__":
         "--batch_size", type=int, default=128, help="Batch size for training"
     )
     parser.add_argument(
-        "--num_epochs", type=int, default=10, help="Number of epochs to train"
+        "--num_epochs", type=int, default=50, help="Number of epochs to train"
     )
     parser.add_argument("--lr", type=float, default=0.001, help="Learning rate")
     parser.add_argument(
