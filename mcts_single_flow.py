@@ -3257,12 +3257,17 @@ class MCTSFlowSampler:
         return warp_fns[:n], warp_deriv_fns[:n]
 
     def _get_continuous_warp_functions(
-        self, n, device, current_time, current_warped_time=None, sqrt_epsilon=1e-4
+        self,
+        n,
+        device,
+        current_time,
+        current_warped_time=None,
+        sqrt_epsilon=1e-4,
+        enforce_endpoint=False,
     ):
         """
-        Generates n warp functions and their derivatives that:
-        1. Pass through the point (current_time, current_warped_time)
-        2. Ensure f(1) = 1, preserving the endpoint behavior
+        Generates n warp functions and their derivatives that pass through
+        the point (current_time, current_warped_time).
 
         Args:
             n: Number of warping functions to generate
@@ -3270,6 +3275,7 @@ class MCTSFlowSampler:
             current_time: The time point at which continuity must be preserved
             current_warped_time: The warped time value at current_time (if None, uses current_time)
             sqrt_epsilon: Small value for numerical stability
+            enforce_endpoint: If True, ensures f(1) = 1 for all functions
         """
         warp_fns = []
         warp_deriv_fns = []
@@ -3386,53 +3392,72 @@ class MCTSFlowSampler:
         if current_time == 0.0 and current_warped_time == 0.0:
             return base_warp_fns[:n], base_warp_deriv_fns[:n]
 
-        # Create adjusted endpoint-preserving warping functions
+        # Create adjusted warping functions
         for i in range(min(n, len(base_warp_fns))):
             base_fn = base_warp_fns[i]
             base_deriv_fn = base_warp_deriv_fns[i]
 
-            # Get base function values at key points
-            base_at_current = base_fn(torch.tensor([current_time], device=device))[
-                0
-            ].item()
-            base_at_one = base_fn(torch.tensor([1.0], device=device))[0].item()
+            if enforce_endpoint:
+                # Get base function values at key points
+                base_at_current = base_fn(torch.tensor([current_time], device=device))[
+                    0
+                ].item()
+                base_at_one = base_fn(torch.tensor([1.0], device=device))[0].item()
 
-            # We need to ensure:
-            # 1. f(current_time) = current_warped_time  (continuity)
-            # 2. f(1) = 1  (endpoint preservation)
+                # We need to ensure:
+                # 1. f(current_time) = current_warped_time  (continuity)
+                # 2. f(1) = 1  (endpoint preservation)
 
-            # Use a linear combination approach:
-            # f(t) = base_fn(t) + b * t + c
+                if current_time < 1.0:  # Avoid division by zero
+                    # Calculate parameters to ensure both constraints are satisfied
+                    b = (1 - base_at_one - current_warped_time + base_at_current) / (
+                        1 - current_time
+                    )
+                    c = current_warped_time - base_at_current - b * current_time
+                else:
+                    # If current_time = 1, we're already at the endpoint
+                    # Just use a shift to ensure f(1) = 1
+                    b = 0
+                    c = 1 - base_at_one
 
-            if current_time < 1.0:  # Avoid division by zero
-                # Calculate parameters to ensure both constraints are satisfied
-                b = (1 - base_at_one - current_warped_time + base_at_current) / (
-                    1 - current_time
-                )
-                c = current_warped_time - base_at_current - b * current_time
+                # Create the adjusted warping function
+                def make_adjusted_warp(base_fn, b, c):
+                    def adjusted_warp(t):
+                        return base_fn(t) + b * t + c
+
+                    return adjusted_warp
+
+                # Create the derivative of the adjusted warping function
+                def make_adjusted_deriv(base_deriv_fn, b):
+                    def adjusted_deriv(t):
+                        return base_deriv_fn(t) + b
+
+                    return adjusted_deriv
+
+                warp_fns.append(make_adjusted_warp(base_fn, b, c))
+                warp_deriv_fns.append(make_adjusted_deriv(base_deriv_fn, b))
+
             else:
-                # If current_time = 1, we're already at the endpoint
-                # Just use a shift to ensure f(1) = 1
-                b = 0
-                c = 1 - base_at_one
+                # Simple shift to ensure continuity at current_time (original approach)
+                base_at_current = base_fn(torch.tensor([current_time], device=device))[
+                    0
+                ].item()
+                shift = current_warped_time - base_at_current
 
-            # Create the adjusted warping function
-            def make_adjusted_warp(base_fn, b, c):
-                def adjusted_warp(t):
-                    return base_fn(t) + b * t + c
+                def make_adjusted_warp(base_fn, shift):
+                    def adjusted_warp(t):
+                        return base_fn(t) + shift
 
-                return adjusted_warp
+                    return adjusted_warp
 
-            # Create the derivative of the adjusted warping function
-            def make_adjusted_deriv(base_deriv_fn, b):
-                def adjusted_deriv(t):
-                    return base_deriv_fn(t) + b
+                def make_adjusted_deriv(base_deriv_fn):
+                    def adjusted_deriv(t):
+                        return base_deriv_fn(t)
 
-                return adjusted_deriv
+                    return adjusted_deriv
 
-            # Create adjusted versions of the warping functions
-            warp_fns.append(make_adjusted_warp(base_fn, b, c))
-            warp_deriv_fns.append(make_adjusted_deriv(base_deriv_fn, b))
+                warp_fns.append(make_adjusted_warp(base_fn, shift))
+                warp_deriv_fns.append(make_adjusted_deriv(base_deriv_fn))
 
         return warp_fns[:n], warp_deriv_fns[:n]
 
