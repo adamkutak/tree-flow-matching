@@ -28,7 +28,6 @@ class MCTSFlowSampler:
         self,
         image_size=32,
         channels=3,
-        hidden_dims=[256, 512, 256],
         device="cuda:0",
         num_timesteps=10,
         num_classes=100,
@@ -216,7 +215,11 @@ class MCTSFlowSampler:
                     dino_classifier_path
                 ):
                     self.dino_model.load_state_dict(
-                        torch.load(dino_classifier_path, map_location=device)
+                        torch.load(
+                            dino_classifier_path,
+                            map_location=device,
+                            weights_only=True,
+                        )
                     )
                     print(
                         f"Loaded custom DINOv2 classifier from {dino_classifier_path}"

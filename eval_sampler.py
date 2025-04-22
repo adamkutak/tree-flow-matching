@@ -16,7 +16,7 @@ from mcts_single_flow import MCTSFlowSampler
 from imagenet_dataset import ImageNet32Dataset
 from run_mcts_flow import calculate_inception_score
 
-DEFAULT_DATASET = "cifar10"
+DEFAULT_DATASET = "imagenet32"
 DEFAULT_DEVICE = "cuda:0"
 DEFAULT_REAL_SAMPLES = 10000
 
@@ -24,18 +24,18 @@ DEFAULT_REAL_SAMPLES = 10000
 DEFAULT_EVAL_MODE = "single_samples"
 
 # Sample generation defaults
-DEFAULT_N_SAMPLES = 1000
+DEFAULT_N_SAMPLES = 640
 DEFAULT_BRANCH_PAIRS = "2:1,4:1,8:1"
 
 # Time step defaults
-DEFAULT_BRANCH_DT = 0.05
+DEFAULT_BRANCH_DT = 0.1
 DEFAULT_BRANCH_START_TIME = 0.5
 DEFAULT_DT_STD = 0.7
 DEFAULT_WARP_SCALE = 0.5
 
 # Sampling method defaults
-DEFAULT_SAMPLE_METHOD = "random_search"
-DEFAULT_SCORING_FUNCTION = "inception_score"
+DEFAULT_SAMPLE_METHOD = "path_exploration_timewarp"
+DEFAULT_SCORING_FUNCTION = "dino_score"
 
 # Batch optimization defaults
 DEFAULT_REFINEMENT_BATCH_SIZE = 32
