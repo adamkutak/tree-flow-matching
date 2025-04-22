@@ -3263,7 +3263,7 @@ class MCTSFlowSampler:
         current_time,
         current_warped_time=None,
         sqrt_epsilon=1e-4,
-        enforce_endpoint=False,
+        clamp_time=True,
     ):
         """
         Generates n warp functions and their derivatives that pass through
@@ -3397,67 +3397,31 @@ class MCTSFlowSampler:
             base_fn = base_warp_fns[i]
             base_deriv_fn = base_warp_deriv_fns[i]
 
-            if enforce_endpoint:
-                # Get base function values at key points
-                base_at_current = base_fn(torch.tensor([current_time], device=device))[
-                    0
-                ].item()
-                base_at_one = base_fn(torch.tensor([1.0], device=device))[0].item()
+            # Get base function value at current_time
+            base_value = base_fn(torch.tensor([current_time], device=device))[0].item()
 
-                # We need to ensure:
-                # 1. f(current_time) = current_warped_time  (continuity)
-                # 2. f(1) = 1  (endpoint preservation)
+            # The shift ensures f(current_time) = current_warped_time
+            shift = current_warped_time - base_value
 
-                if current_time < 1.0:  # Avoid division by zero
-                    # Calculate parameters to ensure both constraints are satisfied
-                    b = (1 - base_at_one - current_warped_time + base_at_current) / (
-                        1 - current_time
-                    )
-                    c = current_warped_time - base_at_current - b * current_time
-                else:
-                    # If current_time = 1, we're already at the endpoint
-                    # Just use a shift to ensure f(1) = 1
-                    b = 0
-                    c = 1 - base_at_one
+            # Create adjusted warp function that passes through the desired point
+            def make_adjusted_warp(base_fn, shift, clamp=clamp_time):
+                def adjusted_warp(t):
+                    result = base_fn(t) + shift
+                    if clamp:
+                        result = torch.clamp(result, 0.0, 0.99)
+                    return result
 
-                # Create the adjusted warping function
-                def make_adjusted_warp(base_fn, b, c):
-                    def adjusted_warp(t):
-                        return base_fn(t) + b * t + c
+                return adjusted_warp
 
-                    return adjusted_warp
+            # The derivative is unchanged
+            def make_adjusted_deriv(base_deriv_fn):
+                def adjusted_deriv(t):
+                    return base_deriv_fn(t)
 
-                # Create the derivative of the adjusted warping function
-                def make_adjusted_deriv(base_deriv_fn, b):
-                    def adjusted_deriv(t):
-                        return base_deriv_fn(t) + b
+                return adjusted_deriv
 
-                    return adjusted_deriv
-
-                warp_fns.append(make_adjusted_warp(base_fn, b, c))
-                warp_deriv_fns.append(make_adjusted_deriv(base_deriv_fn, b))
-
-            else:
-                # Simple shift to ensure continuity at current_time (original approach)
-                base_at_current = base_fn(torch.tensor([current_time], device=device))[
-                    0
-                ].item()
-                shift = current_warped_time - base_at_current
-
-                def make_adjusted_warp(base_fn, shift):
-                    def adjusted_warp(t):
-                        return base_fn(t) + shift
-
-                    return adjusted_warp
-
-                def make_adjusted_deriv(base_deriv_fn):
-                    def adjusted_deriv(t):
-                        return base_deriv_fn(t)
-
-                    return adjusted_deriv
-
-                warp_fns.append(make_adjusted_warp(base_fn, shift))
-                warp_deriv_fns.append(make_adjusted_deriv(base_deriv_fn))
+            warp_fns.append(make_adjusted_warp(base_fn, shift))
+            warp_deriv_fns.append(make_adjusted_deriv(base_deriv_fn))
 
         return warp_fns[:n], warp_deriv_fns[:n]
 
