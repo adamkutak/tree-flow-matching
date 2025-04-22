@@ -1490,15 +1490,19 @@ class MCTSFlowSampler:
 
                 active_samples = current_samples[active_batch_mask]
                 active_times = current_times[active_batch_mask]
-                active_label = current_label[active_batch_mask]  # Get active labels
+                active_warped_times = current_warped_times[
+                    active_batch_mask
+                ]  # Get current warped times
+                active_label = current_label[active_batch_mask]
                 num_active = len(active_samples)
 
                 # --- 1. Create Branches ---
                 branched_samples = active_samples.repeat_interleave(num_branches, dim=0)
                 branched_times = active_times.repeat_interleave(num_branches)
-                branched_label = active_label.repeat_interleave(
+                branched_warped_times = active_warped_times.repeat_interleave(
                     num_branches
-                )  # Repeat active labels
+                )  # Include warped times
+                branched_label = active_label.repeat_interleave(num_branches)
                 branch_indices_map = torch.arange(
                     num_active, device=self.device
                 ).repeat_interleave(num_branches)
@@ -1513,30 +1517,53 @@ class MCTSFlowSampler:
                     1.0 - branched_times,
                 )
 
+                # Create all warping functions for each branch directly
+                all_warp_fns = []
+                all_warp_deriv_fns = []
+
+                # For each branch, create continuous warping functions at its current time
+                for i in range(len(branched_samples)):
+                    branch_time = branched_times[i].item()
+                    branch_warped_time = branched_warped_times[
+                        i
+                    ].item()  # Use the current warped time
+                    warp_idx = warp_indices[i].item()
+
+                    # Generate continuous warping functions at this branch's time and warped time
+                    warp_fns_i, warp_deriv_fns_i = self._get_continuous_warp_functions(
+                        num_branches,
+                        self.device,
+                        branch_time,
+                        current_warped_time=branch_warped_time,  # Pass the current warped time
+                        sqrt_epsilon=sqrt_epsilon,
+                    )
+
+                    # Store the specific function needed for this branch
+                    all_warp_fns.append(warp_fns_i[warp_idx])
+                    all_warp_deriv_fns.append(warp_deriv_fns_i[warp_idx])
+
+                # Apply warping to each branch
                 warped_times_step = torch.zeros_like(branched_times)
                 warp_derivs_step = torch.zeros_like(branched_times)
-                # Use the fetched functions
-                for i in range(num_branches):
-                    mask = warp_indices == i
-                    if torch.any(mask):
-                        orig_t = branched_times[mask]
-                        warped_t = warp_fns[i](orig_t)  # Use warp_fns list
-                        final_warped_t = (
-                            1 - warp_scale
-                        ) * orig_t + warp_scale * warped_t
-                        warped_times_step[mask] = final_warped_t
 
-                        orig_deriv = warp_deriv_fns[i](
-                            orig_t
-                        )  # Use warp_deriv_fns list
-                        final_warp_deriv = (1 - warp_scale) * torch.ones_like(
-                            orig_deriv
-                        ) + warp_scale * orig_deriv
-                        warp_derivs_step[mask] = final_warp_deriv
+                for i in range(len(branched_samples)):
+                    t = branched_times[i]
+                    warped_t = all_warp_fns[i](t.unsqueeze(0)).squeeze()
+                    final_warped_t = (1 - warp_scale) * t + warp_scale * warped_t
+                    warped_times_step[i] = final_warped_t
 
+                    warp_deriv = all_warp_deriv_fns[i](t.unsqueeze(0)).squeeze()
+                    final_warp_deriv = (1 - warp_scale) * torch.ones_like(
+                        warp_deriv
+                    ) + warp_scale * warp_deriv
+                    warp_derivs_step[i] = final_warp_deriv
+
+                # Compute velocity using the warped times
                 velocity_step = self.flow_model(
                     warped_times_step, branched_samples, branched_label
                 )
+
+                # Update samples using the velocity and warp derivatives
                 branched_samples = (
                     branched_samples
                     + velocity_step
@@ -1544,21 +1571,31 @@ class MCTSFlowSampler:
                     * dt_step.view(-1, 1, 1, 1)
                 )
                 branched_times = branched_times + dt_step
+                next_branched_warped_times = (
+                    warped_times_step.clone()
+                )  # Store for next iteration
 
                 # --- 3. Simulate Each Branch to Completion (for Scoring) ---
                 simulated_samples = branched_samples.clone()
                 simulated_times = branched_times.clone()
-                sim_warp_indices = warp_indices.clone()
+                simulated_warped_times = (
+                    next_branched_warped_times.clone()
+                )  # Track warped times during simulation
+
+                # Clone the warping functions for simulation
+                sim_warp_fns = all_warp_fns.copy()
+                sim_warp_deriv_fns = all_warp_deriv_fns.copy()
 
                 while torch.any(simulated_times < 1.0):
                     sim_active_mask = simulated_times < 1.0
                     if not torch.any(sim_active_mask):
                         break
 
+                    active_indices = torch.where(sim_active_mask)[0]
                     active_sim_samples = simulated_samples[sim_active_mask]
                     active_sim_times = simulated_times[sim_active_mask]
+                    active_sim_warped_times = simulated_warped_times[sim_active_mask]
                     active_sim_label = branched_label[sim_active_mask]
-                    active_sim_warp_indices = sim_warp_indices[sim_active_mask]
 
                     dt_sim = torch.minimum(
                         actual_dt_step * torch.ones_like(active_sim_times),
@@ -1567,25 +1604,21 @@ class MCTSFlowSampler:
 
                     warped_times_sim = torch.zeros_like(active_sim_times)
                     warp_derivs_sim = torch.zeros_like(active_sim_times)
-                    # Use the fetched functions
-                    for i in range(num_branches):
-                        mask = active_sim_warp_indices == i
-                        if torch.any(mask):
-                            orig_t = active_sim_times[mask]
-                            warped_t = warp_fns[i](orig_t)  # Use warp_fns list
-                            final_warped_t = (
-                                1 - warp_scale
-                            ) * orig_t + warp_scale * warped_t
-                            warped_times_sim[mask] = final_warped_t
 
-                            orig_deriv = warp_deriv_fns[i](
-                                orig_t
-                            )  # Use warp_deriv_fns list
-                            final_warp_deriv = (1 - warp_scale) * torch.ones_like(
-                                orig_deriv
-                            ) + warp_scale * orig_deriv
-                            warp_derivs_sim[mask] = final_warp_deriv
+                    # Apply warping functions to each active branch
+                    for idx, i in enumerate(active_indices):
+                        t = active_sim_times[idx]
+                        warped_t = sim_warp_fns[i](t.unsqueeze(0)).squeeze()
+                        final_warped_t = (1 - warp_scale) * t + warp_scale * warped_t
+                        warped_times_sim[idx] = final_warped_t
 
+                        warp_deriv = sim_warp_deriv_fns[i](t.unsqueeze(0)).squeeze()
+                        final_warp_deriv = (1 - warp_scale) * torch.ones_like(
+                            warp_deriv
+                        ) + warp_scale * warp_deriv
+                        warp_derivs_sim[idx] = final_warp_deriv
+
+                    # Compute velocity and update samples
                     velocity_sim = self.flow_model(
                         warped_times_sim, active_sim_samples, active_sim_label
                     )
@@ -1596,76 +1629,83 @@ class MCTSFlowSampler:
                     )
                     simulated_samples[sim_active_mask] = active_sim_samples + update
                     simulated_times[sim_active_mask] = active_sim_times + dt_sim
+                    simulated_warped_times[sim_active_mask] = (
+                        warped_times_sim  # Update warped times for next step
+                    )
 
-                # --- 4. Score Simulated Samples ---
+                # After simulation, score samples as before
                 if use_global:
                     final_scores = score_fn(simulated_samples)
                 else:
                     final_scores = score_fn(simulated_samples, branched_label)
 
-                # --- 5. Select Best Branches ---
+                # --- 5. Select Best Branches and update ---
                 selected_samples_list = []
                 selected_times_list = []
-                selected_labels_list = []  # Track labels
+                selected_warped_times_list = []  # Also track selected warped times
+                selected_labels_list = []
 
-                for idx in range(num_active):  # Iterate through original active samples
-                    # Find all branches originating from the idx-th active sample
+                for idx in range(num_active):
                     mask = branch_indices_map == idx
-                    # Get the states AFTER THE FIRST BRANCHING STEP for these branches
                     batch_branched_samples = branched_samples[mask]
                     batch_branched_times = branched_times[mask]
-                    batch_branched_labels = branched_label[mask]  # Keep labels
-                    # Get the scores from the SIMULATED results for these branches
+                    batch_branched_warped_times = next_branched_warped_times[
+                        mask
+                    ]  # Get warped times
+                    batch_branched_labels = branched_label[mask]
                     batch_scores = final_scores[mask]
 
-                    # Select top num_keep based on scores
-                    num_to_keep = min(
-                        num_keep, len(batch_scores)
-                    )  # Handle cases with fewer branches than num_keep
+                    num_to_keep = min(num_keep, len(batch_scores))
                     top_k_values, top_k_indices = torch.topk(
                         batch_scores, k=num_to_keep, dim=0
                     )
-                    # Keep the state from *after the branching step*
+
                     selected_samples_list.append(batch_branched_samples[top_k_indices])
                     selected_times_list.append(batch_branched_times[top_k_indices])
-                    selected_labels_list.append(
-                        batch_branched_labels[top_k_indices]
-                    )  # Keep labels
+                    selected_warped_times_list.append(
+                        batch_branched_warped_times[top_k_indices]
+                    )  # Keep warped times
+                    selected_labels_list.append(batch_branched_labels[top_k_indices])
 
                 # --- 6. Update Current State ---
-                if not selected_samples_list:  # Handle empty case
-                    break  # No active samples left to process
+                if not selected_samples_list:
+                    break
 
-                # Update the state for the *next iteration* using the selected branches
                 next_samples = torch.cat(selected_samples_list, dim=0)
                 next_times = torch.cat(selected_times_list, dim=0)
-                next_label = torch.cat(
-                    selected_labels_list, dim=0
-                )  # Use concat for labels
+                next_warped_times = torch.cat(
+                    selected_warped_times_list, dim=0
+                )  # Update warped times
+                next_label = torch.cat(selected_labels_list, dim=0)
 
                 # Replace the finished/processed samples with the new selected ones
                 new_current_samples = torch.zeros_like(current_samples)
                 new_current_times = torch.zeros_like(current_times)
-                new_current_label = torch.zeros_like(
-                    current_label
-                )  # Keep label tensor shape
+                new_current_warped_times = torch.zeros_like(
+                    current_warped_times
+                )  # For warped times
+                new_current_label = torch.zeros_like(current_label)
 
                 # Keep samples that were already >= 1.0
                 finished_mask = ~active_batch_mask
                 if torch.any(finished_mask):
                     new_current_samples[finished_mask] = current_samples[finished_mask]
                     new_current_times[finished_mask] = current_times[finished_mask]
+                    new_current_warped_times[finished_mask] = current_warped_times[
+                        finished_mask
+                    ]
                     new_current_label[finished_mask] = current_label[finished_mask]
 
                 # Add the newly selected samples (results of the branching)
                 new_current_samples[active_batch_mask] = next_samples
                 new_current_times[active_batch_mask] = next_times
+                new_current_warped_times[active_batch_mask] = next_warped_times
                 new_current_label[active_batch_mask] = next_label
 
                 current_samples = new_current_samples
                 current_times = new_current_times
+                current_warped_times = new_current_warped_times
                 current_label = new_current_label
-
             # --- Final Selection (after loop finishes) ---
             if use_global:
                 final_scores = score_fn(current_samples)
@@ -3213,6 +3253,161 @@ class MCTSFlowSampler:
             current_len += 1
 
         # Ensure we only return n functions if the loop overshoots (shouldn't happen with while)
+        return warp_fns[:n], warp_deriv_fns[:n]
+
+    def _get_continuous_warp_functions(
+        self, n, device, current_time, current_warped_time=None, sqrt_epsilon=1e-4
+    ):
+        """
+        Generates n warp functions and their derivatives that pass through
+        the point (current_time, current_warped_time).
+
+        Args:
+            n: Number of warping functions to generate
+            device: Device to run calculations on
+            current_time: The time point at which continuity must be preserved
+            current_warped_time: The warped time value at current_time (if None, uses current_time)
+            sqrt_epsilon: Small value for numerical stability
+        """
+        warp_fns = []
+        warp_deriv_fns = []
+
+        # Generate base warping functions (unadjusted)
+        base_warp_fns = []
+        base_warp_deriv_fns = []
+
+        # 1. Linear
+        def base_linear_warp(t):
+            return t
+
+        def base_linear_warp_deriv(t):
+            return torch.ones_like(t)
+
+        base_warp_fns.append(base_linear_warp)
+        base_warp_deriv_fns.append(base_linear_warp_deriv)
+
+        # 2. Square
+        def base_square_warp(t):
+            return t**2
+
+        def base_square_warp_deriv(t):
+            return 2 * t
+
+        base_warp_fns.append(base_square_warp)
+        base_warp_deriv_fns.append(base_square_warp_deriv)
+
+        # 3. Sqrt
+        def base_sqrt_warp(t):
+            return torch.sqrt(t + sqrt_epsilon)
+
+        def base_sqrt_warp_deriv(t):
+            return 0.5 / torch.sqrt(t + sqrt_epsilon)
+
+        base_warp_fns.append(base_sqrt_warp)
+        base_warp_deriv_fns.append(base_sqrt_warp_deriv)
+
+        # 4. Sigmoid
+        def base_sigmoid_warp_k12(t):
+            t_scaled = 12 * t - 6
+            return torch.sigmoid(t_scaled)
+
+        def base_sigmoid_warp_deriv_k12(t):
+            sig_t = base_sigmoid_warp_k12(t)
+            return 12 * sig_t * (1 - sig_t)
+
+        base_warp_fns.append(base_sigmoid_warp_k12)
+        base_warp_deriv_fns.append(base_sigmoid_warp_deriv_k12)
+
+        # Add additional base functions if needed
+        current_len = 4
+        while current_len < n:
+            next_fn_idx = current_len % 4
+            if next_fn_idx == 0:  # Cubic
+                p = 3 + (current_len // 4)
+
+                def base_cubic_warp(t, p=p):
+                    return t**p
+
+                def base_cubic_warp_deriv(t, p=p):
+                    return p * (t ** (p - 1))
+
+                base_warp_fns.append(base_cubic_warp)
+                base_warp_deriv_fns.append(base_cubic_warp_deriv)
+
+            elif next_fn_idx == 1:  # Wider Sigmoid
+                k = 6 * (2 + current_len // 4)
+
+                def base_sigmoid_warp_k_wide(t, k=k):
+                    t_scaled = k * t - k / 2
+                    return torch.sigmoid(t_scaled)
+
+                def base_sigmoid_warp_deriv_k_wide(t, k=k):
+                    sig_t = base_sigmoid_warp_k_wide(t, k=k)
+                    return k * sig_t * (1 - sig_t)
+
+                base_warp_fns.append(base_sigmoid_warp_k_wide)
+                base_warp_deriv_fns.append(base_sigmoid_warp_deriv_k_wide)
+
+            elif next_fn_idx == 2:  # Higher Root
+                p_inv = 3 + (current_len // 4)
+
+                def base_root_warp(t, p_inv=p_inv, eps=sqrt_epsilon):
+                    return (t + eps) ** (1.0 / p_inv)
+
+                def base_root_warp_deriv(t, p_inv=p_inv, eps=sqrt_epsilon):
+                    return (1.0 / p_inv) * (t + eps) ** ((1.0 / p_inv) - 1.0)
+
+                base_warp_fns.append(base_root_warp)
+                base_warp_deriv_fns.append(base_root_warp_deriv)
+
+            elif next_fn_idx == 3:  # Narrower Sigmoid
+                k = 18 * (1 + current_len // 4)
+
+                def base_sigmoid_warp_k_narrow(t, k=k):
+                    t_scaled = k * t - k / 2
+                    return torch.sigmoid(t_scaled)
+
+                def base_sigmoid_warp_deriv_k_narrow(t, k=k):
+                    sig_t = base_sigmoid_warp_k_narrow(t, k=k)
+                    return k * sig_t * (1 - sig_t)
+
+                base_warp_fns.append(base_sigmoid_warp_k_narrow)
+                base_warp_deriv_fns.append(base_sigmoid_warp_deriv_k_narrow)
+
+            current_len += 1
+
+        # If current_warped_time is None, use current_time as the reference value
+        if current_warped_time is None:
+            current_warped_time = current_time
+
+        # Create adjusted warping functions that pass through (current_time, current_warped_time)
+        for i in range(min(n, len(base_warp_fns))):
+            base_fn = base_warp_fns[i]
+            base_deriv_fn = base_warp_deriv_fns[i]
+
+            # Get base function value at current_time
+            base_value = base_fn(torch.tensor([current_time], device=device))[0].item()
+
+            # The shift ensures f(current_time) = current_warped_time
+            shift = current_warped_time - base_value
+
+            # Create adjusted warp function that passes through the desired point
+            def make_adjusted_warp(base_fn, shift):
+                def adjusted_warp(t):
+                    return base_fn(t) + shift
+
+                return adjusted_warp
+
+            # The derivative is unchanged
+            def make_adjusted_deriv(base_deriv_fn):
+                def adjusted_deriv(t):
+                    return base_deriv_fn(t)
+
+                return adjusted_deriv
+
+            warp_fns.append(make_adjusted_warp(base_fn, shift))
+            warp_deriv_fns.append(make_adjusted_deriv(base_deriv_fn))
+
         return warp_fns[:n], warp_deriv_fns[:n]
 
     # def batch_sample_with_path_exploration_timewarp_batch_fid(
