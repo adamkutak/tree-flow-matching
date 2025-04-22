@@ -275,7 +275,7 @@ def calculate_metrics(
                 batch_size=generation_batch_size,
                 num_branches=num_branches,
                 num_keep=num_keep,
-                warp_scale=1,
+                warp_scale=0.5,
                 selector=selector,
                 use_global=True,
                 branch_start_time=0.5,
@@ -595,6 +595,7 @@ def main():
             if dataset_name.lower() == "imagenet32"
             else None
         ),
+        load_dino=False,
     )
 
     # Training configuration
