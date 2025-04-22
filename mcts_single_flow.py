@@ -573,8 +573,6 @@ class MCTSFlowSampler:
         """
         import torch.nn.functional as F
 
-        self.debug_mode = True
-
         with torch.no_grad():
             # Forward pass through the custom DINOv2 classifier
             # The model already handles resizing internally
@@ -582,12 +580,32 @@ class MCTSFlowSampler:
 
             # Optional: Calculate and print accuracy for monitoring
             if getattr(self, "debug_mode", False):
+                # Top-1 accuracy
                 predicted_classes = torch.argmax(logits, dim=1)
                 correct_predictions = predicted_classes == class_labels
                 num_correct = correct_predictions.sum().item()
                 accuracy = num_correct / len(images) * 100
+
+                # Top-5 accuracy
+                _, top5_preds = logits.topk(5, 1, True, True)
+                top5_correct = torch.zeros_like(class_labels, dtype=torch.bool)
+                for i in range(5):
+                    top5_correct = top5_correct | (top5_preds[:, i] == class_labels)
+                num_top5_correct = top5_correct.sum().item()
+                top5_accuracy = num_top5_correct / len(images) * 100
+
+                # Top-10 accuracy
+                _, top10_preds = logits.topk(10, 1, True, True)
+                top10_correct = torch.zeros_like(class_labels, dtype=torch.bool)
+                for i in range(10):
+                    top10_correct = top10_correct | (top10_preds[:, i] == class_labels)
+                num_top10_correct = top10_correct.sum().item()
+                top10_accuracy = num_top10_correct / len(images) * 100
+
                 print(
-                    f"Custom DINOv2 Accuracy: {num_correct}/{len(images)} ({accuracy:.2f}%)"
+                    f"Custom DINOv2 Accuracy: Top-1: {num_correct}/{len(images)} ({accuracy:.2f}%), "
+                    f"Top-5: {num_top5_correct}/{len(images)} ({top5_accuracy:.2f}%), "
+                    f"Top-10: {num_top10_correct}/{len(images)} ({top10_accuracy:.2f}%)"
                 )
 
             # Get scores for the specified class labels
