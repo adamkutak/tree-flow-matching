@@ -573,6 +573,8 @@ class MCTSFlowSampler:
         """
         import torch.nn.functional as F
 
+        self.debug_mode = True
+
         with torch.no_grad():
             # Forward pass through the custom DINOv2 classifier
             # The model already handles resizing internally
