@@ -55,7 +55,7 @@ class DINOv2Classifier(nn.Module):
 def train_dino_classifier(
     device="cuda:0",
     batch_size=64,
-    num_epochs=10,
+    num_epochs=100,
     lr=0.001,
     save_interval=1,
     save_dir="./saved_models",
@@ -86,6 +86,29 @@ def train_dino_classifier(
 
     # Initialize model
     model = DINOv2Classifier(num_classes=1000, freeze_backbone=True).to(device)
+
+    # Check for existing best model checkpoint
+    best_model_path = os.path.join(save_dir, "dino_imagenet32_best.pt")
+    best_accuracy = 0.0
+
+    if os.path.exists(best_model_path):
+        model.load_state_dict(torch.load(best_model_path))
+        print(f"Loaded existing model from {best_model_path}")
+
+        # Evaluate the loaded model to get its accuracy
+        model.eval()
+        correct = 0
+        total = 0
+        with torch.no_grad():
+            for inputs, labels in tqdm(val_loader, desc="Evaluating loaded model"):
+                inputs, labels = inputs.to(device), labels.to(device)
+                outputs = model(inputs)
+                _, predicted = outputs.max(1)
+                total += labels.size(0)
+                correct += predicted.eq(labels).sum().item()
+
+        best_accuracy = 100.0 * correct / total
+        print(f"Loaded model accuracy: {best_accuracy:.2f}%")
 
     # Set up loss function and optimizer
     criterion = nn.CrossEntropyLoss()
