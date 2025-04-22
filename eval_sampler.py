@@ -180,13 +180,16 @@ def evaluate_sampler(args):
     results["config"] = vars(args)
     results["timestamp"] = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
 
+    # Convert results to JSON-serializable format
+    json_results = convert_for_json(results)
+
     # Save results to file
     result_file = os.path.join(
         args.output_dir,
         f"{args.dataset}_{args.eval_mode}_{args.sample_method}_{results['timestamp']}.json",
     )
     with open(result_file, "w") as f:
-        json.dump(results, f, indent=2)
+        json.dump(json_results, f, indent=2)
 
     print(f"Results saved to {result_file}")
     return results
@@ -202,27 +205,11 @@ def evaluate_single_samples(
     branch_dt,
     branch_start_time,
     fid,
-    dataset,  # Add dataset parameter
-    args,  # Add args parameter
+    dataset,
+    args,
 ):
     """
     Evaluate sampling methods that select individual samples
-
-    Args:
-        sampler: The MCTSFlowSampler instance
-        device: Device to use for computation
-        n_samples: Number of samples to generate
-        branch_pairs: List of (num_branches, num_keep) pairs to evaluate
-        scoring_function: Scoring function for sample selection
-        sample_method: Sampling method to use
-        branch_dt: Time step size for branching
-        branch_start_time: Time to start branching
-        fid: FID instance for calculation
-        dataset: Dataset containing real samples
-        args: Command line arguments
-
-    Returns:
-        Dictionary of results
     """
     results = {
         "branch_pairs": {},
@@ -274,7 +261,8 @@ def evaluate_single_samples(
             class_labels=metrics["class_labels"],
             args=args,
             metrics=metrics,
-            num_display=16,  # Display 4x4 grid by default
+            branch_keep_pair=(num_branches, num_keep),
+            num_display=16,
         )
 
     return results
@@ -293,30 +281,11 @@ def evaluate_batch_optimization(
     branch_start_time=0.5,
     dt_std=0.7,
     warp_scale=0.5,
-    dataset=None,  # Add dataset parameter
-    args=None,  # Add args parameter
+    dataset=None,
+    args=None,
 ):
     """
     Evaluate batch optimization methods
-
-    Args:
-        sampler: The MCTSFlowSampler instance
-        device: Device to use for computation
-        n_samples: Number of samples to generate
-        branch_pairs: List of (num_branches, num_batches) pairs to evaluate
-        refinement_batch_size: Batch size for refinement
-        num_iterations: Number of refinement iterations
-        fid: FID instance for calculation
-        sample_method: The sampling method to use
-        branch_dt: Time step size for branching
-        branch_start_time: Time to start branching
-        dt_std: Standard deviation for time steps in path exploration
-        warp_scale: Scale factor for time warping
-        dataset: Dataset containing real samples
-        args: Command line arguments
-
-    Returns:
-        Dictionary of results
     """
     results = {
         "branch_pairs": {},
@@ -401,7 +370,8 @@ def evaluate_batch_optimization(
             class_labels=random_class_labels,
             args=args,
             metrics=metrics,
-            num_display=16,  # Display 4x4 grid by default
+            branch_keep_pair=(num_branches, num_batches),
+            num_display=16,
         )
 
     return results
@@ -594,7 +564,13 @@ def generate_and_compute_metrics(
 
 
 def save_sample_comparison_plot(
-    generated_samples, dataset, class_labels, args, metrics, num_display=16
+    generated_samples,
+    dataset,
+    class_labels,
+    args,
+    metrics,
+    branch_keep_pair,
+    num_display=16,
 ):
     """
     Save a plot comparing generated samples with random real samples from the dataset.
@@ -605,6 +581,7 @@ def save_sample_comparison_plot(
         class_labels: Class labels for the generated samples
         args: Command line arguments
         metrics: Dictionary of metrics for this configuration
+        branch_keep_pair: Tuple of (num_branches, num_keep) for this plot
         num_display: Number of samples to display (must be a perfect square)
     """
     import matplotlib.pyplot as plt
@@ -620,11 +597,12 @@ def save_sample_comparison_plot(
         len(generated_samples), num_display, replace=False
     )
     subset_samples = [generated_samples[i] for i in subset_indices]
+    subset_labels = class_labels[subset_indices].cpu().numpy()
 
     # Create a figure with two subplots side by side
     fig = plt.figure(figsize=(grid_size * 2, grid_size * 2))
     plt.suptitle(
-        f"Sample Comparison - {args.dataset} - {args.sample_method}\n"
+        f"Sample Comparison - {args.dataset} - {args.sample_method} (b={branch_keep_pair[0]}, k={branch_keep_pair[1]})\n"
         f"FID: {metrics['fid_score']:.2f}, IS: {metrics['inception_score']:.2f}±{metrics['inception_std']:.2f}"
     )
 
@@ -650,13 +628,19 @@ def save_sample_comparison_plot(
         ax.imshow(img)
         ax.set_xticks([])
         ax.set_yticks([])
-        if i < grid_size:
-            ax.set_title("Generated", fontsize=8)
+        # Show class label in the title
+        ax.set_title(f"Gen (c={subset_labels[i]})", fontsize=8)
         fig.add_subplot(ax)
 
     # Get random real samples
     real_indices = np.random.choice(len(dataset), num_display, replace=False)
-    real_samples = [dataset[i][0] for i in real_indices]
+    real_samples = []
+    real_labels = []
+
+    for idx in real_indices:
+        sample, label = dataset[idx]
+        real_samples.append(sample)
+        real_labels.append(label)
 
     # Plot real samples
     for i in range(num_display):
@@ -667,8 +651,8 @@ def save_sample_comparison_plot(
         ax.imshow(img)
         ax.set_xticks([])
         ax.set_yticks([])
-        if i < grid_size:
-            ax.set_title("Real", fontsize=8)
+        # Show class label in the title
+        ax.set_title(f"Real (c={real_labels[i]})", fontsize=8)
         fig.add_subplot(ax)
 
     # Save the figure
@@ -678,12 +662,49 @@ def save_sample_comparison_plot(
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     filepath = os.path.join(
         plot_dir,
-        f"{args.dataset}_{args.sample_method}_b{args.branch_pairs[0][0]}_k{args.branch_pairs[0][1]}_{timestamp}.png",
+        f"{args.dataset}_{args.sample_method}_b{branch_keep_pair[0]}_k{branch_keep_pair[1]}_{timestamp}.png",
     )
     plt.savefig(filepath, dpi=150, bbox_inches="tight")
     plt.close(fig)
 
     print(f"Sample comparison plot saved to {filepath}")
+
+
+def convert_for_json(obj):
+    """
+    Convert objects to JSON serializable formats
+    """
+    if isinstance(
+        obj,
+        (
+            np.int_,
+            np.intc,
+            np.intp,
+            np.int8,
+            np.int16,
+            np.int32,
+            np.int64,
+            np.uint8,
+            np.uint16,
+            np.uint32,
+            np.uint64,
+        ),
+    ):
+        return int(obj)
+    elif isinstance(obj, (np.float_, np.float16, np.float32, np.float64)):
+        return float(obj)
+    elif isinstance(obj, (np.ndarray,)):
+        return obj.tolist()
+    elif isinstance(obj, torch.Tensor):
+        return obj.cpu().detach().numpy().tolist()
+    elif isinstance(obj, dict):
+        return {k: convert_for_json(v) for k, v in obj.items()}
+    elif isinstance(obj, list):
+        return [convert_for_json(item) for item in obj]
+    elif isinstance(obj, tuple):
+        return tuple(convert_for_json(item) for item in obj)
+    else:
+        return obj
 
 
 if __name__ == "__main__":
