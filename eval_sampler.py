@@ -597,7 +597,7 @@ def save_sample_comparison_plot(
     generated_samples, dataset, class_labels, args, metrics, num_display=16
 ):
     """
-    Save a plot comparing generated samples with real samples from the same classes.
+    Save a plot comparing generated samples with random real samples from the dataset.
 
     Args:
         generated_samples: List of generated tensor samples
@@ -620,7 +620,6 @@ def save_sample_comparison_plot(
         len(generated_samples), num_display, replace=False
     )
     subset_samples = [generated_samples[i] for i in subset_indices]
-    subset_labels = class_labels[subset_indices].cpu().numpy()
 
     # Create a figure with two subplots side by side
     fig = plt.figure(figsize=(grid_size * 2, grid_size * 2))
@@ -655,26 +654,9 @@ def save_sample_comparison_plot(
             ax.set_title("Generated", fontsize=8)
         fig.add_subplot(ax)
 
-    # Find real samples from the same classes
-    real_samples = []
-    for class_id in subset_labels:
-        # Find indices of samples with the same class
-        if args.dataset.lower() == "cifar10":
-            class_indices = [
-                i for i, (_, label) in enumerate(dataset) if label == class_id
-            ]
-        else:  # ImageNet32
-            class_indices = [
-                i for i, (_, label) in enumerate(dataset) if label == class_id
-            ]
-
-        if class_indices:
-            # Randomly select one sample from this class
-            idx = np.random.choice(class_indices)
-            real_samples.append(dataset[idx][0])
-        else:
-            # If no sample found, use a black image
-            real_samples.append(torch.zeros(3, 32, 32))
+    # Get random real samples
+    real_indices = np.random.choice(len(dataset), num_display, replace=False)
+    real_samples = [dataset[i][0] for i in real_indices]
 
     # Plot real samples
     for i in range(num_display):
@@ -686,7 +668,7 @@ def save_sample_comparison_plot(
         ax.set_xticks([])
         ax.set_yticks([])
         if i < grid_size:
-            ax.set_title("Real (class " + str(subset_labels[i]) + ")", fontsize=8)
+            ax.set_title("Real", fontsize=8)
         fig.add_subplot(ax)
 
     # Save the figure
