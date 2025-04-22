@@ -1634,6 +1634,8 @@ class MCTSFlowSampler:
                         warped_times_sim  # Update warped times for next step
                     )
 
+                breakpoint()
+
                 # After simulation, score samples as before
                 if use_global:
                     final_scores = score_fn(simulated_samples)
