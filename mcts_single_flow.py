@@ -1482,6 +1482,7 @@ class MCTSFlowSampler:
                     current_times[active_mask] + dt[active_mask]
                 )
 
+            current_warped_times = current_times.clone()
             # --- Main Path Exploration Loop ---
             while torch.any(current_times < 1.0):
                 active_batch_mask = current_times < 1.0
