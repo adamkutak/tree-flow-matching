@@ -24,6 +24,7 @@ def test_dino_classifier():
         flow_model="large_flow_model_imagenet32.pt",
         dataset="imagenet32",
         num_channels=256,
+        inception_layer=0,
         flow_model_config={
             "num_res_blocks": 3,
             "attention_resolutions": "16,8",
