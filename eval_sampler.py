@@ -117,7 +117,7 @@ def evaluate_sampler(args):
             if args.dataset.lower() == "imagenet32"
             else None
         ),
-        use_dino=(args.scoring_function == "dino_score"),
+        load_dino=True,
     )
 
     # Initialize FID for metrics
