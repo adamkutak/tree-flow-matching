@@ -16,7 +16,7 @@ from mcts_single_flow import MCTSFlowSampler
 from imagenet_dataset import ImageNet32Dataset
 from run_mcts_flow import calculate_inception_score
 
-DEFAULT_DATASET = "imagenet32"
+DEFAULT_DATASET = "cifar10"
 DEFAULT_DEVICE = "cuda:1"
 DEFAULT_REAL_SAMPLES = 10000
 
@@ -107,7 +107,7 @@ def evaluate_sampler(args):
         load_models=True,
         flow_model=flow_model_name,
         num_channels=256,
-        inception_layer=0,
+        inception_layer=3,
         dataset=args.dataset,
         flow_model_config=(
             {
