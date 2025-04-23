@@ -34,7 +34,7 @@ DEFAULT_DT_STD = 0.7
 DEFAULT_WARP_SCALE = 0.5
 
 # Sampling method defaults
-DEFAULT_SAMPLE_METHOD = "path_exploration_timewarp_shifted"
+DEFAULT_SAMPLE_METHOD = "path_exploration_timewarp"
 DEFAULT_SCORING_FUNCTION = "inception_score"
 
 # Batch optimization defaults
