@@ -107,7 +107,7 @@ def evaluate_sampler(args):
         load_models=True,
         flow_model=flow_model_name,
         num_channels=256,
-        inception_layer=0,
+        inception_layer=3,
         dataset=args.dataset,
         flow_model_config=(
             {
