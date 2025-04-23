@@ -2178,7 +2178,6 @@ class MCTSFlowSampler:
             Tensor of [n_samples, C, H, W] representing the final refined dataset.
         """
 
-        breakpoint()
         self.flow_model.eval()
         base_dt = 1 / self.num_timesteps
 
