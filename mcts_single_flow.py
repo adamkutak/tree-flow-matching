@@ -2227,11 +2227,6 @@ class MCTSFlowSampler:
             initial_pool_labels[indices] = chunk_label
             current_idx += chunk_size
 
-        breakpoint()
-        # --- Handle num_branches == 1 Case ---
-        if num_branches == 1:
-            return initial_pool_samples
-
         # --- Pre-compute Initial Features and FID (Only if refining) ---
         with torch.no_grad():
             all_features_list = []
@@ -2255,6 +2250,11 @@ class MCTSFlowSampler:
             current_pool_features, target_mu, target_sigma
         )
         print(f"Initial Global FID: {current_global_fid:.4f}")
+
+        breakpoint()
+        # --- Handle num_branches == 1 Case ---
+        if num_branches == 1:
+            return initial_pool_samples
 
         # --- 2. Refinement Loop ---
         for pass_num in range(num_iterations):
