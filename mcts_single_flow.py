@@ -1859,7 +1859,7 @@ class MCTSFlowSampler:
                         branch_time,
                         current_warped_time=branch_warped_time,  # Pass the current warped time
                         sqrt_epsilon=sqrt_epsilon,
-                        clamp_time=False,
+                        clamp_time=True,
                     )
 
                     # Store the specific function needed for this branch
