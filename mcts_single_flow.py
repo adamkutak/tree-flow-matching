@@ -81,8 +81,8 @@ class MCTSFlowSampler:
             class_cond=True,
         ).to(self.device)
 
-        warmup_epochs = 50
-        num_epochs = 200
+        warmup_epochs = 3
+        num_epochs = 150
         initial_lr = 1e-8
 
         self.flow_optimizer = torch.optim.Adam(

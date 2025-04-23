@@ -88,11 +88,7 @@ def evaluate_sampler(args):
     else:  # ImageNet32
         dataset = ImageNet32Dataset(root_dir="./data", train=True, transform=transform)
 
-    # Set flow model name
-    if args.dataset.lower() == "imagenet32":
-        flow_model_name = "large_flow_model_imagenet32.pt"
-    else:
-        flow_model_name = f"flow_model_{args.dataset}.pt"
+    flow_model_name = f"flow_model_{args.dataset}.pt"
 
     num_timesteps = int(1 / args.branch_dt)
 
