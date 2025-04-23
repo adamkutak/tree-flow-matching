@@ -301,6 +301,18 @@ def calculate_metrics(
                 selector=selector,
                 use_global=True,
             )
+        elif sample_method == "path_exploration_timewarp_shifted":
+            sample = sampler.batch_sample_with_path_exploration_timewarp_shifted(
+                class_label=random_class_labels,
+                batch_size=generation_batch_size,
+                num_branches=num_branches,
+                num_keep=num_keep,
+                warp_scale=0.5,
+                selector=selector,
+                use_global=True,
+                branch_start_time=0.5,
+                branch_dt=0.1,
+            )
 
         # Compute metrics
         mahalanobis_dist = sampler.batch_compute_global_mean_difference(sample)
@@ -595,6 +607,7 @@ def main():
             if dataset_name.lower() == "imagenet32"
             else None
         ),
+        load_dino=False,
     )
 
     # Training configuration
