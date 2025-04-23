@@ -2253,7 +2253,6 @@ class MCTSFlowSampler:
 
         # --- Handle num_branches == 1 Case ---
         if num_branches == 1:
-            breakpoint()
             return initial_pool_samples
 
         # --- 2. Refinement Loop ---
