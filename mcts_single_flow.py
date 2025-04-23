@@ -2251,9 +2251,9 @@ class MCTSFlowSampler:
         )
         print(f"Initial Global FID: {current_global_fid:.4f}")
 
-        breakpoint()
         # --- Handle num_branches == 1 Case ---
         if num_branches == 1:
+            breakpoint()
             return initial_pool_samples
 
         # --- 2. Refinement Loop ---
