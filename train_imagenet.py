@@ -107,7 +107,7 @@ def train_large_flow_model(
     os.makedirs("saved_models", exist_ok=True)
 
     # Check if a saved model exists and load it
-    save_path = f"saved_models/large_flow_model_imagenet32.pt"
+    save_path = f"saved_models/flow_model_imagenet32.pt"
     if os.path.exists(save_path):
         print(f"Loading existing model from {save_path}")
         sampler.flow_model.load_state_dict(torch.load(save_path, map_location=device))
@@ -131,29 +131,34 @@ def train_large_flow_model(
 
         # Save model and evaluate metrics at intervals
         if (epoch + 1) % save_interval == 0 or epoch == num_epochs - 1:
-            save_path = f"saved_models/large_flow_model_imagenet32.pt"
+            save_path = f"saved_models/flow_model_imagenet32.pt"
             torch.save(sampler.flow_model.state_dict(), save_path)
             print(f"Model saved to {save_path}")
 
-            # print("Evaluating metrics...")
-            # # Modify the calculate_metrics function call to handle unnormalization
-            # fid_score = calculate_metrics(
-            #     sampler,
-            #     num_branches=1,
-            #     num_keep=1,
-            #     device=device,
-            #     n_samples=5000,
-            #     sigma=0.0,
-            #     fid=fid,
-            # )
+            try:
+                print("Evaluating metrics...")
+                # Modify the calculate_metrics function call to handle unnormalization
+                fid_score = calculate_metrics(
+                    sampler,
+                    num_branches=1,
+                    num_keep=1,
+                    device=device,
+                    n_samples=5000,
+                    sigma=0.0,
+                    fid=fid,
+                )
 
-            # metrics_history.append({
-            #     "epoch": epoch + 1,
-            #     "fid_score": fid_score.item(),
-            # })
+                metrics_history.append(
+                    {
+                        "epoch": epoch + 1,
+                        "fid_score": fid_score.item(),
+                    }
+                )
 
-            # print(f"Metrics at epoch {epoch + 1}:")
-            # print(f"   FID Score: {fid_score:.4f}")
+                print(f"Metrics at epoch {epoch + 1}:")
+                print(f"   FID Score: {fid_score:.4f}")
+            except Exception as e:
+                print(f"Error evaluating metrics: {e}")
 
 
 if __name__ == "__main__":
@@ -168,5 +173,5 @@ if __name__ == "__main__":
         save_interval=2,
         num_channels=256,
         num_timesteps=10,
-        learning_rate=2e-4,
+        learning_rate=1e-4,
     )

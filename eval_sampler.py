@@ -16,15 +16,15 @@ from mcts_single_flow import MCTSFlowSampler
 from imagenet_dataset import ImageNet32Dataset
 from run_mcts_flow import calculate_inception_score
 
-DEFAULT_DATASET = "imagenet32"
+DEFAULT_DATASET = "cifar10"
 DEFAULT_DEVICE = "cuda:1"
 DEFAULT_REAL_SAMPLES = 10000
 
 # Evaluation mode defaults
-DEFAULT_EVAL_MODE = "single_samples"
+DEFAULT_EVAL_MODE = "batch_optimization"
 
 # Sample generation defaults
-DEFAULT_N_SAMPLES = 640
+DEFAULT_N_SAMPLES = 128
 DEFAULT_BRANCH_PAIRS = "1:1,2:1,4:1,8:1"
 
 # Time step defaults
@@ -34,7 +34,7 @@ DEFAULT_DT_STD = 0.7
 DEFAULT_WARP_SCALE = 0.5
 
 # Sampling method defaults
-DEFAULT_SAMPLE_METHOD = "path_exploration_timewarp"
+DEFAULT_SAMPLE_METHOD = "random_search"
 DEFAULT_SCORING_FUNCTION = "inception_score"
 
 # Batch optimization defaults
@@ -88,11 +88,7 @@ def evaluate_sampler(args):
     else:  # ImageNet32
         dataset = ImageNet32Dataset(root_dir="./data", train=True, transform=transform)
 
-    # Set flow model name
-    if args.dataset.lower() == "imagenet32":
-        flow_model_name = "large_flow_model_imagenet32.pt"
-    else:
-        flow_model_name = f"flow_model_{args.dataset}.pt"
+    flow_model_name = f"flow_model_{args.dataset}.pt"
 
     num_timesteps = int(1 / args.branch_dt)
 
@@ -107,7 +103,7 @@ def evaluate_sampler(args):
         load_models=True,
         flow_model=flow_model_name,
         num_channels=256,
-        inception_layer=0,
+        inception_layer=3,
         dataset=args.dataset,
         flow_model_config=(
             {
