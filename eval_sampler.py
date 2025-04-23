@@ -34,7 +34,7 @@ DEFAULT_DT_STD = 0.7
 DEFAULT_WARP_SCALE = 0.5
 
 # Sampling method defaults
-DEFAULT_SAMPLE_METHOD = "path_exploration_timewarp"
+DEFAULT_SAMPLE_METHOD = "path_exploration_timewarp_shifted"
 DEFAULT_SCORING_FUNCTION = "inception_score"
 
 # Batch optimization defaults
@@ -117,7 +117,7 @@ def evaluate_sampler(args):
             if args.dataset.lower() == "imagenet32"
             else None
         ),
-        load_dino=True,
+        load_dino=False,
     )
 
     # Initialize FID for metrics
@@ -485,6 +485,18 @@ def generate_and_compute_metrics(
             )
         elif sample_method == "path_exploration_timewarp":
             sample = sampler.batch_sample_with_path_exploration_timewarp(
+                class_label=random_class_labels,
+                batch_size=current_batch_size,
+                num_branches=num_branches,
+                num_keep=num_keep,
+                warp_scale=0.5,
+                selector=scoring_function,
+                use_global=True,
+                branch_start_time=branch_start_time,
+                branch_dt=branch_dt,
+            )
+        elif sample_method == "path_exploration_timewarp_shifted":
+            sample = sampler.batch_sample_with_path_exploration_timewarp_shifted(
                 class_label=random_class_labels,
                 batch_size=current_batch_size,
                 num_branches=num_branches,
