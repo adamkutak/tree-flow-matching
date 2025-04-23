@@ -16,15 +16,15 @@ from mcts_single_flow import MCTSFlowSampler
 from imagenet_dataset import ImageNet32Dataset
 from run_mcts_flow import calculate_inception_score
 
-DEFAULT_DATASET = "imagenet32"
+DEFAULT_DATASET = "cifar10"
 DEFAULT_DEVICE = "cuda:1"
 DEFAULT_REAL_SAMPLES = 10000
 
 # Evaluation mode defaults
-DEFAULT_EVAL_MODE = "single_samples"
+DEFAULT_EVAL_MODE = "batch_optimization"
 
 # Sample generation defaults
-DEFAULT_N_SAMPLES = 640
+DEFAULT_N_SAMPLES = 128
 DEFAULT_BRANCH_PAIRS = "1:1,2:1,4:1,8:1"
 
 # Time step defaults
