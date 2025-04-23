@@ -577,7 +577,6 @@ class MCTSFlowSampler:
             # The model already handles resizing internally
             logits = self.dino_model(images)
 
-            self.debug_mode = True
             # Optional: Calculate and print accuracy for monitoring
             if getattr(self, "debug_mode", False):
                 # Top-1 accuracy
