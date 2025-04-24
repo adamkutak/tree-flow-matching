@@ -63,9 +63,9 @@ def evaluate_sampler(args):
     if args.dataset.lower() == "cifar10":
         num_classes = 10
         print("Using CIFAR-10 dataset")
-    elif args.dataset.lower() == "imagenet32":
+    elif args.dataset.lower() == "imagenet32" or args.dataset.lower() == "imagenet256":
         num_classes = 1000
-        print("Using ImageNet32 dataset")
+        print("Using ImageNet dataset")
     else:
         raise ValueError(f"Unsupported dataset: {args.dataset}")
 
