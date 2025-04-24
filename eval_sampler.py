@@ -17,7 +17,7 @@ from imagenet_dataset import ImageNet32Dataset
 from run_mcts_flow import calculate_inception_score
 
 DEFAULT_DATASET = "imagenet256"
-DEFAULT_DEVICE = "cuda:1"
+DEFAULT_DEVICE = "cpu"
 DEFAULT_REAL_SAMPLES = 10000
 
 # Evaluation mode defaults
