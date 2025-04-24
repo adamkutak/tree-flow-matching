@@ -89,7 +89,7 @@ def evaluate_sampler(args):
         dataset = ImageNet32Dataset(root_dir="./data", train=False, transform=transform)
     elif args.dataset.lower() == "imagenet256":
         breakpoint()
-        dataset = datasets.ImageNet(root="./data", split="val", transform=transform)
+        dataset = datasets.ImageNet(root="./data", transform=transform)
 
     flow_model_name = f"flow_model_{args.dataset}.pt"
 
