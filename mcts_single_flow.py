@@ -35,7 +35,7 @@ class MCTSFlowSampler:
         num_channels=128,
         learning_rate=5e-4,
         load_models=True,
-        flow_model="single_flow_model.pt",
+        flow_model="flow_model_imagenet32.pt",
         inception_layer=3,
         pca_dim=None,
         dataset="cifar10",
@@ -58,28 +58,89 @@ class MCTSFlowSampler:
         self.num_classes = num_classes
         self.dataset = dataset.lower()
         self.flow_model_config = flow_model_config or {}
-        # Default UNet parameters
-        default_config = {
-            "num_res_blocks": 2,
-            "channel_mult": [1, 2, 2, 2],
-            "attention_resolutions": "16",
-            "num_heads": 4,
-            "num_head_channels": 64,
-        }
-        model_params = {**default_config, **self.flow_model_config}
 
-        self.flow_model = UNetModel(
-            dim=(channels, image_size, image_size),
-            num_channels=num_channels,
-            num_res_blocks=model_params["num_res_blocks"],
-            channel_mult=model_params["channel_mult"],
-            num_heads=model_params["num_heads"],
-            num_head_channels=model_params["num_head_channels"],
-            attention_resolutions=model_params["attention_resolutions"],
-            dropout=0.0,
-            num_classes=num_classes,
-            class_cond=True,
-        ).to(self.device)
+        # For ImageNet256, we'll use the SiT model
+        if self.dataset == "imagenet256":
+            from third_party.SiT.models import SiT_models
+            from diffusers.models import AutoencoderKL
+            import pathlib
+            import urllib.request
+
+            print(f"Using SiT model for ImageNet256 with image size {image_size}")
+            self.latent_hw = 32  # SD-VAE latent size
+
+            # Create SiTWrapper to maintain interface compatibility
+            class SiTWrapper(torch.nn.Module):
+                def __init__(self, sit_model, device):
+                    super().__init__()
+                    self.model = sit_model
+                    self.device = device
+
+                def forward(self, t, x, y):
+                    # Adapt interface to match flow model
+                    # t: time tensor [batch_size]
+                    # x: image tensor [batch_size, channels, height, width]
+                    # y: class labels [batch_size]
+                    return self.model(x, t, y)
+
+            # Load the base SiT-XL/2 model
+            base_model = SiT_models["SiT-XL/2"](
+                input_size=self.latent_hw, num_classes=num_classes, learn_sigma=True
+            ).to(self.device)
+
+            # Wrap the model to maintain interface compatibility
+            self.flow_model = SiTWrapper(base_model, self.device)
+
+            # Load weights following the provided approach
+            ckpt_path = pathlib.Path("saved_models/SiT-XL-2-256x256.pt")
+            if not ckpt_path.exists():
+                print("SiT-XL model weights not found, downloading...")
+                url = (
+                    "https://www.dl.dropboxusercontent.com/"
+                    "s/5r4761lj20sttn6/SiT-XL-2-256x256.pt"
+                )
+                urllib.request.urlretrieve(url, ckpt_path)
+                print(f"Downloaded SiT-XL model weights to {ckpt_path}")
+
+            # Load the weights into the base model
+            self.flow_model.model.load_state_dict(
+                torch.load(ckpt_path, map_location=self.device)
+            )
+            print(f"Loaded SiT-XL model weights from {ckpt_path}")
+
+            # Load VAE for latent encoding/decoding
+            self.vae = AutoencoderKL.from_pretrained(
+                "stabilityai/sd-vae-ft-mse", torch_dtype=torch.float16
+            ).to(self.device)
+            self.vae.eval()
+
+            # Flag to indicate we're using latent space for ImageNet256
+            self.use_latent_space = True
+
+        else:
+            self.use_latent_space = False
+            # Default UNet parameters
+            default_config = {
+                "num_res_blocks": 2,
+                "channel_mult": [1, 2, 2, 2],
+                "attention_resolutions": "16",
+                "num_heads": 4,
+                "num_head_channels": 64,
+            }
+            model_params = {**default_config, **self.flow_model_config}
+
+            self.flow_model = UNetModel(
+                dim=(channels, image_size, image_size),
+                num_channels=num_channels,
+                num_res_blocks=model_params["num_res_blocks"],
+                channel_mult=model_params["channel_mult"],
+                num_heads=model_params["num_heads"],
+                num_head_channels=model_params["num_head_channels"],
+                attention_resolutions=model_params["attention_resolutions"],
+                dropout=0.0,
+                num_classes=num_classes,
+                class_cond=True,
+            ).to(self.device)
 
         warmup_epochs = 3
         num_epochs = 150
@@ -105,7 +166,7 @@ class MCTSFlowSampler:
         self.FM = ExactOptimalTransportConditionalFlowMatcher(sigma=0.05)
 
         # Try to load pre-trained models
-        if load_models:
+        if load_models and self.dataset != "imagenet256":
             if self.load_models(
                 flow_model=flow_model,
             ):
@@ -158,16 +219,13 @@ class MCTSFlowSampler:
             )
         else:
             stats_file = f"{self.dataset}_fid_stats_{self.feature_dim}dim.pkl"
-
         try:
             with open(stats_file, "rb") as f:
                 stats = pickle.load(f)
             print(f"Loaded {self.dataset.upper()} statistics from {stats_file}")
         except FileNotFoundError:
-            raise FileNotFoundError(
-                f"Statistics file {stats_file} not found. Please run compute_cifar_stats.py "
-                f"with appropriate parameters to generate the required statistics."
-            )
+            print(f"Warning: Statistics file {stats_file} not found for {self.dataset}")
+            stats = {}
 
         # Initialize per-class FID metrics and buffers
         self.fids = {
@@ -184,56 +242,45 @@ class MCTSFlowSampler:
             "baseline_fid": None,
         }
 
-        # Load per-class statistics
-        for class_idx in range(num_classes):
-            if f"class_{class_idx}_mu" in stats and f"class_{class_idx}_sigma" in stats:
-                self.fids[class_idx]["mu"] = stats[f"class_{class_idx}_mu"]
-                self.fids[class_idx]["sigma"] = stats[f"class_{class_idx}_sigma"]
-                self.fids[class_idx]["sigma_inv"] = np.linalg.inv(
-                    self.fids[class_idx]["sigma"]
-                )
+        # Load per-class statistics if available
+        if self.dataset != "imagenet256" and stats:
+            for class_idx in range(num_classes):
+                if (
+                    f"class_{class_idx}_mu" in stats
+                    and f"class_{class_idx}_sigma" in stats
+                ):
+                    self.fids[class_idx]["mu"] = stats[f"class_{class_idx}_mu"]
+                    self.fids[class_idx]["sigma"] = stats[f"class_{class_idx}_sigma"]
+                    self.fids[class_idx]["sigma_inv"] = np.linalg.inv(
+                        self.fids[class_idx]["sigma"]
+                    )
 
-        # Load global statistics if available
-        if "global_mu" in stats and "global_sigma" in stats:
-            print("Global FID statistics found, loading...")
-            self.global_fid["mu"] = stats["global_mu"]
-            self.global_fid["sigma"] = stats["global_sigma"]
-            self.global_fid["sigma_inv"] = np.linalg.inv(self.global_fid["sigma"])
-            self.has_global_stats = True
+            # Load global statistics if available
+            if "global_mu" in stats and "global_sigma" in stats:
+                print("Global FID statistics found, loading...")
+                self.global_fid["mu"] = stats["global_mu"]
+                self.global_fid["sigma"] = stats["global_sigma"]
+                self.global_fid["sigma_inv"] = np.linalg.inv(self.global_fid["sigma"])
+                self.has_global_stats = True
+            else:
+                print("No global FID statistics found in the loaded file")
+                self.has_global_stats = False
         else:
-            print("No global FID statistics found in the loaded file")
+            print(f"No statistics available for {self.dataset}")
             self.has_global_stats = False
 
         if load_dino:
             try:
-                print("Loading custom-trained DINOv2 classifier for ImageNet32...")
-                # Create model instance
-                self.dino_model = DINOv2Classifier(num_classes=num_classes).to(device)
-
-                # Load the trained weights if path is provided
-                if dino_classifier_path is not None and os.path.exists(
-                    dino_classifier_path
-                ):
-                    self.dino_model.load_state_dict(
-                        torch.load(
-                            dino_classifier_path,
-                            map_location=device,
-                            weights_only=True,
-                        )
-                    )
-                    print(
-                        f"Loaded custom DINOv2 classifier from {dino_classifier_path}"
-                    )
-                else:
-                    print(
-                        "Warning: No classifier weights provided. Using untrained classifier."
-                    )
-
-                self.dino_model.eval()  # Set to evaluation mode
+                print("Loading pretrained DINO classifier...")
+                # Load the pretrained model with linear classifier (_lc suffix)
+                model_name = "dinov2_vitb14_lc"
+                self.dino_model = torch.hub.load(
+                    "facebookresearch/dinov2", model_name
+                ).to(device)
+                self.dino_model.eval()
+                print(f"Successfully loaded pretrained DINO classifier: {model_name}")
             except Exception as e:
-                print(f"Error loading custom DINOv2 classifier: {e}")
-
-        # self.initialize_class_buffers(buffer_size)
+                print(f"Error loading pretrained DINO classifier: {e}")
 
     def compute_mahalanobis_distance(self, features, class_idx):
         """
@@ -562,7 +609,7 @@ class MCTSFlowSampler:
 
     def batch_compute_dino_score(self, images, class_labels):
         """
-        Compute scores using the custom-trained DINOv2 classifier for ImageNet32.
+        Compute scores using the pretrained DINO classifier.
 
         Args:
             images: Tensor of shape [batch_size, C, H, W]
@@ -573,9 +620,16 @@ class MCTSFlowSampler:
         """
 
         with torch.no_grad():
-            # Forward pass through the custom DINOv2 classifier
-            # The model already handles resizing internally
-            logits = self.dino_model(images)
+            images = self.unnormalize_images(images)
+            if images.shape[-1] != 224:
+                resized_images = torch.nn.functional.interpolate(
+                    images, size=(224, 224), mode="bilinear", align_corners=False
+                )
+            else:
+                resized_images = images
+
+            # Forward pass through the pretrained DINO classifier
+            logits = self.dino_model(resized_images)
 
             # Optional: Calculate and print accuracy for monitoring
             if getattr(self, "debug_mode", False):
@@ -593,18 +647,9 @@ class MCTSFlowSampler:
                 num_top5_correct = top5_correct.sum().item()
                 top5_accuracy = num_top5_correct / len(images) * 100
 
-                # Top-10 accuracy
-                _, top10_preds = logits.topk(10, 1, True, True)
-                top10_correct = torch.zeros_like(class_labels, dtype=torch.bool)
-                for i in range(10):
-                    top10_correct = top10_correct | (top10_preds[:, i] == class_labels)
-                num_top10_correct = top10_correct.sum().item()
-                top10_accuracy = num_top10_correct / len(images) * 100
-
                 print(
-                    f"Custom DINOv2 Accuracy: Top-1: {num_correct}/{len(images)} ({accuracy:.2f}%), "
-                    f"Top-5: {num_top5_correct}/{len(images)} ({top5_accuracy:.2f}%), "
-                    f"Top-10: {num_top10_correct}/{len(images)} ({top10_accuracy:.2f}%)"
+                    f"DINO Accuracy: Top-1: {num_correct}/{len(images)} ({accuracy:.2f}%), "
+                    f"Top-5: {num_top5_correct}/{len(images)} ({top5_accuracy:.2f}%)"
                 )
 
             # Get scores for the specified class labels
@@ -951,232 +996,6 @@ class MCTSFlowSampler:
 
         print(f"{desc} - Flow Loss: {final_loss:.4f}")
         return final_loss
-
-    # this method does not look ahead, so it is worse but less computationally intensive
-    # def batch_sample_wdt_with_selector(
-    #     self,
-    #     class_label,
-    #     batch_size=16,
-    #     num_branches=4,
-    #     num_keep=2,
-    #     dt_std=0.1,
-    #     selector="fid",
-    #     use_global=False,
-    #     branch_start_time=0.0,
-    #     branch_dt=None,  # New parameter
-    # ):
-    #     """
-    #     Enhanced sampling method with configurable selection criteria and delayed branching.
-
-    #     Args:
-    #         class_label: Target class to generate
-    #         batch_size: Number of final samples to generate
-    #         num_branches: Number of branches per batch element (constant throughout)
-    #         num_keep: Number of samples to keep before expansion
-    #         dt_std: Standard deviation for sampling different dt values
-    #         selector: Selection criteria - one of ["fid", "mahalanobis", "mean"]
-    #         use_global: Whether to use global statistics instead of class-specific ones
-    #         branch_start_time: Time point at which to start branching (0.0 to 1.0)
-    #         branch_dt: Step size to use after branching begins (if None, uses base_dt)
-    #     Returns:
-    #         Tensor of shape [batch_size, C, H, W]
-    #     """
-    #     if num_branches == 1 and num_keep == 1:
-    #         return self.regular_batch_sample(class_label, batch_size)
-
-    #     assert (
-    #         num_branches % num_keep == 0
-    #     ), "num_branches must be divisible by num_keep"
-    #     assert 0.0 <= branch_start_time < 1.0, "branch_start_time must be in [0, 1)"
-
-    #     # Select the appropriate scoring function based on parameters
-    #     if selector == "fid":
-    #         score_fn = (
-    #             self.batch_compute_global_fid_change
-    #             if use_global
-    #             else lambda x, y: self.batch_compute_fid_change(x, y)
-    #         )
-    #     elif selector == "mahalanobis":
-    #         score_fn = (
-    #             self.batch_compute_global_mahalanobis_distance
-    #             if use_global
-    #             else lambda x, y: self.batch_compute_mahalanobis_distance(x, y)
-    #         )
-    #     elif selector == "mean":
-    #         score_fn = (
-    #             self.batch_compute_global_mean_difference
-    #             if use_global
-    #             else lambda x, y: self.batch_compute_mean_difference(x, y)
-    #         )
-    #     else:
-    #         raise ValueError(f"Unknown selector: {selector}")
-
-    #     expansion_factor = num_branches // num_keep
-    #     self.flow_model.eval()
-
-    #     with torch.no_grad():
-    #         # Start with just batch_size samples until branching time
-    #         current_samples = torch.randn(
-    #             batch_size,
-    #             self.channels,
-    #             self.image_size,
-    #             self.image_size,
-    #             device=self.device,
-    #         )
-    #         current_label = torch.full((batch_size,), class_label, device=self.device)
-    #         current_times = torch.zeros(batch_size, device=self.device)
-
-    #         base_dt = 1 / self.num_timesteps
-    #         # Use provided branch_dt or default to base_dt
-    #         branch_dt = branch_dt if branch_dt is not None else base_dt
-
-    #         # Regular flow matching until branch_start_time
-    #         while torch.all(current_times < branch_start_time):
-    #             velocity = self.flow_model(
-    #                 current_times, current_samples, current_label
-    #             )
-
-    #             # Use fixed dt until branching starts
-    #             dt = min(base_dt, branch_start_time - current_times[0].item())
-    #             current_samples = current_samples + velocity * dt
-    #             current_times += dt
-
-    #         # Expand to full number of branches when we reach branching time
-    #         if current_times[0].item() >= branch_start_time:
-    #             current_samples = current_samples.repeat_interleave(num_branches, dim=0)
-    #             current_label = current_label.repeat_interleave(num_branches)
-    #             current_times = current_times.repeat_interleave(num_branches)
-    #             batch_indices = torch.arange(
-    #                 batch_size, device=self.device
-    #             ).repeat_interleave(num_branches)
-
-    #         # Continue with branching until the end
-    #         while torch.any(current_times < 1.0):
-    #             # STEP 1: Take a random step to create branches
-    #             velocity = self.flow_model(
-    #                 current_times, current_samples, current_label
-    #             )
-
-    #             # Sample different dt values for each sample, using branch_dt as mean
-    #             dts = torch.normal(
-    #                 mean=branch_dt,
-    #                 std=dt_std * branch_dt,
-    #                 size=(len(current_samples),),
-    #                 device=self.device,
-    #             )
-    #             dts = torch.clamp(
-    #                 dts,
-    #                 min=torch.tensor(0.0, device=self.device),
-    #                 max=(1.0 - current_times) / 2,  # Ensure room for alignment
-    #             )
-
-    #             # Apply different step sizes to create branches
-    #             branched_samples = current_samples + velocity * dts.view(-1, 1, 1, 1)
-    #             branched_times = current_times + dts
-
-    #             # STEP 2: Align all branches to the same timepoint
-    #             target_time = (
-    #                 torch.min(current_times) + 2 * branch_dt
-    #             )  # Use branch_dt here too
-    #             target_time = torch.min(
-    #                 target_time, torch.tensor(1.0, device=self.device)
-    #             )
-
-    #             # Calculate dt to reach the target time
-    #             dt_to_target = target_time - branched_times
-
-    #             # Get velocity for alignment step
-    #             velocity = self.flow_model(
-    #                 branched_times, branched_samples, current_label
-    #             )
-
-    #             # Apply the step to align all branches
-    #             aligned_samples = branched_samples + velocity * dt_to_target.view(
-    #                 -1, 1, 1, 1
-    #             )
-    #             aligned_times = torch.full(
-    #                 (len(branched_times),), target_time.item(), device=self.device
-    #             )
-
-    #             # Verify all branches are at the same time
-    #             time_diff = torch.max(torch.abs(aligned_times - target_time))
-    #             if time_diff > 1e-8:
-    #                 print(
-    #                     f"WARNING: Branches not at same time. Max difference: {time_diff.item():.8f}"
-    #                 )
-
-    #             # Calculate scores using the selected scoring function
-    #             if use_global:
-    #                 scores = score_fn(aligned_samples)
-    #             else:
-    #                 scores = score_fn(aligned_samples, current_label)
-
-    #             # Select top num_keep samples for each batch element
-    #             selected_samples = []
-    #             selected_times = []
-
-    #             for batch_idx in range(batch_size):
-    #                 # Get samples for this batch element
-    #                 batch_mask = batch_indices == batch_idx
-    #                 batch_samples = aligned_samples[batch_mask]
-    #                 batch_scores = scores[batch_mask]
-    #                 batch_times = aligned_times[batch_mask]
-
-    #                 # Select top num_keep samples
-    #                 top_k_values, top_k_indices = torch.topk(
-    #                     batch_scores, k=min(num_keep, len(batch_scores)), dim=0
-    #                 )
-
-    #                 selected_samples.append(batch_samples[top_k_indices])
-    #                 selected_times.append(batch_times[top_k_indices])
-
-    #             # Stack selected samples and times
-    #             current_samples = torch.cat(selected_samples, dim=0)
-    #             current_times = torch.cat(selected_times, dim=0)
-
-    #             # Expand each kept sample into expansion_factor new samples
-    #             current_samples = current_samples.repeat_interleave(
-    #                 expansion_factor, dim=0
-    #             )
-    #             current_times = current_times.repeat_interleave(expansion_factor)
-    #             current_label = torch.full(
-    #                 (batch_size * num_branches,), class_label, device=self.device
-    #             )
-    #             batch_indices = torch.arange(
-    #                 batch_size, device=self.device
-    #             ).repeat_interleave(num_branches)
-
-    #             # Break if all samples have reached t=1
-    #             if torch.all(current_times >= 1.0):
-    #                 break
-
-    #         # Final selection - take best sample from each batch element
-    #         final_samples = []
-
-    #         if not torch.all(torch.abs(current_times - 1.0) < 1e-8):
-    #             print("WARNING: Not all samples reached t=1 after simulation")
-    #             print(f"Current times: {current_times}")
-    #             print(
-    #                 f"Min time: {current_times.min().item():.6f}, Max time: {current_times.max().item():.6f}"
-    #             )
-    #             print(
-    #                 f"Number of samples not at 1.0: {torch.sum(torch.abs(current_times - 1.0) >= 1e-8).item()}"
-    #             )
-
-    #         # Calculate final scores for all samples
-    #         if use_global:
-    #             final_scores = score_fn(current_samples)
-    #         else:
-    #             final_scores = score_fn(current_samples, current_label)
-
-    #         for batch_idx in range(batch_size):
-    #             batch_mask = batch_indices == batch_idx
-    #             batch_samples = current_samples[batch_mask]
-    #             batch_scores = final_scores[batch_mask]
-    #             best_idx = torch.argmax(batch_scores)
-    #             final_samples.append(batch_samples[best_idx])
-
-    #         return torch.stack(final_samples)  # shape: [batch_size, C, H, W]
 
     def _get_score_function(self, selector, use_global=False):
         """
@@ -3365,12 +3184,24 @@ class MCTSFlowSampler:
 
         Returns:
             Unnormalized images in [0,1] range
+
         """
+
+        if self.dataset == "imagenet256":
+            return self.decode_latents(images)
+
         mean = torch.tensor([0.485, 0.456, 0.406], device=self.device).view(1, 3, 1, 1)
         std = torch.tensor([0.229, 0.224, 0.225], device=self.device).view(1, 3, 1, 1)
 
         unnormalized = images * std + mean
         return torch.clamp(unnormalized, 0.0, 1.0)
+
+    def decode_latents(self, latents):
+        """
+        Decode latents to images using VAE.
+        """
+        images = self.vae.decode(latents / 0.18215).sample
+        return (images + 1) / 2
 
     def regular_batch_sample(self, class_label, batch_size=16):
         """
@@ -3386,7 +3217,6 @@ class MCTSFlowSampler:
         self.flow_model.eval()
 
         with torch.no_grad():
-            # Initialize samples
             current_samples = torch.randn(
                 batch_size,
                 self.channels,

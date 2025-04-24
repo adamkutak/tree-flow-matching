@@ -16,7 +16,7 @@ from mcts_single_flow import MCTSFlowSampler
 from imagenet_dataset import ImageNet32Dataset
 from run_mcts_flow import calculate_inception_score
 
-DEFAULT_DATASET = "cifar10"
+DEFAULT_DATASET = "imagenet256"
 DEFAULT_DEVICE = "cuda:1"
 DEFAULT_REAL_SAMPLES = 10000
 
@@ -83,10 +83,12 @@ def evaluate_sampler(args):
     # Load the appropriate dataset
     if args.dataset.lower() == "cifar10":
         dataset = datasets.CIFAR10(
-            root="./data", train=True, download=True, transform=transform
+            root="./data", train=False, download=True, transform=transform
         )
-    else:  # ImageNet32
-        dataset = ImageNet32Dataset(root_dir="./data", train=True, transform=transform)
+    elif args.dataset.lower() == "imagenet32":
+        dataset = ImageNet32Dataset(root_dir="./data", train=False, transform=transform)
+    elif args.dataset.lower() == "imagenet256":
+        dataset = datasets.ImageNet(root="./data", split="val", transform=transform)
 
     flow_model_name = f"flow_model_{args.dataset}.pt"
 
@@ -113,7 +115,7 @@ def evaluate_sampler(args):
             if args.dataset.lower() == "imagenet32"
             else None
         ),
-        load_dino=False,
+        load_dino=True,
     )
 
     # Initialize FID for metrics
@@ -723,8 +725,8 @@ if __name__ == "__main__":
         "--dataset",
         type=str,
         default=DEFAULT_DATASET,
-        choices=["cifar10", "imagenet32"],
-        help="Dataset to use (cifar10 or imagenet32)",
+        choices=["cifar10", "imagenet32", "imagenet256"],
+        help="Dataset to use (cifar10 or imagenet32 or imagenet256)",
     )
     parser.add_argument(
         "--device",
@@ -786,6 +788,7 @@ if __name__ == "__main__":
             "random_search",
             "path_exploration",
             "path_exploration_timewarp",
+            "path_exploration_timewarp_shifted",
         ],
         help="Sampling method to use (for both single samples and batch optimization)",
     )
