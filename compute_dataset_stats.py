@@ -1,5 +1,6 @@
 import torch
 import torch.nn as nn
+import torchvision
 import torchvision.transforms as transforms
 from torch.utils.data import DataLoader, Dataset
 from torchvision.datasets import CIFAR10
@@ -19,7 +20,7 @@ def compute_dataset_statistics(dataset_name, feature_dim=64, pca_dim=None):
     Compute and save Inception feature statistics for the specified dataset.
 
     Args:
-        dataset_name (str): Name of the dataset ('cifar10' or 'imagenet32')
+        dataset_name (str): Name of the dataset ('cifar10', 'imagenet32', or 'imagenet256')
         feature_dim (int): Dimension of features to extract. Options are:
             - 64: First layer features
             - 192: Second layer features
@@ -52,19 +53,26 @@ def compute_dataset_statistics(dataset_name, feature_dim=64, pca_dim=None):
     device = torch.device("cuda:2" if torch.cuda.is_available() else "cpu")
     inception = inception.to(device)
 
-    # Transform for dataset
-    transform = transforms.Compose(
-        [
-            transforms.ToTensor(),
-        ]
-    )
-
     # Load dataset
     if dataset_name.lower() == "cifar10":
+        transform = transforms.Compose([transforms.ToTensor()])
         dataset = CIFAR10(root="./data", train=True, download=True, transform=transform)
         num_classes = 10
     elif dataset_name.lower() == "imagenet32":
+        transform = transforms.Compose([transforms.ToTensor()])
         dataset = ImageNet32Dataset(root_dir="./data", train=True, transform=transform)
+        num_classes = 1000
+    elif dataset_name.lower() == "imagenet256":
+        transform = transforms.Compose(
+            [
+                transforms.Resize(256),
+                transforms.CenterCrop(256),
+                transforms.ToTensor(),
+            ]
+        )
+        dataset = torchvision.datasets.ImageNet(
+            root="./data", split="val", transform=transform
+        )
         num_classes = 1000
     else:
         raise ValueError(f"Unsupported dataset: {dataset_name}")
@@ -181,8 +189,8 @@ if __name__ == "__main__":
         "--dataset",
         type=str,
         default="cifar10",
-        choices=["cifar10", "imagenet32"],
-        help="Dataset to compute statistics for (cifar10 or imagenet32)",
+        choices=["cifar10", "imagenet32", "imagenet256"],
+        help="Dataset to compute statistics for (cifar10, imagenet32, or imagenet256)",
     )
     parser.add_argument(
         "--dim",
