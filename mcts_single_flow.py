@@ -3166,6 +3166,15 @@ class MCTSFlowSampler:
 
         """
 
+        if self.dataset == "imagenet256" and images.shape[1] == 3:
+            return images
+        elif (
+            self.dataset != "imagenet256"
+            and images.max() <= 1.0
+            and images.min() >= 0.0
+        ):
+            return images
+
         if self.dataset == "imagenet256":
             return self.decode_latents(images)
 
