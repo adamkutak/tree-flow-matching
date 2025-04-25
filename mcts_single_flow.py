@@ -92,16 +92,7 @@ class MCTSFlowSampler:
             self.flow_model = SiTWrapper(base_model, self.device)
 
             # Load weights following the provided approach
-            ckpt_path = pathlib.Path("saved_models/SiT-XL-2-256x256.pt")
-            if not ckpt_path.exists():
-                print("SiT-XL model weights not found, downloading...")
-                url = (
-                    "https://www.dl.dropboxusercontent.com/"
-                    "s/5r4761lj20sttn6/SiT-XL-2-256x256.pt"
-                )
-                urllib.request.urlretrieve(url, ckpt_path)
-                print(f"Downloaded SiT-XL model weights to {ckpt_path}")
-
+            ckpt_path = pathlib.Path("saved_models/SiT-XL-2-256.pt")
             # Load the weights into the base model
             self.flow_model.model.load_state_dict(
                 torch.load(ckpt_path, map_location=self.device)

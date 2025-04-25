@@ -13,3 +13,4 @@ pytorch_fid
 
 # added for third party
 diffusers
+timm
