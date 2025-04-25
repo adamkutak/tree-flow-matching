@@ -71,7 +71,7 @@ def evaluate_sampler(args):
 
     # Common parameters
     image_size = 32
-    channels = 3
+    channels = 4 if args.dataset.lower() == "imagenet256" else 3
 
     if args.dataset.lower() == "imagenet256":
         transform = transforms.Compose(
