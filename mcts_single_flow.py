@@ -3337,6 +3337,7 @@ class MCTSFlowSampler:
                 # Euler update (you can swap in RK4 / Heun)
                 x = x - v_vp * ds
 
+            breakpoint()
             return self.unnormalize_images(x)
 
     def save_models(self, path="saved_models"):
