@@ -73,12 +73,20 @@ def evaluate_sampler(args):
     image_size = 32
     channels = 3
 
-    # Setup dataset transform (no normalization for evaluation)
-    transform = transforms.Compose(
-        [
-            transforms.ToTensor(),
-        ]
-    )
+    if args.dataset.lower() == "imagenet256":
+        transform = transforms.Compose(
+            [
+                transforms.Resize(256),  # Resize the smaller edge to 256
+                transforms.CenterCrop(256),  # Crop the center to get a square image
+                transforms.ToTensor(),
+            ]
+        )
+    else:
+        transform = transforms.Compose(
+            [
+                transforms.ToTensor(),
+            ]
+        )
 
     # Load the appropriate dataset
     if args.dataset.lower() == "cifar10":

@@ -95,7 +95,7 @@ class MCTSFlowSampler:
             ckpt_path = pathlib.Path("saved_models/SiT-XL-2-256.pt")
             # Load the weights into the base model
             self.flow_model.model.load_state_dict(
-                torch.load(ckpt_path, map_location=self.device)
+                torch.load(ckpt_path, map_location=self.device, weights_only=True)
             )
             print(f"Loaded SiT-XL model weights from {ckpt_path}")
 
