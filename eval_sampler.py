@@ -18,17 +18,17 @@ from run_mcts_flow import calculate_inception_score
 
 DEFAULT_DATASET = "imagenet256"
 DEFAULT_DEVICE = "cuda:1"
-DEFAULT_REAL_SAMPLES = 10000
+DEFAULT_REAL_SAMPLES = 1000
 
 # Evaluation mode defaults
 DEFAULT_EVAL_MODE = "single_samples"
 
 # Sample generation defaults
-DEFAULT_N_SAMPLES = 1000
+DEFAULT_N_SAMPLES = 128
 DEFAULT_BRANCH_PAIRS = "1:1,2:1,4:1,8:1"
 
 # Time step defaults
-DEFAULT_BRANCH_DT = 0.05
+DEFAULT_BRANCH_DT = 0.1
 DEFAULT_BRANCH_START_TIME = 0.5
 DEFAULT_DT_STD = 0.7
 DEFAULT_WARP_SCALE = 0.5
@@ -486,7 +486,7 @@ def generate_and_compute_metrics(
 
         # Generate samples using the specified method
         if sample_method == "regular":
-            sample = sampler.regular_batch_sample(
+            sample = sampler.regular_batch_sample_vp(
                 class_label=random_class_labels, batch_size=current_batch_size
             )
         elif sample_method == "path_exploration_timewarp":

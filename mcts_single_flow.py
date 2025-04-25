@@ -1,4 +1,5 @@
 from collections import deque
+import math
 import torch
 import torch.utils.data as data
 import torchdiffeq
@@ -665,10 +666,6 @@ class MCTSFlowSampler:
                 "Please run compute_cifar_stats.py with --dim 2048 --pca_dim {self.pca_dim} first."
             )
             raise FileNotFoundError(f"PCA model file {pca_file} not found.")
-
-    def set_timesteps(self, num_timesteps):
-        self.num_timesteps = num_timesteps
-        self.timesteps = torch.linspace(0, 1, num_timesteps, device=self.device)
 
     def initialize_class_buffers(self, n_samples, batch_size=64):
         """Initialize buffers for each class with generated samples in batches to save memory."""
@@ -3244,6 +3241,105 @@ class MCTSFlowSampler:
                 current_samples = current_samples + velocity * dt
 
             return self.unnormalize_images(current_samples)
+
+    def build_vp_tables(n_steps: int, device, beta_fn=None):
+        """
+        Construct all tensors needed to run a *linear-trained* flow model
+        along a VP interpolant, in pure-ODE mode.
+
+        Returns
+        -------
+        s_grid : (n_steps+1,)  descending from 1 → 0
+        t_grid : (n_steps+1,)  mapped linear times
+        c_grid : (n_steps+1,)  scale factors σ̄/σ
+        dt_grid: (n_steps+1,)  d t(s) / d s
+        dc_grid: (n_steps+1,)  d c(s) / d s
+        """
+
+        # ---- choose or supply a β(s) schedule ------------
+        if beta_fn is None:
+            # cosine-ish VP schedule (simple but works well)
+            beta_fn = lambda s: 0.5 * math.pi * torch.sin(0.5 * math.pi * s)
+
+        # ---- build an *ascending* grid 0 → 1 -------------
+        s_fwd = torch.linspace(0.0, 1.0, n_steps + 1, device=device)  # 0 → 1
+        ds = s_fwd[1] - s_fwd[0]
+
+        beta_vals = beta_fn(s_fwd)  # β(s)
+        beta_int = torch.cumsum(beta_vals, 0) * ds  # ∫₀ˢ β ds
+
+        bar_alpha = torch.exp(-0.5 * beta_int)  # ᾱ(s)
+        bar_sigma = torch.sqrt(1.0 - bar_alpha**2)  # σ̄(s)
+        bar_rho = bar_alpha / bar_sigma  # SNR on VP path
+
+        # ---- map VP-time → linear-time -------------------
+        t_fwd = 1.0 / (1.0 + bar_rho)  # linear analytic inverse
+        c_fwd = bar_sigma / t_fwd  # scale factors
+
+        # ---- derivatives wrt s (ascending) --------------
+        dt_fwd = torch.gradient(t_fwd, spacing=(s_fwd,))[0]
+        dc_fwd = torch.gradient(c_fwd, spacing=(s_fwd,))[0]
+
+        # ---- flip to *descending* (noise→data) order -----
+        flip = lambda x: torch.flip(x, [0])
+        s_grid, t_grid, c_grid = map(flip, (s_fwd, t_fwd, c_fwd))
+        dt_grid, dc_grid = map(flip, (dt_fwd, dc_fwd))
+
+        return s_grid, t_grid, c_grid, dt_grid, dc_grid
+
+    def regular_batch_sample_vp(self, class_label, batch_size=16):
+        """
+        Flow-matching sampling that follows the VP interpolant
+        using ODE conversion (no stochastic term, no retraining).
+        """
+
+        # ---------- build conversion tables once ----------
+        N_steps = len(self.timesteps) - 1  # keep same step count
+        s_grid, t_grid, c_grid, dt_grid, dc_grid = self.build_vp_tables(
+            N_steps, device=self.device
+        )
+
+        # ---------- prep inputs ----------
+        is_tensor = torch.is_tensor(class_label)
+        self.flow_model.eval()
+
+        with torch.no_grad():
+            x = torch.randn(
+                batch_size,
+                self.channels,
+                self.image_size,
+                self.image_size,
+                device=self.device,
+            )
+
+            y = (
+                class_label
+                if is_tensor
+                else torch.full((batch_size,), class_label, device=self.device)
+            )
+
+            # ---------- integrate from s=1 → 0 ------------
+            for k in range(N_steps):
+                ds, t, c, dc, dt = (
+                    s_grid[k] - s_grid[k + 1],
+                    t_grid[k],
+                    c_grid[k],
+                    dc_grid[k],
+                    dt_grid[k],
+                )
+
+                # call original model in *linear* coordinates
+                x_lin = x / c
+                t_batch = torch.full((batch_size,), t.item(), device=self.device)
+                v_lin = self.flow_model(t_batch, x_lin, y)
+
+                # convert velocity to VP frame  (Eq. 12)
+                v_vp = (dc / c) * x + c * dt * v_lin
+
+                # Euler update (you can swap in RK4 / Heun)
+                x = x - v_vp * ds
+
+            return self.unnormalize_images(x)
 
     def save_models(self, path="saved_models"):
         """Save flow and value models separately."""
