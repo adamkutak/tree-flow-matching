@@ -486,7 +486,7 @@ def generate_and_compute_metrics(
 
         # Generate samples using the specified method
         if sample_method == "regular":
-            sample = sampler.regular_batch_sample(
+            sample = sampler.regular_batch_sample_vp(
                 class_label=random_class_labels, batch_size=current_batch_size
             )
         elif sample_method == "path_exploration_timewarp":
