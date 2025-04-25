@@ -660,7 +660,6 @@ def save_sample_comparison_plot(
         real_samples.append(sample)
         real_labels.append(label)
 
-    breakpoint()
     # Plot real samples
     for i in range(num_display):
         ax = plt.Subplot(fig, real_grid[i])
