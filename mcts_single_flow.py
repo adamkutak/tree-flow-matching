@@ -3242,7 +3242,7 @@ class MCTSFlowSampler:
 
             return self.unnormalize_images(current_samples)
 
-    def build_vp_tables(n_steps: int, device, beta_fn=None):
+    def build_vp_tables(self, n_steps: int, beta_fn=None):
         """
         Construct all tensors needed to run a *linear-trained* flow model
         along a VP interpolant, in pure-ODE mode.
@@ -3262,7 +3262,7 @@ class MCTSFlowSampler:
             beta_fn = lambda s: 0.5 * math.pi * torch.sin(0.5 * math.pi * s)
 
         # ---- build an *ascending* grid 0 → 1 -------------
-        s_fwd = torch.linspace(0.0, 1.0, n_steps + 1, device=device)  # 0 → 1
+        s_fwd = torch.linspace(0.0, 1.0, n_steps + 1, device=self.device)  # 0 → 1
         ds = s_fwd[1] - s_fwd[0]
 
         beta_vals = beta_fn(s_fwd)  # β(s)
@@ -3295,9 +3295,7 @@ class MCTSFlowSampler:
 
         # ---------- build conversion tables once ----------
         N_steps = len(self.timesteps) - 1  # keep same step count
-        s_grid, t_grid, c_grid, dt_grid, dc_grid = self.build_vp_tables(
-            N_steps, device=self.device
-        )
+        s_grid, t_grid, c_grid, dt_grid, dc_grid = self.build_vp_tables(N_steps)
 
         # ---------- prep inputs ----------
         is_tensor = torch.is_tensor(class_label)
