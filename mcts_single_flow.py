@@ -234,30 +234,22 @@ class MCTSFlowSampler:
         }
 
         # Load per-class statistics if available
-        if self.dataset != "imagenet256" and stats:
-            for class_idx in range(num_classes):
-                if (
-                    f"class_{class_idx}_mu" in stats
-                    and f"class_{class_idx}_sigma" in stats
-                ):
-                    self.fids[class_idx]["mu"] = stats[f"class_{class_idx}_mu"]
-                    self.fids[class_idx]["sigma"] = stats[f"class_{class_idx}_sigma"]
-                    self.fids[class_idx]["sigma_inv"] = np.linalg.inv(
-                        self.fids[class_idx]["sigma"]
-                    )
-
-            # Load global statistics if available
-            if "global_mu" in stats and "global_sigma" in stats:
-                print("Global FID statistics found, loading...")
-                self.global_fid["mu"] = stats["global_mu"]
-                self.global_fid["sigma"] = stats["global_sigma"]
-                self.global_fid["sigma_inv"] = np.linalg.inv(self.global_fid["sigma"])
-                self.has_global_stats = True
-            else:
-                print("No global FID statistics found in the loaded file")
-                self.has_global_stats = False
+        for class_idx in range(num_classes):
+            if f"class_{class_idx}_mu" in stats and f"class_{class_idx}_sigma" in stats:
+                self.fids[class_idx]["mu"] = stats[f"class_{class_idx}_mu"]
+                self.fids[class_idx]["sigma"] = stats[f"class_{class_idx}_sigma"]
+                self.fids[class_idx]["sigma_inv"] = np.linalg.inv(
+                    self.fids[class_idx]["sigma"]
+                )
+        # Load global statistics if available
+        if "global_mu" in stats and "global_sigma" in stats:
+            print("Global FID statistics found, loading...")
+            self.global_fid["mu"] = stats["global_mu"]
+            self.global_fid["sigma"] = stats["global_sigma"]
+            self.global_fid["sigma_inv"] = np.linalg.inv(self.global_fid["sigma"])
+            self.has_global_stats = True
         else:
-            print(f"No statistics available for {self.dataset}")
+            print("No global FID statistics found in the loaded file")
             self.has_global_stats = False
 
         if load_dino:
