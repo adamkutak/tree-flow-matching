@@ -16,26 +16,26 @@ from mcts_single_flow import MCTSFlowSampler
 from imagenet_dataset import ImageNet32Dataset
 from run_mcts_flow import calculate_inception_score
 
-DEFAULT_DATASET = "cifar10"
+DEFAULT_DATASET = "imagenet256"
 DEFAULT_DEVICE = "cuda:1"
 DEFAULT_REAL_SAMPLES = 10000
 
 # Evaluation mode defaults
-DEFAULT_EVAL_MODE = "batch_optimization"
+DEFAULT_EVAL_MODE = "single_samples"
 
 # Sample generation defaults
-DEFAULT_N_SAMPLES = 128
+DEFAULT_N_SAMPLES = 1000
 DEFAULT_BRANCH_PAIRS = "1:1,2:1,4:1,8:1"
 
 # Time step defaults
-DEFAULT_BRANCH_DT = 0.1
+DEFAULT_BRANCH_DT = 0.05
 DEFAULT_BRANCH_START_TIME = 0.5
 DEFAULT_DT_STD = 0.7
 DEFAULT_WARP_SCALE = 0.5
 
 # Sampling method defaults
 DEFAULT_SAMPLE_METHOD = "random_search"
-DEFAULT_SCORING_FUNCTION = "inception_score"
+DEFAULT_SCORING_FUNCTION = "dino_score"
 
 # Batch optimization defaults
 DEFAULT_REFINEMENT_BATCH_SIZE = 32
@@ -63,30 +63,40 @@ def evaluate_sampler(args):
     if args.dataset.lower() == "cifar10":
         num_classes = 10
         print("Using CIFAR-10 dataset")
-    elif args.dataset.lower() == "imagenet32":
+    elif args.dataset.lower() == "imagenet32" or args.dataset.lower() == "imagenet256":
         num_classes = 1000
-        print("Using ImageNet32 dataset")
+        print(f"Using {args.dataset} dataset")
     else:
         raise ValueError(f"Unsupported dataset: {args.dataset}")
 
     # Common parameters
     image_size = 32
-    channels = 3
+    channels = 4 if args.dataset.lower() == "imagenet256" else 3
 
-    # Setup dataset transform (no normalization for evaluation)
-    transform = transforms.Compose(
-        [
-            transforms.ToTensor(),
-        ]
-    )
+    if args.dataset.lower() == "imagenet256":
+        transform = transforms.Compose(
+            [
+                transforms.Resize(256),  # Resize the smaller edge to 256
+                transforms.CenterCrop(256),  # Crop the center to get a square image
+                transforms.ToTensor(),
+            ]
+        )
+    else:
+        transform = transforms.Compose(
+            [
+                transforms.ToTensor(),
+            ]
+        )
 
     # Load the appropriate dataset
     if args.dataset.lower() == "cifar10":
         dataset = datasets.CIFAR10(
-            root="./data", train=True, download=True, transform=transform
+            root="./data", train=False, download=True, transform=transform
         )
-    else:  # ImageNet32
-        dataset = ImageNet32Dataset(root_dir="./data", train=True, transform=transform)
+    elif args.dataset.lower() == "imagenet32":
+        dataset = ImageNet32Dataset(root_dir="./data", train=False, transform=transform)
+    elif args.dataset.lower() == "imagenet256":
+        dataset = datasets.ImageNet(root="./data", split="val", transform=transform)
 
     flow_model_name = f"flow_model_{args.dataset}.pt"
 
@@ -103,7 +113,7 @@ def evaluate_sampler(args):
         load_models=True,
         flow_model=flow_model_name,
         num_channels=256,
-        inception_layer=3,
+        inception_layer=0,
         dataset=args.dataset,
         flow_model_config=(
             {
@@ -113,7 +123,7 @@ def evaluate_sampler(args):
             if args.dataset.lower() == "imagenet32"
             else None
         ),
-        load_dino=False,
+        load_dino=True,
     )
 
     # Initialize FID for metrics
@@ -723,8 +733,8 @@ if __name__ == "__main__":
         "--dataset",
         type=str,
         default=DEFAULT_DATASET,
-        choices=["cifar10", "imagenet32"],
-        help="Dataset to use (cifar10 or imagenet32)",
+        choices=["cifar10", "imagenet32", "imagenet256"],
+        help="Dataset to use (cifar10 or imagenet32 or imagenet256)",
     )
     parser.add_argument(
         "--device",
@@ -786,6 +796,7 @@ if __name__ == "__main__":
             "random_search",
             "path_exploration",
             "path_exploration_timewarp",
+            "path_exploration_timewarp_shifted",
         ],
         help="Sampling method to use (for both single samples and batch optimization)",
     )

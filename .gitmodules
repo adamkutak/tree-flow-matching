@@ -1,0 +1,3 @@
+[submodule "third_party/SiT"]
+	path = third_party/SiT
+	url = https://github.com/willisma/SiT.git
