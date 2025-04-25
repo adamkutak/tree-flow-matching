@@ -21,7 +21,7 @@ DEFAULT_DEVICE = "cuda:1"
 DEFAULT_REAL_SAMPLES = 10000
 
 # Evaluation mode defaults
-DEFAULT_EVAL_MODE = "batch_optimization"
+DEFAULT_EVAL_MODE = "single_samples"
 
 # Sample generation defaults
 DEFAULT_N_SAMPLES = 128
