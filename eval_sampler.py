@@ -34,8 +34,8 @@ DEFAULT_DT_STD = 0.7
 DEFAULT_WARP_SCALE = 0.5
 
 # Sampling method defaults
-DEFAULT_SAMPLE_METHOD = "random_search"
-DEFAULT_SCORING_FUNCTION = "dino_score"
+DEFAULT_SAMPLE_METHOD = "regular"
+DEFAULT_SCORING_FUNCTION = "inception_score"
 
 # Batch optimization defaults
 DEFAULT_REFINEMENT_BATCH_SIZE = 32
