@@ -600,6 +600,16 @@ class MCTSFlowSampler:
 
         with torch.no_grad():
             images = self.unnormalize_images(images)
+
+            # now normalize the images to be imagenet normalized
+            mean = torch.tensor([0.485, 0.456, 0.406], device=self.device).view(
+                1, 3, 1, 1
+            )
+            std = torch.tensor([0.229, 0.224, 0.225], device=self.device).view(
+                1, 3, 1, 1
+            )
+            images = (images - mean) / std
+
             if images.shape[-1] != 224:
                 resized_images = torch.nn.functional.interpolate(
                     images, size=(224, 224), mode="bilinear", align_corners=False
