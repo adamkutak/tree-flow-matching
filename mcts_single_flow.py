@@ -77,10 +77,6 @@ class MCTSFlowSampler:
                     self.device = device
 
                 def forward(self, t, x, y):
-                    # Adapt interface to match flow model
-                    # t: time tensor [batch_size]
-                    # x: image tensor [batch_size, channels, height, width]
-                    # y: class labels [batch_size]
                     return self.model(x, t, y)
 
             # Load the base SiT-XL/2 model
