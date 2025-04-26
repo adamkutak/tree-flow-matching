@@ -3247,10 +3247,15 @@ class MCTSFlowSampler:
         Construct all tensors needed to run a *linear-trained* flow model
         along a VP interpolant, in pure-ODE mode.
 
+        This implementation follows Variance Preserving (VP) dynamics where:
+        - s is the VP time parameter (1=noise, 0=data)
+        - t is the linear time parameter used by the flow model
+        - The conversion between VP and linear time requires careful handling of boundary cases
+
         Returns
         -------
         s_grid : (n_steps+1,)  descending from 1 → 0
-        t_grid : (n_steps+1,)  mapped linear times
+        t_grid : (n_steps+1,)  mapped linear times (0.5→0)
         c_grid : (n_steps+1,)  scale factors σ̄/σ
         dt_grid: (n_steps+1,)  d t(s) / d s
         dc_grid: (n_steps+1,)  d c(s) / d s
@@ -3265,39 +3270,67 @@ class MCTSFlowSampler:
         s_fwd = torch.linspace(0.0, 1.0, n_steps + 1, device=self.device)  # 0 → 1
         ds = s_fwd[1] - s_fwd[0]
 
-        beta_vals = beta_fn(s_fwd)  # β(s)
-        beta_int = torch.cumsum(beta_vals, 0) * ds  # ∫₀ˢ β ds
+        # Calculate beta and its integral
+        beta_vals = beta_fn(s_fwd)  # β(s): noise schedule
+        beta_int = torch.cumsum(beta_vals, 0) * ds  # ∫₀ˢ β(u) du: integrated schedule
 
-        bar_alpha = torch.exp(-0.5 * beta_int)  # ᾱ(s)
-        bar_sigma = torch.sqrt(1.0 - bar_alpha**2)  # σ̄(s)
+        # VP SDE parameters (α and σ)
+        alpha_bar = torch.exp(-0.5 * beta_int)  # ᾱ(s) = exp(-0.5 * ∫₀ˢ β(u) du)
+        sigma_bar = torch.sqrt(1.0 - alpha_bar**2)  # σ̄(s) = sqrt(1 - ᾱ(s)²)
 
-        # Handle s=0 case specially to avoid division by zero
-        bar_rho = torch.zeros_like(bar_alpha)
-        nonzero_mask = bar_sigma > 0
-        bar_rho[nonzero_mask] = bar_alpha[nonzero_mask] / bar_sigma[nonzero_mask]
+        # Signal-to-noise ratio (SNR) calculation
+        # Handle s=0 case separately to avoid division by 0
+        s_grid_no_zero = s_fwd[1:].clone()  # All s values except 0
+        alpha_bar_no_zero = alpha_bar[1:].clone()  # All α values except at s=0
+        sigma_bar_no_zero = sigma_bar[1:].clone()  # All σ values except at s=0
 
-        # ---- map VP-time → linear-time -------------------
-        t_fwd = 1.0 / (1.0 + bar_rho)  # linear analytic inverse
+        # SNR(s) = α(s)/σ(s) for all s > 0
+        snr = alpha_bar_no_zero / sigma_bar_no_zero
 
-        # Handle the special case at s=0 where σ=0
-        c_fwd = torch.zeros_like(t_fwd)
-        nonzero_mask = t_fwd > 0
-        c_fwd[nonzero_mask] = (
-            bar_sigma[nonzero_mask] / t_fwd[nonzero_mask]
-        )  # scale factors
+        # Map VP-time → linear-time for all s > 0
+        # t(s) = 1/(1+SNR(s))
+        t_no_zero = 1.0 / (1.0 + snr)
 
-        # Set manually for s=0 to avoid NaN
-        if not nonzero_mask[0]:
-            c_fwd[0] = 0.0  # At s=0, limit is 0
+        # Scale factors for all s > 0
+        # c(s) = σ̄(s)/t(s)
+        c_no_zero = sigma_bar_no_zero / t_no_zero
 
-        # ---- derivatives wrt s (ascending) --------------
-        dt_fwd = torch.gradient(t_fwd, spacing=(s_fwd,))[0]
-        dc_fwd = torch.gradient(c_fwd, spacing=(s_fwd,))[0]
+        # Create full grids including s=0 with correct boundary values
+        t_fwd = torch.zeros_like(s_fwd)
+        t_fwd[1:] = t_no_zero  # For s > 0, use calculated values
+        t_fwd[0] = 0.0  # At s=0 (data point), t should be 0
 
-        # ---- flip to *descending* (noise→data) order -----
+        c_fwd = torch.zeros_like(s_fwd)
+        c_fwd[1:] = c_no_zero  # For s > 0, use calculated values
+        c_fwd[0] = 1.0  # At s=0 (data point), c should be 1.0
+
+        # Calculate derivatives using finite differences
+        # For interior points, use central differences
+        dt_fwd = torch.zeros_like(s_fwd)
+        dc_fwd = torch.zeros_like(s_fwd)
+
+        # Use forward difference for the first point (s=0)
+        dt_fwd[0] = (t_fwd[1] - t_fwd[0]) / ds
+        dc_fwd[0] = (c_fwd[1] - c_fwd[0]) / ds
+
+        # For interior points
+        dt_interior = torch.gradient(t_fwd[1:-1], spacing=(s_fwd[1:-1],))[0]
+        dc_interior = torch.gradient(c_fwd[1:-1], spacing=(s_fwd[1:-1],))[0]
+        dt_fwd[1:-1] = dt_interior
+        dc_fwd[1:-1] = dc_interior
+
+        # Use backward difference for the last point (s=1)
+        dt_fwd[-1] = (t_fwd[-1] - t_fwd[-2]) / ds
+        dc_fwd[-1] = (c_fwd[-1] - c_fwd[-2]) / ds
+
+        # ----- flip to *descending* (noise→data) order -----
+        # This converts from forward (0→1) to backward (1→0) integration
         flip = lambda x: torch.flip(x, [0])
-        s_grid, t_grid, c_grid = map(flip, (s_fwd, t_fwd, c_fwd))
-        dt_grid, dc_grid = map(flip, (dt_fwd, dc_fwd))
+        s_grid = flip(s_fwd)  # Now 1 → 0 (noise to data)
+        t_grid = flip(t_fwd)  # Now ~0.5 → 0
+        c_grid = flip(c_fwd)  # Now ~1.4 → 1.0
+        dt_grid = flip(dt_fwd)  # Flipped derivative
+        dc_grid = flip(dc_fwd)  # Flipped derivative
 
         return s_grid, t_grid, c_grid, dt_grid, dc_grid
 
