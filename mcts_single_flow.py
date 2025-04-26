@@ -3242,7 +3242,6 @@ class MCTSFlowSampler:
 
             return self.unnormalize_images(current_samples)
 
-
     def build_vp_tables(self, n_steps: int, beta_fn=None):
         """
         Construct all tensors needed to run a *linear-trained* flow model
@@ -3264,7 +3263,9 @@ class MCTSFlowSampler:
 
         # ---- build an *ascending* grid 0 → 1 -------------
         # Use slightly modified endpoints to avoid numerical issues at the boundaries
-        s_fwd = torch.linspace(1e-5, 1.0 - 1e-5, n_steps + 1, device=self.device)  # ~0 → ~1
+        s_fwd = torch.linspace(
+            1e-5, 1.0 - 1e-5, n_steps + 1, device=self.device
+        )  # ~0 → ~1
         ds = s_fwd[1] - s_fwd[0]
 
         beta_vals = beta_fn(s_fwd)  # β(s)
@@ -3319,7 +3320,6 @@ class MCTSFlowSampler:
 
         return s_grid, t_grid, c_grid, dt_grid, dc_grid
 
-
     def regular_batch_sample_vp(self, class_label, batch_size=16):
         """
         Flow-matching sampling that follows the VP interpolant
@@ -3370,7 +3370,7 @@ class MCTSFlowSampler:
 
             return self.unnormalize_images(x)
 
-        def save_models(self, path="saved_models"):
+    def save_models(self, path="saved_models"):
         """Save flow and value models separately."""
         os.makedirs(path, exist_ok=True)
 
