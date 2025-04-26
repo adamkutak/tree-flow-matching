@@ -3268,13 +3268,27 @@ class MCTSFlowSampler:
         beta_vals = beta_fn(s_fwd)  # β(s)
         beta_int = torch.cumsum(beta_vals, 0) * ds  # ∫₀ˢ β ds
 
-        bar_alpha = torch.exp(-0.5 * beta_int)  # ᾱ(s)
+        bar_alpha = torch.exp(-0.5 * beta_int)  # ᾱ(s)
         bar_sigma = torch.sqrt(1.0 - bar_alpha**2)  # σ̄(s)
-        bar_rho = bar_alpha / bar_sigma  # SNR on VP path
+
+        # Handle s=0 case specially to avoid division by zero
+        bar_rho = torch.zeros_like(bar_alpha)
+        nonzero_mask = bar_sigma > 0
+        bar_rho[nonzero_mask] = bar_alpha[nonzero_mask] / bar_sigma[nonzero_mask]
 
         # ---- map VP-time → linear-time -------------------
         t_fwd = 1.0 / (1.0 + bar_rho)  # linear analytic inverse
-        c_fwd = bar_sigma / t_fwd  # scale factors
+
+        # Handle the special case at s=0 where σ=0
+        c_fwd = torch.zeros_like(t_fwd)
+        nonzero_mask = t_fwd > 0
+        c_fwd[nonzero_mask] = (
+            bar_sigma[nonzero_mask] / t_fwd[nonzero_mask]
+        )  # scale factors
+
+        # Set manually for s=0 to avoid NaN
+        if not nonzero_mask[0]:
+            c_fwd[0] = 0.0  # At s=0, limit is 0
 
         # ---- derivatives wrt s (ascending) --------------
         dt_fwd = torch.gradient(t_fwd, spacing=(s_fwd,))[0]
