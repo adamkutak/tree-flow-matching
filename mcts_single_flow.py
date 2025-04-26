@@ -3242,88 +3242,43 @@ class MCTSFlowSampler:
 
             return self.unnormalize_images(current_samples)
 
-    def variance_preserving_batch_sample(self, class_label, batch_size=16):
+    def sample_vp_ode(self, class_label, batch_size=16):
         """
-        Flow matching sampling using a transformed interpolant to follow VP dynamics.
-        The model was trained with linear interpolation but sampling is done with VP.
-
-        Args:
-            class_label: Target class(es) to generate. Can be a single integer or a tensor of class labels.
-            batch_size: Number of samples to generate
+        Deterministic VP-ODE sampling using a linear-trained flow model.
         """
-        # Check if class_label is a tensor or a single integer
-        is_tensor = torch.is_tensor(class_label)
+        from vp_transform import vp_tables_ode
 
-        self.flow_model.eval()
+        N = len(self.timesteps) - 1  # keep step count
+        s, t, c, t_dot, c_dot = vp_tables_ode(N, self.device)
+
+        y = (
+            class_label
+            if torch.is_tensor(class_label)
+            else torch.full((batch_size,), class_label, device=self.device)
+        )
+
+        x = torch.randn(
+            batch_size,
+            self.channels,
+            self.image_size,
+            self.image_size,
+            device=self.device,
+        )
 
         with torch.no_grad():
-            # Start with random noise
-            current_samples = torch.randn(
-                batch_size,
-                self.channels,
-                self.image_size,
-                self.image_size,
-                device=self.device,
-            )
+            self.flow_model.eval()
+            for k in range(N):
+                ds = s[k] - s[k + 1]  # positive
+                t_k, c_k, dt_k, dc_k = t[k], c[k], t_dot[k], c_dot[k]
 
-            # Handle both tensor and single class label cases
-            if is_tensor:
-                current_label = class_label
-            else:
-                current_label = torch.full(
-                    (batch_size,), class_label, device=self.device
-                )
+                x_lin = x / c_k
+                t_batch = t_k.repeat(batch_size)
+                v_lin = self.flow_model(t_batch, x_lin, y)
 
-            # Define parameters for VP diffusion
-            beta_min = 0.1
-            beta_max = 20.0
+                v_vp = (dc_k / c_k) * x + c_k * dt_k * v_lin
+                x = x - v_vp * ds  # Euler step
 
-            # Generate samples using timesteps
-            for step, t in enumerate(self.timesteps[:-1]):
-                dt = self.timesteps[step + 1] - t
-                t_batch = torch.full((batch_size,), t.item(), device=self.device)
-
-                # Get the current beta value for VP
-                beta_t = beta_min + t_batch * (beta_max - beta_min)
-
-                # Transform the time t to the corresponding time in linear interpolation
-                # For VP interpolation, alpha_t = exp(-0.5 * integral_0^t beta_s ds)
-                # For linear interpolation, alpha_t = 1 - t
-                # We need to find t_linear such that alpha_linear(t_linear) = alpha_vp(t)
-
-                # Compute alpha_t for VP (simple approximation for linear beta schedule)
-                alpha_t = torch.exp(-0.5 * beta_t * t_batch)
-
-                # Get the corresponding linear time
-                t_linear = 1.0 - alpha_t
-                t_linear_batch = t_linear.clone()
-
-                # Calculate next alpha_t for VP at t+dt
-                next_t = t + dt
-                next_t_batch = torch.full(
-                    (batch_size,), next_t.item(), device=self.device
-                )
-                beta_next = beta_min + next_t_batch * (beta_max - beta_min)
-                alpha_next = torch.exp(-0.5 * beta_next * next_t_batch)
-
-                # Get the corresponding next linear time
-                t_linear_next = 1.0 - alpha_next
-
-                # Calculate effective dt in linear time space
-                dt_linear = t_linear_next - t_linear
-
-                # Use the flow model with the transformed time
-                velocity = self.flow_model(
-                    t_linear_batch, current_samples, current_label
-                )
-
-                # Scale the velocity by the ratio of time steps
-                velocity_scaled = velocity * (dt_linear / dt).view(-1, 1, 1, 1)
-
-                # Update samples
-                current_samples = current_samples + velocity_scaled
-
-            return self.unnormalize_images(current_samples)
+        return self.unnormalize_images(x)
 
     def save_models(self, path="saved_models"):
         """Save flow and value models separately."""
