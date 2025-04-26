@@ -3198,10 +3198,25 @@ class MCTSFlowSampler:
         """
         Decode latents to images using VAE.
         """
-        # Convert latents to half precision to match VAE parameters
-        latents_half = latents.half()
-        images = self.vae.decode(latents_half / 0.18215).sample
-        return torch.clamp((images + 1) / 2, 0.0, 1.0).float()
+        batch_size = latents.shape[0]
+        max_batch_size = 64
+
+        if batch_size <= max_batch_size:
+            # Convert latents to half precision to match VAE parameters
+            latents_half = latents.half()
+            images = self.vae.decode(latents_half / 0.18215).sample
+            return torch.clamp((images + 1) / 2, 0.0, 1.0).float()
+        else:
+            # Process in batches of max_batch_size
+            decoded_images = []
+            for i in range(0, batch_size, max_batch_size):
+                batch_latents = latents[i : i + max_batch_size]
+                batch_latents_half = batch_latents.half()
+                batch_images = self.vae.decode(batch_latents_half / 0.18215).sample
+                batch_images = torch.clamp((batch_images + 1) / 2, 0.0, 1.0).float()
+                decoded_images.append(batch_images)
+
+            return torch.cat(decoded_images, dim=0)
 
     def regular_batch_sample(self, class_label, batch_size=16):
         """
