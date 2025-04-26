@@ -3266,11 +3266,23 @@ class MCTSFlowSampler:
             # cosine-ish VP schedule (simple but works well)
             beta_fn = lambda s: 0.5 * math.pi * torch.sin(0.5 * math.pi * s)
 
-        # ---- build an *ascending* grid 0 → 1 -------------
-        s_fwd = torch.linspace(0.0, 1.0, n_steps + 1, device=self.device)  # 0 → 1
-        ds = s_fwd[1] - s_fwd[0]
+        # ---- build an *ascending* grid 0 → 1 with extension -------------
+        # Add extra points beyond the [0,1] range for better derivative calculations
+        ds_target = 1.0 / n_steps  # Target step size
 
-        # Calculate beta and its integral
+        # Add one point before s=0 and one point after s=1
+        s_extended = torch.linspace(
+            -ds_target, 1.0 + ds_target, n_steps + 3, device=self.device
+        )
+        ds = s_extended[1] - s_extended[0]  # Actual step size
+
+        # Identify which indices correspond to our actual [0,1] range
+        start_idx = 1  # Skip the first point (which is negative)
+        end_idx = start_idx + n_steps + 1  # +1 for inclusive end
+        s_fwd = s_extended[start_idx:end_idx]  # This is our actual [0,1] grid
+
+        # Calculate beta and its integral for the valid range [0,1]
+        # We can only evaluate beta for s in [0,1]
         beta_vals = beta_fn(s_fwd)  # β(s): noise schedule
         beta_int = torch.cumsum(beta_vals, 0) * ds  # ∫₀ˢ β(u) du: integrated schedule
 
@@ -3304,24 +3316,40 @@ class MCTSFlowSampler:
         c_fwd[1:] = c_no_zero  # For s > 0, use calculated values
         c_fwd[0] = 1.0  # At s=0 (data point), c should be 1.0
 
-        # Calculate derivatives using finite differences
-        # For interior points, use central differences
-        dt_fwd = torch.zeros_like(s_fwd)
-        dc_fwd = torch.zeros_like(s_fwd)
+        # Now we need to extend t_fwd and c_fwd with extrapolated values
+        # for the ghost points outside [0,1]
 
-        # Use forward difference for the first point (s=0)
-        dt_fwd[0] = (t_fwd[1] - t_fwd[0]) / ds
-        dc_fwd[0] = (c_fwd[1] - c_fwd[0]) / ds
+        # Create extended arrays
+        t_extended = torch.zeros_like(s_extended)
+        c_extended = torch.zeros_like(s_extended)
 
-        # For interior points
-        dt_interior = torch.gradient(t_fwd[1:-1], spacing=(s_fwd[1:-1],))[0]
-        dc_interior = torch.gradient(c_fwd[1:-1], spacing=(s_fwd[1:-1],))[0]
-        dt_fwd[1:-1] = dt_interior
-        dc_fwd[1:-1] = dc_interior
+        # Copy the valid range values
+        t_extended[start_idx:end_idx] = t_fwd
+        c_extended[start_idx:end_idx] = c_fwd
 
-        # Use backward difference for the last point (s=1)
-        dt_fwd[-1] = (t_fwd[-1] - t_fwd[-2]) / ds
-        dc_fwd[-1] = (c_fwd[-1] - c_fwd[-2]) / ds
+        # Extrapolate for s < 0 (before start point) - linear extrapolation
+        # For t: Since t(0) = 0 and the derivative is positive, extrapolate to a small negative value
+        dt_at_zero = (t_fwd[1] - t_fwd[0]) / ds  # Approximate derivative at s=0
+        t_extended[start_idx - 1] = t_fwd[0] - dt_at_zero * ds  # Linear extrapolation
+
+        # For c: Since c(0) = 1 and typically decreases as s increases, set to slightly above 1
+        dc_at_zero = (c_fwd[1] - c_fwd[0]) / ds  # Approximate derivative at s=0
+        c_extended[start_idx - 1] = c_fwd[0] - dc_at_zero * ds  # Linear extrapolation
+
+        # Extrapolate for s > 1 (after end point) - linear extrapolation
+        dt_at_one = (t_fwd[-1] - t_fwd[-2]) / ds  # Approximate derivative at s=1
+        t_extended[end_idx] = t_fwd[-1] + dt_at_one * ds  # Linear extrapolation
+
+        dc_at_one = (c_fwd[-1] - c_fwd[-2]) / ds  # Approximate derivative at s=1
+        c_extended[end_idx] = c_fwd[-1] + dc_at_one * ds  # Linear extrapolation
+
+        # Calculate derivatives using central differences on the extended grid
+        dt_extended = torch.gradient(t_extended, spacing=(s_extended,))[0]
+        dc_extended = torch.gradient(c_extended, spacing=(s_extended,))[0]
+
+        # Extract only the derivatives for our original [0,1] range
+        dt_fwd = dt_extended[start_idx:end_idx]
+        dc_fwd = dc_extended[start_idx:end_idx]
 
         # ----- flip to *descending* (noise→data) order -----
         # This converts from forward (0→1) to backward (1→0) integration
