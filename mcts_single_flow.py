@@ -3244,7 +3244,8 @@ class MCTSFlowSampler:
 
     def variance_preserving_batch_sample(self, class_label, batch_size=16):
         """
-        Flow matching sampling using variance preserving interpolation.
+        Flow matching sampling using a transformed interpolant to follow VP dynamics.
+        The model was trained with linear interpolation but sampling is done with VP.
 
         Args:
             class_label: Target class(es) to generate. Can be a single integer or a tensor of class labels.
@@ -3273,30 +3274,54 @@ class MCTSFlowSampler:
                     (batch_size,), class_label, device=self.device
                 )
 
+            # Define parameters for VP diffusion
+            beta_min = 0.1
+            beta_max = 20.0
+
             # Generate samples using timesteps
             for step, t in enumerate(self.timesteps[:-1]):
                 dt = self.timesteps[step + 1] - t
                 t_batch = torch.full((batch_size,), t.item(), device=self.device)
 
-                # Adjust the flow based on variance preserving dynamics
-                # For VP interpolation, we need to adjust the velocity to account for noise
-                sigma_t = torch.sqrt(t_batch)
-                sigma_s = torch.sqrt(self.timesteps[step + 1])
+                # Get the current beta value for VP
+                beta_t = beta_min + t_batch * (beta_max - beta_min)
 
-                # Apply the drift correction factor for variance preserving
-                # In VP SDE: dx = -0.5 * beta_t * x * dt + sqrt(beta_t) * dw
-                # We implement this by modifying the velocity from the flow model
+                # Transform the time t to the corresponding time in linear interpolation
+                # For VP interpolation, alpha_t = exp(-0.5 * integral_0^t beta_s ds)
+                # For linear interpolation, alpha_t = 1 - t
+                # We need to find t_linear such that alpha_linear(t_linear) = alpha_vp(t)
 
-                # Get velocity from flow model
-                raw_velocity = self.flow_model(t_batch, current_samples, current_label)
+                # Compute alpha_t for VP (simple approximation for linear beta schedule)
+                alpha_t = torch.exp(-0.5 * beta_t * t_batch)
 
-                # Adjust for variance preserving dynamics
-                # This accounts for the -0.5 * beta_t * x * dt drift term in VP SDE
-                drift_factor = 0.5 * (sigma_s - sigma_t) / (sigma_t * dt)
-                velocity = raw_velocity - drift_factor * current_samples
+                # Get the corresponding linear time
+                t_linear = 1.0 - alpha_t
+                t_linear_batch = t_linear.clone()
+
+                # Calculate next alpha_t for VP at t+dt
+                next_t = t + dt
+                next_t_batch = torch.full(
+                    (batch_size,), next_t.item(), device=self.device
+                )
+                beta_next = beta_min + next_t_batch * (beta_max - beta_min)
+                alpha_next = torch.exp(-0.5 * beta_next * next_t_batch)
+
+                # Get the corresponding next linear time
+                t_linear_next = 1.0 - alpha_next
+
+                # Calculate effective dt in linear time space
+                dt_linear = t_linear_next - t_linear
+
+                # Use the flow model with the transformed time
+                velocity = self.flow_model(
+                    t_linear_batch, current_samples, current_label
+                )
+
+                # Scale the velocity by the ratio of time steps
+                velocity_scaled = velocity * (dt_linear / dt).view(-1, 1, 1, 1)
 
                 # Update samples
-                current_samples = current_samples + velocity * dt
+                current_samples = current_samples + velocity_scaled
 
             return self.unnormalize_images(current_samples)
 
