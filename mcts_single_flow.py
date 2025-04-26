@@ -3242,6 +3242,7 @@ class MCTSFlowSampler:
 
             return self.unnormalize_images(current_samples)
 
+
     def build_vp_tables(self, n_steps: int, beta_fn=None):
         """
         Construct all tensors needed to run a *linear-trained* flow model
@@ -3262,44 +3263,62 @@ class MCTSFlowSampler:
             beta_fn = lambda s: 0.5 * math.pi * torch.sin(0.5 * math.pi * s)
 
         # ---- build an *ascending* grid 0 → 1 -------------
-        s_fwd = torch.linspace(0.0, 1.0, n_steps + 1, device=self.device)  # 0 → 1
+        # Use slightly modified endpoints to avoid numerical issues at the boundaries
+        s_fwd = torch.linspace(1e-5, 1.0 - 1e-5, n_steps + 1, device=self.device)  # ~0 → ~1
         ds = s_fwd[1] - s_fwd[0]
 
         beta_vals = beta_fn(s_fwd)  # β(s)
         beta_int = torch.cumsum(beta_vals, 0) * ds  # ∫₀ˢ β ds
+        # Adjust the first value which should be zero
+        beta_int[0] = 0.0
 
         bar_alpha = torch.exp(-0.5 * beta_int)  # ᾱ(s)
         bar_sigma = torch.sqrt(1.0 - bar_alpha**2)  # σ̄(s)
-
-        # Handle s=0 case specially to avoid division by zero
-        bar_rho = torch.zeros_like(bar_alpha)
-        nonzero_mask = bar_sigma > 0
-        bar_rho[nonzero_mask] = bar_alpha[nonzero_mask] / bar_sigma[nonzero_mask]
+        bar_rho = bar_alpha / bar_sigma  # SNR on VP path
 
         # ---- map VP-time → linear-time -------------------
         t_fwd = 1.0 / (1.0 + bar_rho)  # linear analytic inverse
-
-        # Handle the special case at s=0 where σ=0
-        c_fwd = torch.zeros_like(t_fwd)
-        nonzero_mask = t_fwd > 0
-        c_fwd[nonzero_mask] = (
-            bar_sigma[nonzero_mask] / t_fwd[nonzero_mask]
-        )  # scale factors
-
-        # Set manually for s=0 to avoid NaN
-        if not nonzero_mask[0]:
-            c_fwd[0] = 0.0  # At s=0, limit is 0
+        c_fwd = bar_sigma / t_fwd  # scale factors
 
         # ---- derivatives wrt s (ascending) --------------
-        dt_fwd = torch.gradient(t_fwd, spacing=(s_fwd,))[0]
-        dc_fwd = torch.gradient(c_fwd, spacing=(s_fwd,))[0]
+        dt_fwd = torch.zeros_like(t_fwd)
+        dc_fwd = torch.zeros_like(c_fwd)
+
+        # Calculate interior derivatives using central differences
+        for i in range(1, len(s_fwd) - 1):
+            dt_fwd[i] = (t_fwd[i + 1] - t_fwd[i - 1]) / (2 * ds)
+            dc_fwd[i] = (c_fwd[i + 1] - c_fwd[i - 1]) / (2 * ds)
+
+        # Use forward/backward differences for the endpoints
+        dt_fwd[0] = (t_fwd[1] - t_fwd[0]) / ds
+        dc_fwd[0] = (c_fwd[1] - c_fwd[0]) / ds
+        dt_fwd[-1] = (t_fwd[-1] - t_fwd[-2]) / ds
+        dc_fwd[-1] = (c_fwd[-1] - c_fwd[-2]) / ds
 
         # ---- flip to *descending* (noise→data) order -----
         flip = lambda x: torch.flip(x, [0])
         s_grid, t_grid, c_grid = map(flip, (s_fwd, t_fwd, c_fwd))
         dt_grid, dc_grid = map(flip, (dt_fwd, dc_fwd))
 
+        # ---- Enforce correct boundary conditions -----
+        # At s=0 (after flipping, this is the last entry)
+        # t should approach 0, c should approach theoretical limit
+        s_grid[-1] = 0.0
+        t_grid[-1] = 0.0  # At s=0, linear time t is 0
+
+        # For the derivatives at the boundary, use the values from adjacent point
+        dt_grid[-1] = dt_grid[-2]
+        dc_grid[-1] = dc_grid[-2]
+
+        # For c at s=0, the theoretical value should be finite and positive
+        # We'll extrapolate from the trend rather than using a potentially unstable computed value
+        c_trend = (c_grid[-3] - c_grid[-2]) / (s_grid[-3] - s_grid[-2])
+        c_grid[-1] = c_grid[-2] + c_trend * (s_grid[-1] - s_grid[-2])
+        # Ensure it's positive (important for division)
+        c_grid[-1] = max(c_grid[-1], 0.5)
+
         return s_grid, t_grid, c_grid, dt_grid, dc_grid
+
 
     def regular_batch_sample_vp(self, class_label, batch_size=16):
         """
@@ -3332,13 +3351,11 @@ class MCTSFlowSampler:
 
             # ---------- integrate from s=1 → 0 ------------
             for k in range(N_steps):
-                ds, t, c, dc, dt = (
-                    s_grid[k] - s_grid[k + 1],
-                    t_grid[k],
-                    c_grid[k],
-                    dc_grid[k],
-                    dt_grid[k],
-                )
+                ds = s_grid[k] - s_grid[k + 1]
+                t = t_grid[k]
+                c = c_grid[k]
+                dc = dc_grid[k]
+                dt = dt_grid[k]
 
                 # call original model in *linear* coordinates
                 x_lin = x / c
@@ -3353,7 +3370,7 @@ class MCTSFlowSampler:
 
             return self.unnormalize_images(x)
 
-    def save_models(self, path="saved_models"):
+        def save_models(self, path="saved_models"):
         """Save flow and value models separately."""
         os.makedirs(path, exist_ok=True)
 
