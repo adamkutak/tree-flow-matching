@@ -3242,229 +3242,63 @@ class MCTSFlowSampler:
 
             return self.unnormalize_images(current_samples)
 
-    def build_vp_tables(self, n_steps: int, beta_fn=None):
+    def variance_preserving_batch_sample(self, class_label, batch_size=16):
         """
-        Construct all tensors needed to run a *linear-trained* flow model
-        along a VP interpolant, in pure-ODE mode.
+        Flow matching sampling using variance preserving interpolation.
 
-        Returns
-        -------
-        s_grid : (n_steps+1,)  descending from 1 → 0
-        t_grid : (n_steps+1,)  mapped linear times
-        c_grid : (n_steps+1,)  scale factors σ̄/σ
-        dt_grid: (n_steps+1,)  d t(s) / d s
-        dc_grid: (n_steps+1,)  d c(s) / d s
+        Args:
+            class_label: Target class(es) to generate. Can be a single integer or a tensor of class labels.
+            batch_size: Number of samples to generate
         """
-        print(f"Building VP tables with {n_steps+1} steps")
-
-        # ---- choose or supply a β(s) schedule ------------
-        if beta_fn is None:
-            # cosine-ish VP schedule (simple but works well)
-            beta_fn = lambda s: 0.5 * math.pi * torch.sin(0.5 * math.pi * s)
-
-        # ---- build an *ascending* grid 0 → 1 -------------
-        s_fwd = torch.linspace(0.0, 1.0, n_steps + 1, device=self.device)  # 0 → 1
-        ds = s_fwd[1] - s_fwd[0]
-        print(f"Step size ds = {ds.item():.6f}")
-
-        # Calculate noise schedule
-        beta_vals = beta_fn(s_fwd)
-        beta_int = torch.cumsum(beta_vals, 0) * ds
-
-        # Calculate alpha and sigma according to VP SDE
-        alpha_bar = torch.exp(-0.5 * beta_int)
-        sigma_bar = torch.sqrt(1.0 - alpha_bar**2)
-
-        # Create t_fwd and c_fwd arrays
-        t_fwd = torch.zeros_like(s_fwd)
-        c_fwd = torch.zeros_like(s_fwd)
-
-        # For all indices except s=0 (which is handled separately)
-        for i in range(1, len(s_fwd)):
-            # SNR = alpha/sigma
-            snr = alpha_bar[i] / sigma_bar[i]
-
-            # Linear time mapping
-            t_fwd[i] = 1.0 / (1.0 + snr)
-
-            # Scale factor
-            c_fwd[i] = sigma_bar[i] / t_fwd[i]
-
-        # Special case for s=0 (pure data point)
-        t_fwd[0] = 0.0
-        c_fwd[0] = 1.0
-
-        # Calculate derivatives
-        dt_fwd = torch.zeros_like(s_fwd)
-        dc_fwd = torch.zeros_like(s_fwd)
-
-        # Use simple finite differences for derivatives
-        # For interior points
-        for i in range(1, len(s_fwd) - 1):
-            dt_fwd[i] = (t_fwd[i + 1] - t_fwd[i - 1]) / (2 * ds)
-            dc_fwd[i] = (c_fwd[i + 1] - c_fwd[i - 1]) / (2 * ds)
-
-        # For boundary points, use one-sided differences
-        # At s=0
-        dt_fwd[0] = (t_fwd[1] - t_fwd[0]) / ds
-        dc_fwd[0] = (c_fwd[1] - c_fwd[0]) / ds
-
-        # At s=1
-        dt_fwd[-1] = (t_fwd[-1] - t_fwd[-2]) / ds
-        dc_fwd[-1] = (c_fwd[-1] - c_fwd[-2]) / ds
-
-        # ----- flip to *descending* (noise→data) order -----
-        flip = lambda x: torch.flip(x, [0])
-        s_grid = flip(s_fwd)
-        t_grid = flip(t_fwd)
-        c_grid = flip(c_fwd)
-        dt_grid = flip(dt_fwd)
-        dc_grid = flip(dc_fwd)
-
-        print("\nGrid Values After Flipping (first 3 and last 3 values):")
-        print(f"s_grid: {s_grid[:3].tolist()} ... {s_grid[-3:].tolist()}")
-        print(f"t_grid: {t_grid[:3].tolist()} ... {t_grid[-3:].tolist()}")
-        print(f"c_grid: {c_grid[:3].tolist()} ... {c_grid[-3:].tolist()}")
-        print(f"dt_grid: {dt_grid[:3].tolist()} ... {dt_grid[-3:].tolist()}")
-        print(f"dc_grid: {dc_grid[:3].tolist()} ... {dc_grid[-3:].tolist()}")
-
-        # Check for any NaN or inf values
-        for name, grid in [
-            ("s_grid", s_grid),
-            ("t_grid", t_grid),
-            ("c_grid", c_grid),
-            ("dt_grid", dt_grid),
-            ("dc_grid", dc_grid),
-        ]:
-            if torch.isnan(grid).any() or torch.isinf(grid).any():
-                print(f"WARNING: {name} contains NaN or inf values!")
-
-        return s_grid, t_grid, c_grid, dt_grid, dc_grid
-
-    def regular_batch_sample_vp(self, class_label, batch_size=16):
-        """
-        Flow-matching sampling that follows the VP interpolant
-        using ODE conversion (no stochastic term, no retraining).
-        """
-        print(
-            f"\nSampling with VP path for class {class_label}, batch_size {batch_size}"
-        )
-
-        # ---------- build conversion tables once ----------
-        N_steps = len(self.timesteps) - 1  # keep same step count
-        s_grid, t_grid, c_grid, dt_grid, dc_grid = self.build_vp_tables(N_steps)
-
-        # ---------- prep inputs ----------
+        # Check if class_label is a tensor or a single integer
         is_tensor = torch.is_tensor(class_label)
+
         self.flow_model.eval()
 
         with torch.no_grad():
-            # Initialize with noise
-            x = torch.randn(
+            # Start with random noise
+            current_samples = torch.randn(
                 batch_size,
                 self.channels,
                 self.image_size,
                 self.image_size,
                 device=self.device,
             )
-            print(
-                f"Initial noise stats: mean={x.mean().item():.4f}, std={x.std().item():.4f}"
-            )
 
-            y = (
-                class_label
-                if is_tensor
-                else torch.full((batch_size,), class_label, device=self.device)
-            )
+            # Handle both tensor and single class label cases
+            if is_tensor:
+                current_label = class_label
+            else:
+                current_label = torch.full(
+                    (batch_size,), class_label, device=self.device
+                )
 
-            # ---------- integrate from s=1 → 0 ------------
-            for k in range(N_steps):
-                ds = s_grid[k] - s_grid[k + 1]
-                t = t_grid[k]
-                c = c_grid[k]
-                dc = dc_grid[k]
-                dt = dt_grid[k]
-
-                # Debug values every few steps
-                if k % max(1, N_steps // 5) == 0 or k == N_steps - 1:
-                    print(f"\nStep {k}/{N_steps-1}:")
-                    print(
-                        f"  s={s_grid[k].item():.4f} → {s_grid[k+1].item():.4f}, ds={ds.item():.4f}"
-                    )
-                    print(
-                        f"  t={t.item():.4f}, c={c.item():.4f}, dt={dt.item():.4f}, dc={dc.item():.4f}"
-                    )
-                    print(
-                        f"  Current x: mean={x.mean().item():.4f}, std={x.std().item():.4f}, min={x.min().item():.4f}, max={x.max().item():.4f}"
-                    )
-
-                    # Check for any NaN or inf in x
-                    if torch.isnan(x).any() or torch.isinf(x).any():
-                        print("  WARNING: x contains NaN or inf values!")
-                        # Return the current state for inspection
-                        return self.unnormalize_images(x)
-
-                # Directly calculate velocity in linear space
+            # Generate samples using timesteps
+            for step, t in enumerate(self.timesteps[:-1]):
+                dt = self.timesteps[step + 1] - t
                 t_batch = torch.full((batch_size,), t.item(), device=self.device)
-                x_lin = x / c  # Conversion to linear space
 
-                # Check for issues in linear space conversion
-                if torch.isnan(x_lin).any() or torch.isinf(x_lin).any():
-                    print(
-                        f"  ERROR at step {k}: NaN or inf in x_lin after division by c={c.item()}"
-                    )
-                    return self.unnormalize_images(x)
+                # Adjust the flow based on variance preserving dynamics
+                # For VP interpolation, we need to adjust the velocity to account for noise
+                sigma_t = torch.sqrt(t_batch)
+                sigma_s = torch.sqrt(self.timesteps[step + 1])
+
+                # Apply the drift correction factor for variance preserving
+                # In VP SDE: dx = -0.5 * beta_t * x * dt + sqrt(beta_t) * dw
+                # We implement this by modifying the velocity from the flow model
 
                 # Get velocity from flow model
-                v_lin = self.flow_model(t_batch, x_lin, y)
+                raw_velocity = self.flow_model(t_batch, current_samples, current_label)
 
-                # Check if flow model output is valid
-                if torch.isnan(v_lin).any() or torch.isinf(v_lin).any():
-                    print(f"  ERROR at step {k}: Flow model returned NaN or inf")
-                    return self.unnormalize_images(x)
+                # Adjust for variance preserving dynamics
+                # This accounts for the -0.5 * beta_t * x * dt drift term in VP SDE
+                drift_factor = 0.5 * (sigma_s - sigma_t) / (sigma_t * dt)
+                velocity = raw_velocity - drift_factor * current_samples
 
-                # Convert velocity to VP frame
-                v_vp_scale = (dc / c) * x
-                v_vp_flow = c * dt * v_lin
-                v_vp = v_vp_scale + v_vp_flow
+                # Update samples
+                current_samples = current_samples + velocity * dt
 
-                # Debug velocity components occasionally
-                if k % max(1, N_steps // 5) == 0 or k == N_steps - 1:
-                    print(
-                        f"  v_vp_scale: mean={v_vp_scale.mean().item():.4f}, std={v_vp_scale.std().item():.4f}"
-                    )
-                    print(
-                        f"  v_vp_flow: mean={v_vp_flow.mean().item():.4f}, std={v_vp_flow.std().item():.4f}"
-                    )
-                    print(
-                        f"  v_vp: mean={v_vp.mean().item():.4f}, std={v_vp.std().item():.4f}"
-                    )
-
-                # Update using simple Euler step
-                x_update = v_vp * ds
-                x = x - x_update
-
-                # Debug update size
-                if k % max(1, N_steps // 5) == 0 or k == N_steps - 1:
-                    print(
-                        f"  Update: mean={x_update.mean().item():.4f}, std={x_update.std().item():.4f}"
-                    )
-
-            print("\nFinal x stats before unnormalization:")
-            print(
-                f"mean={x.mean().item():.4f}, std={x.std().item():.4f}, min={x.min().item():.4f}, max={x.max().item():.4f}"
-            )
-
-            # Check for any final NaN or inf
-            if torch.isnan(x).any() or torch.isinf(x).any():
-                print("WARNING: Final x contains NaN or inf values!")
-
-            final_images = self.unnormalize_images(x)
-            print(
-                f"Unnormalized image stats: mean={final_images.mean().item():.4f}, std={final_images.std().item():.4f}"
-            )
-
-            return final_images
+            return self.unnormalize_images(current_samples)
 
     def save_models(self, path="saved_models"):
         """Save flow and value models separately."""
