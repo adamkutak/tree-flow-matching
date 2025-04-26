@@ -16,7 +16,7 @@ from mcts_single_flow import MCTSFlowSampler
 from imagenet_dataset import ImageNet32Dataset
 from run_mcts_flow import calculate_inception_score
 
-DEFAULT_DATASET = "imagenet256"
+DEFAULT_DATASET = "imagenet32"
 DEFAULT_DEVICE = "cuda:2"
 DEFAULT_REAL_SAMPLES = 1000
 
@@ -486,7 +486,7 @@ def generate_and_compute_metrics(
 
         # Generate samples using the specified method
         if sample_method == "regular":
-            sample = sampler.regular_batch_sample_vp(
+            sample = sampler.variance_preserving_batch_sample(
                 class_label=random_class_labels, batch_size=current_batch_size
             )
         elif sample_method == "path_exploration_timewarp":
