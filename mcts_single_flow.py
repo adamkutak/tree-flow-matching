@@ -3247,15 +3247,10 @@ class MCTSFlowSampler:
         Construct all tensors needed to run a *linear-trained* flow model
         along a VP interpolant, in pure-ODE mode.
 
-        This implementation follows Variance Preserving (VP) dynamics where:
-        - s is the VP time parameter (1=noise, 0=data)
-        - t is the linear time parameter used by the flow model
-        - The conversion between VP and linear time requires careful handling of boundary cases
-
         Returns
         -------
         s_grid : (n_steps+1,)  descending from 1 → 0
-        t_grid : (n_steps+1,)  mapped linear times (0.5→0)
+        t_grid : (n_steps+1,)  mapped linear times
         c_grid : (n_steps+1,)  scale factors σ̄/σ
         dt_grid: (n_steps+1,)  d t(s) / d s
         dc_grid: (n_steps+1,)  d c(s) / d s
@@ -3266,99 +3261,63 @@ class MCTSFlowSampler:
             # cosine-ish VP schedule (simple but works well)
             beta_fn = lambda s: 0.5 * math.pi * torch.sin(0.5 * math.pi * s)
 
-        # ---- build an *ascending* grid 0 → 1 with extension -------------
-        # Add extra points beyond the [0,1] range for better derivative calculations
-        ds_target = 1.0 / n_steps  # Target step size
+        # ---- build an *ascending* grid 0 → 1 -------------
+        s_fwd = torch.linspace(0.0, 1.0, n_steps + 1, device=self.device)  # 0 → 1
+        ds = s_fwd[1] - s_fwd[0]
 
-        # Add one point before s=0 and one point after s=1
-        s_extended = torch.linspace(
-            -ds_target, 1.0 + ds_target, n_steps + 3, device=self.device
-        )
-        ds = s_extended[1] - s_extended[0]  # Actual step size
+        # Calculate noise schedule
+        beta_vals = beta_fn(s_fwd)
+        beta_int = torch.cumsum(beta_vals, 0) * ds
 
-        # Identify which indices correspond to our actual [0,1] range
-        start_idx = 1  # Skip the first point (which is negative)
-        end_idx = start_idx + n_steps + 1  # +1 for inclusive end
-        s_fwd = s_extended[start_idx:end_idx]  # This is our actual [0,1] grid
+        # Calculate alpha and sigma according to VP SDE
+        alpha_bar = torch.exp(-0.5 * beta_int)
+        sigma_bar = torch.sqrt(1.0 - alpha_bar**2)
 
-        # Calculate beta and its integral for the valid range [0,1]
-        # We can only evaluate beta for s in [0,1]
-        beta_vals = beta_fn(s_fwd)  # β(s): noise schedule
-        beta_int = torch.cumsum(beta_vals, 0) * ds  # ∫₀ˢ β(u) du: integrated schedule
-
-        # VP SDE parameters (α and σ)
-        alpha_bar = torch.exp(-0.5 * beta_int)  # ᾱ(s) = exp(-0.5 * ∫₀ˢ β(u) du)
-        sigma_bar = torch.sqrt(1.0 - alpha_bar**2)  # σ̄(s) = sqrt(1 - ᾱ(s)²)
-
-        # Signal-to-noise ratio (SNR) calculation
-        # Handle s=0 case separately to avoid division by 0
-        s_grid_no_zero = s_fwd[1:].clone()  # All s values except 0
-        alpha_bar_no_zero = alpha_bar[1:].clone()  # All α values except at s=0
-        sigma_bar_no_zero = sigma_bar[1:].clone()  # All σ values except at s=0
-
-        # SNR(s) = α(s)/σ(s) for all s > 0
-        snr = alpha_bar_no_zero / sigma_bar_no_zero
-
-        # Map VP-time → linear-time for all s > 0
-        # t(s) = 1/(1+SNR(s))
-        t_no_zero = 1.0 / (1.0 + snr)
-
-        # Scale factors for all s > 0
-        # c(s) = σ̄(s)/t(s)
-        c_no_zero = sigma_bar_no_zero / t_no_zero
-
-        # Create full grids including s=0 with correct boundary values
+        # Create t_fwd and c_fwd arrays
         t_fwd = torch.zeros_like(s_fwd)
-        t_fwd[1:] = t_no_zero  # For s > 0, use calculated values
-        t_fwd[0] = 0.0  # At s=0 (data point), t should be 0
-
         c_fwd = torch.zeros_like(s_fwd)
-        c_fwd[1:] = c_no_zero  # For s > 0, use calculated values
-        c_fwd[0] = 1.0  # At s=0 (data point), c should be 1.0
 
-        # Now we need to extend t_fwd and c_fwd with extrapolated values
-        # for the ghost points outside [0,1]
+        # For all indices except s=0 (which is handled separately)
+        for i in range(1, len(s_fwd)):
+            # SNR = alpha/sigma
+            snr = alpha_bar[i] / sigma_bar[i]
 
-        # Create extended arrays
-        t_extended = torch.zeros_like(s_extended)
-        c_extended = torch.zeros_like(s_extended)
+            # Linear time mapping
+            t_fwd[i] = 1.0 / (1.0 + snr)
 
-        # Copy the valid range values
-        t_extended[start_idx:end_idx] = t_fwd
-        c_extended[start_idx:end_idx] = c_fwd
+            # Scale factor
+            c_fwd[i] = sigma_bar[i] / t_fwd[i]
 
-        # Extrapolate for s < 0 (before start point) - linear extrapolation
-        # For t: Since t(0) = 0 and the derivative is positive, extrapolate to a small negative value
-        dt_at_zero = (t_fwd[1] - t_fwd[0]) / ds  # Approximate derivative at s=0
-        t_extended[start_idx - 1] = t_fwd[0] - dt_at_zero * ds  # Linear extrapolation
+        # Special case for s=0 (pure data point)
+        t_fwd[0] = 0.0
+        c_fwd[0] = 1.0
 
-        # For c: Since c(0) = 1 and typically decreases as s increases, set to slightly above 1
-        dc_at_zero = (c_fwd[1] - c_fwd[0]) / ds  # Approximate derivative at s=0
-        c_extended[start_idx - 1] = c_fwd[0] - dc_at_zero * ds  # Linear extrapolation
+        # Calculate derivatives
+        dt_fwd = torch.zeros_like(s_fwd)
+        dc_fwd = torch.zeros_like(s_fwd)
 
-        # Extrapolate for s > 1 (after end point) - linear extrapolation
-        dt_at_one = (t_fwd[-1] - t_fwd[-2]) / ds  # Approximate derivative at s=1
-        t_extended[end_idx] = t_fwd[-1] + dt_at_one * ds  # Linear extrapolation
+        # Use simple finite differences for derivatives
+        # For interior points
+        for i in range(1, len(s_fwd) - 1):
+            dt_fwd[i] = (t_fwd[i + 1] - t_fwd[i - 1]) / (2 * ds)
+            dc_fwd[i] = (c_fwd[i + 1] - c_fwd[i - 1]) / (2 * ds)
 
-        dc_at_one = (c_fwd[-1] - c_fwd[-2]) / ds  # Approximate derivative at s=1
-        c_extended[end_idx] = c_fwd[-1] + dc_at_one * ds  # Linear extrapolation
+        # For boundary points, use one-sided differences
+        # At s=0
+        dt_fwd[0] = (t_fwd[1] - t_fwd[0]) / ds
+        dc_fwd[0] = (c_fwd[1] - c_fwd[0]) / ds
 
-        # Calculate derivatives using central differences on the extended grid
-        dt_extended = torch.gradient(t_extended, spacing=(s_extended,))[0]
-        dc_extended = torch.gradient(c_extended, spacing=(s_extended,))[0]
-
-        # Extract only the derivatives for our original [0,1] range
-        dt_fwd = dt_extended[start_idx:end_idx]
-        dc_fwd = dc_extended[start_idx:end_idx]
+        # At s=1
+        dt_fwd[-1] = (t_fwd[-1] - t_fwd[-2]) / ds
+        dc_fwd[-1] = (c_fwd[-1] - c_fwd[-2]) / ds
 
         # ----- flip to *descending* (noise→data) order -----
-        # This converts from forward (0→1) to backward (1→0) integration
         flip = lambda x: torch.flip(x, [0])
-        s_grid = flip(s_fwd)  # Now 1 → 0 (noise to data)
-        t_grid = flip(t_fwd)  # Now ~0.5 → 0
-        c_grid = flip(c_fwd)  # Now ~1.4 → 1.0
-        dt_grid = flip(dt_fwd)  # Flipped derivative
-        dc_grid = flip(dc_fwd)  # Flipped derivative
+        s_grid = flip(s_fwd)
+        t_grid = flip(t_fwd)
+        c_grid = flip(c_fwd)
+        dt_grid = flip(dt_fwd)
+        dc_grid = flip(dc_fwd)
 
         return s_grid, t_grid, c_grid, dt_grid, dc_grid
 
@@ -3393,23 +3352,21 @@ class MCTSFlowSampler:
 
             # ---------- integrate from s=1 → 0 ------------
             for k in range(N_steps):
-                ds, t, c, dc, dt = (
-                    s_grid[k] - s_grid[k + 1],
-                    t_grid[k],
-                    c_grid[k],
-                    dc_grid[k],
-                    dt_grid[k],
-                )
+                ds = s_grid[k] - s_grid[k + 1]
+                t = t_grid[k]
+                c = c_grid[k]
+                dc = dc_grid[k]
+                dt = dt_grid[k]
 
-                # call original model in *linear* coordinates
-                x_lin = x / c
+                # Directly calculate velocity in linear space
                 t_batch = torch.full((batch_size,), t.item(), device=self.device)
+                x_lin = x / c  # Conversion to linear space
                 v_lin = self.flow_model(t_batch, x_lin, y)
 
-                # convert velocity to VP frame  (Eq. 12)
+                # Convert velocity to VP frame
                 v_vp = (dc / c) * x + c * dt * v_lin
 
-                # Euler update (you can swap in RK4 / Heun)
+                # Update using simple Euler step
                 x = x - v_vp * ds
 
             return self.unnormalize_images(x)
