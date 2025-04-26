@@ -3255,6 +3255,7 @@ class MCTSFlowSampler:
         dt_grid: (n_steps+1,)  d t(s) / d s
         dc_grid: (n_steps+1,)  d c(s) / d s
         """
+        print(f"Building VP tables with {n_steps+1} steps")
 
         # ---- choose or supply a β(s) schedule ------------
         if beta_fn is None:
@@ -3264,6 +3265,7 @@ class MCTSFlowSampler:
         # ---- build an *ascending* grid 0 → 1 -------------
         s_fwd = torch.linspace(0.0, 1.0, n_steps + 1, device=self.device)  # 0 → 1
         ds = s_fwd[1] - s_fwd[0]
+        print(f"Step size ds = {ds.item():.6f}")
 
         # Calculate noise schedule
         beta_vals = beta_fn(s_fwd)
@@ -3319,6 +3321,24 @@ class MCTSFlowSampler:
         dt_grid = flip(dt_fwd)
         dc_grid = flip(dc_fwd)
 
+        print("\nGrid Values After Flipping (first 3 and last 3 values):")
+        print(f"s_grid: {s_grid[:3].tolist()} ... {s_grid[-3:].tolist()}")
+        print(f"t_grid: {t_grid[:3].tolist()} ... {t_grid[-3:].tolist()}")
+        print(f"c_grid: {c_grid[:3].tolist()} ... {c_grid[-3:].tolist()}")
+        print(f"dt_grid: {dt_grid[:3].tolist()} ... {dt_grid[-3:].tolist()}")
+        print(f"dc_grid: {dc_grid[:3].tolist()} ... {dc_grid[-3:].tolist()}")
+
+        # Check for any NaN or inf values
+        for name, grid in [
+            ("s_grid", s_grid),
+            ("t_grid", t_grid),
+            ("c_grid", c_grid),
+            ("dt_grid", dt_grid),
+            ("dc_grid", dc_grid),
+        ]:
+            if torch.isnan(grid).any() or torch.isinf(grid).any():
+                print(f"WARNING: {name} contains NaN or inf values!")
+
         return s_grid, t_grid, c_grid, dt_grid, dc_grid
 
     def regular_batch_sample_vp(self, class_label, batch_size=16):
@@ -3326,6 +3346,9 @@ class MCTSFlowSampler:
         Flow-matching sampling that follows the VP interpolant
         using ODE conversion (no stochastic term, no retraining).
         """
+        print(
+            f"\nSampling with VP path for class {class_label}, batch_size {batch_size}"
+        )
 
         # ---------- build conversion tables once ----------
         N_steps = len(self.timesteps) - 1  # keep same step count
@@ -3336,12 +3359,16 @@ class MCTSFlowSampler:
         self.flow_model.eval()
 
         with torch.no_grad():
+            # Initialize with noise
             x = torch.randn(
                 batch_size,
                 self.channels,
                 self.image_size,
                 self.image_size,
                 device=self.device,
+            )
+            print(
+                f"Initial noise stats: mean={x.mean().item():.4f}, std={x.std().item():.4f}"
             )
 
             y = (
@@ -3358,18 +3385,86 @@ class MCTSFlowSampler:
                 dc = dc_grid[k]
                 dt = dt_grid[k]
 
+                # Debug values every few steps
+                if k % max(1, N_steps // 5) == 0 or k == N_steps - 1:
+                    print(f"\nStep {k}/{N_steps-1}:")
+                    print(
+                        f"  s={s_grid[k].item():.4f} → {s_grid[k+1].item():.4f}, ds={ds.item():.4f}"
+                    )
+                    print(
+                        f"  t={t.item():.4f}, c={c.item():.4f}, dt={dt.item():.4f}, dc={dc.item():.4f}"
+                    )
+                    print(
+                        f"  Current x: mean={x.mean().item():.4f}, std={x.std().item():.4f}, min={x.min().item():.4f}, max={x.max().item():.4f}"
+                    )
+
+                    # Check for any NaN or inf in x
+                    if torch.isnan(x).any() or torch.isinf(x).any():
+                        print("  WARNING: x contains NaN or inf values!")
+                        # Return the current state for inspection
+                        return self.unnormalize_images(x)
+
                 # Directly calculate velocity in linear space
                 t_batch = torch.full((batch_size,), t.item(), device=self.device)
                 x_lin = x / c  # Conversion to linear space
+
+                # Check for issues in linear space conversion
+                if torch.isnan(x_lin).any() or torch.isinf(x_lin).any():
+                    print(
+                        f"  ERROR at step {k}: NaN or inf in x_lin after division by c={c.item()}"
+                    )
+                    return self.unnormalize_images(x)
+
+                # Get velocity from flow model
                 v_lin = self.flow_model(t_batch, x_lin, y)
 
+                # Check if flow model output is valid
+                if torch.isnan(v_lin).any() or torch.isinf(v_lin).any():
+                    print(f"  ERROR at step {k}: Flow model returned NaN or inf")
+                    return self.unnormalize_images(x)
+
                 # Convert velocity to VP frame
-                v_vp = (dc / c) * x + c * dt * v_lin
+                v_vp_scale = (dc / c) * x
+                v_vp_flow = c * dt * v_lin
+                v_vp = v_vp_scale + v_vp_flow
+
+                # Debug velocity components occasionally
+                if k % max(1, N_steps // 5) == 0 or k == N_steps - 1:
+                    print(
+                        f"  v_vp_scale: mean={v_vp_scale.mean().item():.4f}, std={v_vp_scale.std().item():.4f}"
+                    )
+                    print(
+                        f"  v_vp_flow: mean={v_vp_flow.mean().item():.4f}, std={v_vp_flow.std().item():.4f}"
+                    )
+                    print(
+                        f"  v_vp: mean={v_vp.mean().item():.4f}, std={v_vp.std().item():.4f}"
+                    )
 
                 # Update using simple Euler step
-                x = x - v_vp * ds
+                x_update = v_vp * ds
+                x = x - x_update
 
-            return self.unnormalize_images(x)
+                # Debug update size
+                if k % max(1, N_steps // 5) == 0 or k == N_steps - 1:
+                    print(
+                        f"  Update: mean={x_update.mean().item():.4f}, std={x_update.std().item():.4f}"
+                    )
+
+            print("\nFinal x stats before unnormalization:")
+            print(
+                f"mean={x.mean().item():.4f}, std={x.std().item():.4f}, min={x.min().item():.4f}, max={x.max().item():.4f}"
+            )
+
+            # Check for any final NaN or inf
+            if torch.isnan(x).any() or torch.isinf(x).any():
+                print("WARNING: Final x contains NaN or inf values!")
+
+            final_images = self.unnormalize_images(x)
+            print(
+                f"Unnormalized image stats: mean={final_images.mean().item():.4f}, std={final_images.std().item():.4f}"
+            )
+
+            return final_images
 
     def save_models(self, path="saved_models"):
         """Save flow and value models separately."""
