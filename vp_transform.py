@@ -34,7 +34,7 @@ def vp_tables_ode(n_steps: int, device, beta_min=0.0001, beta_max=0.02, eps=1e-5
     bar_rho_dot = (bar_alpha_dot * bar_sigma - bar_alpha * bar_sigma_dot) / bar_sigma**2
 
     t_dot = -bar_rho_dot / (1.0 + bar_rho) ** 2
-    c_dot = (t_fwd * bar_sigma_dot - bar_sigma) * t_dot / (t_fwd**2)
+    c_dot = (t_fwd * bar_sigma_dot - bar_sigma * t_dot) / (t_fwd**2)
 
     # replace ill-conditioned last element
     t_dot[-1] = t_dot[-2]
