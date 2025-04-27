@@ -18,7 +18,7 @@ from run_mcts_flow import calculate_inception_score
 
 DEFAULT_DATASET = "imagenet256"
 DEFAULT_DEVICE = "cuda:1"
-DEFAULT_REAL_SAMPLES = 5000
+DEFAULT_REAL_SAMPLES = 500
 
 # Evaluation mode defaults
 DEFAULT_EVAL_MODE = "single_samples"
