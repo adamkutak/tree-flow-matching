@@ -619,7 +619,6 @@ class MCTSFlowSampler:
 
             # Forward pass through the pretrained DINO classifier
             logits = self.dino_model(resized_images)
-            self.debug_mode = True
 
             # Optional: Calculate and print accuracy for monitoring
             if getattr(self, "debug_mode", False):
