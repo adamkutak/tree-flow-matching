@@ -25,7 +25,7 @@ DEFAULT_EVAL_MODE = "single_samples"
 
 # Sample generation defaults
 DEFAULT_N_SAMPLES = 128
-DEFAULT_BRANCH_PAIRS = "2:1,4:1,8:1"
+DEFAULT_BRANCH_PAIRS = "1:1,2:1,4:1,8:1"
 
 # Time step defaults
 DEFAULT_BRANCH_DT = 0.05
@@ -34,8 +34,8 @@ DEFAULT_DT_STD = 0.7
 DEFAULT_WARP_SCALE = 0.5
 
 # Sampling method defaults
-DEFAULT_SAMPLE_METHOD = "path_exploration_timewarp"
-DEFAULT_SCORING_FUNCTION = "inception_score"
+DEFAULT_SAMPLE_METHOD = "path_exploration_timewarp_shifted"
+DEFAULT_SCORING_FUNCTION = "dino_score"
 
 # Batch optimization defaults
 DEFAULT_REFINEMENT_BATCH_SIZE = 32
