@@ -1770,7 +1770,6 @@ class MCTSFlowSampler:
                     final_scores = score_fn(simulated_samples)
                 else:
                     final_scores = score_fn(simulated_samples, branched_label)
-                breakpoint()
 
                 # --- 5. Select Best Branches and update ---
                 selected_samples_list = []
