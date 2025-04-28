@@ -748,5 +748,54 @@ def calculate_inception_score(images, device, batch_size=32, splits=10):
     return np.mean(scores), np.std(scores)
 
 
+def compute_dino_accuracy(sampler, samples, class_labels):
+    """
+    Compute DINO model classification accuracy on the generated samples.
+
+    Args:
+        sampler: The MCTSFlowSampler instance
+        samples: Generated samples tensor
+        class_labels: True class labels for the samples
+
+    Returns:
+        Dictionary with top-1 and top-5 accuracy
+    """
+    with torch.no_grad():
+        # Prepare images for DINO model
+        images = sampler.unnormalize_images(samples)
+
+        # Apply ImageNet normalization
+        mean = torch.tensor([0.485, 0.456, 0.406], device=samples.device).view(
+            1, 3, 1, 1
+        )
+        std = torch.tensor([0.229, 0.224, 0.225], device=samples.device).view(
+            1, 3, 1, 1
+        )
+        images = (images - mean) / std
+
+        # Resize images to 224x224 if needed
+        if images.shape[-1] != 224:
+            images = torch.nn.functional.interpolate(
+                images, size=(224, 224), mode="bilinear", align_corners=False
+            )
+
+        # Forward pass through DINO model
+        logits = sampler.dino_model(images)
+
+        # Calculate top-1 accuracy
+        predicted_classes = torch.argmax(logits, dim=1)
+        correct_predictions = predicted_classes == class_labels
+        top1_accuracy = correct_predictions.sum().item() / len(images) * 100
+
+        # Calculate top-5 accuracy
+        _, top5_preds = logits.topk(5, 1, True, True)
+        top5_correct = torch.zeros_like(class_labels, dtype=torch.bool)
+        for i in range(5):
+            top5_correct = top5_correct | (top5_preds[:, i] == class_labels)
+        top5_accuracy = top5_correct.sum().item() / len(images) * 100
+
+    return {"top1_accuracy": top1_accuracy, "top5_accuracy": top5_accuracy}
+
+
 if __name__ == "__main__":
     main()

@@ -250,6 +250,8 @@ def evaluate_single_samples(
             "inception_score": metrics["inception_score"],
             "inception_std": metrics["inception_std"],
             "avg_mahalanobis": metrics["avg_mahalanobis"],
+            "dino_top1_accuracy": metrics["dino_top1_accuracy"],
+            "dino_top5_accuracy": metrics["dino_top5_accuracy"],
         }
 
         # Print metrics for this configuration
@@ -259,6 +261,8 @@ def evaluate_single_samples(
             f"Inception Score: {metrics['inception_score']:.4f} ± {metrics['inception_std']:.4f}"
         )
         print(f"Average Mahalanobis Distance: {metrics['avg_mahalanobis']:.4f}")
+        print(f"DINO Top-1 Accuracy: {metrics['dino_top1_accuracy']:.2f}%")
+        print(f"DINO Top-5 Accuracy: {metrics['dino_top5_accuracy']:.2f}%")
 
         # Create and save sample comparison plot
         save_sample_comparison_plot(
@@ -368,6 +372,8 @@ def evaluate_batch_optimization(
             f"Inception Score: {metrics['inception_score']:.4f} ± {metrics['inception_std']:.4f}"
         )
         print(f"Average Mahalanobis Distance: {metrics['avg_mahalanobis']:.4f}")
+        print(f"DINO Top-1 Accuracy: {metrics['dino_top1_accuracy']:.2f}%")
+        print(f"DINO Top-5 Accuracy: {metrics['dino_top5_accuracy']:.2f}%")
 
         # Create and save sample comparison plot
         save_sample_comparison_plot(
@@ -416,11 +422,16 @@ def process_batch_samples(sampler, samples, class_labels, device, fid):
         samples, device=device, batch_size=metric_batch_size, splits=10
     )
 
+    # Compute DINO accuracy
+    dino_accuracy = compute_dino_accuracy(sampler, samples, class_labels)
+
     return {
         "fid_score": fid_score,
         "inception_score": inception_score,
         "inception_std": inception_std,
         "avg_mahalanobis": avg_mahalanobis,
+        "dino_top1_accuracy": dino_accuracy["top1_accuracy"],
+        "dino_top5_accuracy": dino_accuracy["top5_accuracy"],
     }
 
 
@@ -567,12 +578,19 @@ def generate_and_compute_metrics(
     # Combine all class labels
     all_class_labels = torch.cat(all_class_labels, dim=0)
 
+    # Compute DINO accuracy
+    dino_accuracy = compute_dino_accuracy(
+        sampler, generated_tensor_device, all_class_labels
+    )
+
     # Return results including samples and labels for plotting
     results = {
         "fid_score": fid_score,
         "inception_score": inception_score,
         "inception_std": inception_std,
         "avg_mahalanobis": avg_mahalanobis,
+        "dino_top1_accuracy": dino_accuracy["top1_accuracy"],
+        "dino_top5_accuracy": dino_accuracy["top5_accuracy"],
         "samples": generated_samples,
         "class_labels": all_class_labels,
     }
