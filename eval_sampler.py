@@ -537,7 +537,7 @@ def generate_and_compute_metrics(
             raise ValueError(f"Unsupported sample method: {sample_method}")
 
         # Compute metrics
-        mahalanobis_dist = sampler.batch_compute_mahalanobis_distance(
+        mahalanobis_dist = sampler.batch_compute_mean_difference(
             sample, random_class_labels
         )
         mahalanobis_distances.extend(mahalanobis_dist.cpu().tolist())
