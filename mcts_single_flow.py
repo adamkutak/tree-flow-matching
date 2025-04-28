@@ -1258,7 +1258,6 @@ class MCTSFlowSampler:
         # TODO: uncomment this, just for testing.
         # if num_branches == 1 and num_keep == 1:
         #     return self.regular_batch_sample(class_label, batch_size)
-        breakpoint()
 
         assert (
             num_branches % num_keep == 0
