@@ -561,6 +561,8 @@ def generate_and_compute_metrics(
 
     # Compute average Mahalanobis distance
     avg_mahalanobis = sum(mahalanobis_distances) / len(mahalanobis_distances)
+    mahalanobis_variance = np.var(mahalanobis_distances)
+    print(f"Mahalanobis variance: {mahalanobis_variance}")
 
     # Combine all class labels
     all_class_labels = torch.cat(all_class_labels, dim=0)
