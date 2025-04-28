@@ -18,13 +18,13 @@ from run_mcts_flow import calculate_inception_score
 
 DEFAULT_DATASET = "imagenet256"
 DEFAULT_DEVICE = "cuda:1"
-DEFAULT_REAL_SAMPLES = 10000
+DEFAULT_REAL_SAMPLES = 5000
 
 # Evaluation mode defaults
 DEFAULT_EVAL_MODE = "single_samples"
 
 # Sample generation defaults
-DEFAULT_N_SAMPLES = 1000
+DEFAULT_N_SAMPLES = 64
 DEFAULT_BRANCH_PAIRS = "1:1,2:1,4:1,8:1"
 
 # Time step defaults
@@ -537,7 +537,9 @@ def generate_and_compute_metrics(
             raise ValueError(f"Unsupported sample method: {sample_method}")
 
         # Compute metrics
-        mahalanobis_dist = sampler.batch_compute_global_mean_difference(sample)
+        mahalanobis_dist = sampler.batch_compute_mahalanobis_distance(
+            sample, random_class_labels
+        )
         mahalanobis_distances.extend(mahalanobis_dist.cpu().tolist())
         generated_samples.extend(sample.cpu())
 
