@@ -34,7 +34,7 @@ DEFAULT_DT_STD = 0.7
 DEFAULT_WARP_SCALE = 1
 
 # Sampling method defaults
-DEFAULT_SAMPLE_METHOD = "path_exploration_timewarp_shifted"
+DEFAULT_SAMPLE_METHOD = "path_exploration_timewarp"
 DEFAULT_SCORING_FUNCTION = "dino_score"
 
 # Batch optimization defaults
@@ -260,7 +260,7 @@ def evaluate_single_samples(
         print(
             f"Inception Score: {metrics['inception_score']:.4f} ± {metrics['inception_std']:.4f}"
         )
-        print(f"Average Mahalanobis Distance: {metrics['avg_mahalanobis']:.4f}")
+        print(f"Average Mean Distance: {metrics['avg_mahalanobis']:.4f}")
         print(f"DINO Top-1 Accuracy: {metrics['dino_top1_accuracy']:.2f}%")
         print(f"DINO Top-5 Accuracy: {metrics['dino_top5_accuracy']:.2f}%")
 
