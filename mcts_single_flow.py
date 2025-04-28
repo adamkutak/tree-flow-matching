@@ -1554,10 +1554,10 @@ class MCTSFlowSampler:
             branch_dt: Step size to use after branching begins (if None, uses base_dt)
             sqrt_epsilon: Small value for numerical stability
         """
-        print("using regular sampler")
-        # print("not using regular sampler")
-        if num_branches == 1 and num_keep == 1:
-            return self.regular_batch_sample(class_label, batch_size)
+        # print("using regular sampler")
+        print("not using regular sampler")
+        # if num_branches == 1 and num_keep == 1:
+        # return self.regular_batch_sample(class_label, batch_size)
 
         assert (
             num_branches % num_keep == 0
