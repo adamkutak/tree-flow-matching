@@ -34,7 +34,7 @@ DEFAULT_DT_STD = 0.7
 DEFAULT_WARP_SCALE = 1
 
 # Sampling method defaults
-DEFAULT_SAMPLE_METHOD = "path_exploration_timewarp"
+DEFAULT_SAMPLE_METHOD = "path_exploration_timewarp_shifted"
 DEFAULT_SCORING_FUNCTION = "dino_score"
 
 # Batch optimization defaults
