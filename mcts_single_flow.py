@@ -1991,7 +1991,7 @@ class MCTSFlowSampler:
         print("using shifted timewarp-only sampler")
 
         # Number of different warp functions to choose from
-        num_warp_fns = 2
+        num_warp_fns = 3
 
         self.flow_model.eval()
         actual_dt_step = (
