@@ -1255,9 +1255,9 @@ class MCTSFlowSampler:
             branch_dt: Step size to use after branching begins (if None, uses base_dt)
             sqrt_epsilon: Small value for numerical stability
         """
-        print("using path exploration timewarp sampler")
-        # if num_branches == 1 and num_keep == 1:
-        #     return self.regular_batch_sample(class_label, batch_size)
+        print("using regular sampler")
+        if num_branches == 1 and num_keep == 1:
+            return self.regular_batch_sample(class_label, batch_size)
 
         assert (
             num_branches % num_keep == 0
@@ -3258,6 +3258,53 @@ class MCTSFlowSampler:
                 # Flow step
                 velocity = self.flow_model(t_batch, current_samples, current_label)
                 current_samples = current_samples + velocity * dt
+
+            return self.unnormalize_images(current_samples)
+
+    def sde_batch_sample(self, class_label, batch_size=16, noise_scale=0.05):
+        """
+        Flow matching sampling with added noise (SDE sampling).
+
+        Args:
+            class_label: Target class(es) to generate. Can be a single integer or a tensor of class labels.
+            batch_size: Number of samples to generate
+            noise_scale: Scale of the noise to add during sampling
+        """
+        # Check if class_label is a tensor or a single integer
+        is_tensor = torch.is_tensor(class_label)
+
+        self.flow_model.eval()
+
+        with torch.no_grad():
+            current_samples = torch.randn(
+                batch_size,
+                self.channels,
+                self.image_size,
+                self.image_size,
+                device=self.device,
+            )
+
+            # Handle both tensor and single class label cases
+            if is_tensor:
+                current_label = class_label
+            else:
+                current_label = torch.full(
+                    (batch_size,), class_label, device=self.device
+                )
+
+            # Generate samples using timesteps with noise
+            for step, t in enumerate(self.timesteps[:-1]):
+                dt = self.timesteps[step + 1] - t
+                t_batch = torch.full((batch_size,), t.item(), device=self.device)
+
+                # Flow step with SDE noise term
+                velocity = self.flow_model(t_batch, current_samples, current_label)
+
+                # Add noise scaled by dt and noise_scale
+                noise = torch.randn_like(current_samples) * torch.sqrt(dt) * noise_scale
+
+                # Euler-Maruyama update
+                current_samples = current_samples + velocity * dt + noise
 
             return self.unnormalize_images(current_samples)
 
