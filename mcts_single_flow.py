@@ -1548,7 +1548,7 @@ class MCTSFlowSampler:
         print("using timewarp-only sampler")
 
         # Get a set of warping functions and derivatives
-        num_warp_fns = 4  # Number of different warp functions to choose from
+        num_warp_fns = 2  # Number of different warp functions to choose from
         warp_fns, warp_deriv_fns = self._get_warp_functions(
             num_warp_fns, self.device, sqrt_epsilon
         )
