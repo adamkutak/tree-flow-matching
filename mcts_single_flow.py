@@ -1976,6 +1976,7 @@ class MCTSFlowSampler:
         warp_scale=0.5,
         branch_dt=None,
         sqrt_epsilon=1e-8,
+        max_steps=1000,  # Add maximum number of steps to prevent infinite loops
     ):
         """
         Sample using continuous timewarping without branching, with shifted warping.
@@ -1987,6 +1988,7 @@ class MCTSFlowSampler:
             warp_scale: Scale factor for time warping
             branch_dt: Step size to use (if None, uses base_dt)
             sqrt_epsilon: Small value for numerical stability
+            max_steps: Maximum number of steps to prevent infinite loops
         """
         print("using shifted timewarp-only sampler (warped time as true time)")
 
@@ -2012,9 +2014,12 @@ class MCTSFlowSampler:
             # Track warped times (true time parameter for the system)
             current_warped_times = torch.zeros(batch_size, device=self.device)
 
-            # Main sampling loop - continue until all warped times reach 1.0
-            while torch.any(current_warped_times < 1.0):
-                active_mask = current_warped_times < 1.0
+            step_count = 0
+
+            # Main sampling loop - continue until all warped times reach close to 1.0
+            while torch.any(current_warped_times < 0.999) and step_count < max_steps:
+                step_count += 1
+                active_mask = current_warped_times < 0.999  # Use 0.999 as threshold
                 if not torch.any(active_mask):
                     break
 
@@ -2028,6 +2033,12 @@ class MCTSFlowSampler:
                     actual_dt_step * torch.ones_like(active_times),
                     1.0 - active_times,
                 )
+
+                # Check if we're making very small time steps (might cause infinite loop)
+                if torch.all(dt_step < 1e-6):
+                    print("Warning: Very small time steps detected, forcing completion")
+                    current_warped_times[active_mask] = 1.0
+                    break
 
                 # Randomly select a warp function for each sample
                 warp_indices = torch.randint(
@@ -2074,27 +2085,31 @@ class MCTSFlowSampler:
                     ) + warp_scale * warp_deriv
                     warp_derivs[i] = final_warp_deriv
 
-                # Compute velocity using the newly calculated warped times
+                # Ensure progress in warped time
+                min_warped_time_progress = (
+                    0.001  # Minimum progress to ensure loop termination
+                )
+                warped_dt = next_warped_times - active_warped_times
+                too_small_progress = warped_dt < min_warped_time_progress
+
+                if torch.any(too_small_progress):
+                    # Boost progress to ensure termination for samples making little progress
+                    next_warped_times[too_small_progress] = (
+                        active_warped_times[too_small_progress]
+                        + min_warped_time_progress
+                    )
+
+                # Ensure we don't overshoot beyond warped time = 1.0
+                next_warped_times = torch.clamp(next_warped_times, max=1.0)
+
+                # Compute velocity using the warped times
                 velocity = self.flow_model(
                     next_warped_times, active_samples, active_label
                 )
 
-                # Calculate effective dt in warped time
-                warped_dt = next_warped_times - active_warped_times
-
-                # Ensure we don't overshoot beyond warped time = 1.0
-                scale_factor = torch.ones_like(warped_dt)
-                overshoot_mask = next_warped_times > 1.0
-                if torch.any(overshoot_mask):
-                    # Scale down the step so warped time exactly reaches 1.0
-                    scale_factor[overshoot_mask] = (
-                        1.0 - active_warped_times[overshoot_mask]
-                    ) / warped_dt[overshoot_mask]
-                    next_warped_times[overshoot_mask] = 1.0
-
-                # Apply velocity with adjusted step size
-                update = velocity * scale_factor.view(-1, 1, 1, 1)
-                active_samples = active_samples + update
+                # Apply velocity
+                # For simplified integration, we use a direct step based on velocity
+                active_samples = active_samples + velocity * dt_step.view(-1, 1, 1, 1)
 
                 # Update times
                 active_times = active_times + dt_step
@@ -2103,6 +2118,19 @@ class MCTSFlowSampler:
                 current_samples[active_mask] = active_samples
                 current_times[active_mask] = active_times
                 current_warped_times[active_mask] = next_warped_times
+
+                # Print progress periodically
+                if step_count % 100 == 0:
+                    print(
+                        f"Step {step_count}, max warped time: {current_warped_times.max().item():.4f}"
+                    )
+
+            if step_count >= max_steps:
+                print(
+                    f"Warning: Reached maximum steps ({max_steps}). Some samples may not be fully integrated."
+                )
+                # Force completion for any remaining samples
+                current_warped_times[current_warped_times < 1.0] = 1.0
 
             return self.unnormalize_images(current_samples)
 
