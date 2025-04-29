@@ -1332,9 +1332,10 @@ class MCTSFlowSampler:
                 branch_indices_map = torch.arange(
                     num_active, device=self.device
                 ).repeat_interleave(num_branches)
-                warp_indices = (
-                    torch.arange(len(branched_samples), device=self.device)
-                    % num_branches
+
+                # Randomly select warp function indices for each branch
+                warp_indices = torch.randint(
+                    0, num_branches, (len(branched_samples),), device=self.device
                 )
 
                 # --- 2. Take ONE Branching Step with Warping ---
