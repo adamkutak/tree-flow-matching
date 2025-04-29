@@ -1256,8 +1256,8 @@ class MCTSFlowSampler:
             sqrt_epsilon: Small value for numerical stability
         """
         print("using path exploration timewarp sampler")
-        # if num_branches == 1 and num_keep == 1:
-        #     return self.regular_batch_sample(class_label, batch_size)
+        if num_branches == 1 and num_keep == 1:
+            return self.batch_sample_with_timewarp_only(class_label, batch_size)
 
         assert (
             num_branches % num_keep == 0
@@ -1525,6 +1525,108 @@ class MCTSFlowSampler:
                 final_samples.append(batch_final_samples[best_idx_in_batch])
 
             return self.unnormalize_images(torch.stack(final_samples))
+
+    def batch_sample_with_timewarp_only(
+        self,
+        class_label,
+        batch_size=16,
+        warp_scale=0.5,
+        branch_dt=None,
+        sqrt_epsilon=1e-8,
+    ):
+        """
+        Sample using timewarping without branching, randomly selecting timewarp functions.
+        Similar to path exploration but with num_branches=1, without simulation/scoring.
+
+        Args:
+            class_label: Tensor of class labels for each sample
+            batch_size: Number of final samples to generate
+            warp_scale: Scale factor for time warping
+            branch_dt: Step size to use (if None, uses base_dt)
+            sqrt_epsilon: Small value for numerical stability
+        """
+        print("using timewarp-only sampler")
+
+        # Get a set of warping functions and derivatives
+        num_warp_fns = 4  # Number of different warp functions to choose from
+        warp_fns, warp_deriv_fns = self._get_warp_functions(
+            num_warp_fns, self.device, sqrt_epsilon
+        )
+
+        self.flow_model.eval()
+        actual_dt_step = (
+            branch_dt if branch_dt is not None else (1 / self.num_timesteps)
+        )
+
+        with torch.no_grad():
+            # Initialize with tensor class labels
+            current_samples = torch.randn(
+                batch_size,
+                self.channels,
+                self.image_size,
+                self.image_size,
+                device=self.device,
+            )
+            current_times = torch.zeros(batch_size, device=self.device)
+
+            # Main sampling loop
+            while torch.any(current_times < 1.0):
+                active_mask = current_times < 1.0
+                if not torch.any(active_mask):
+                    break
+
+                active_samples = current_samples[active_mask]
+                active_times = current_times[active_mask]
+                active_label = class_label[active_mask]
+
+                # Compute step size
+                dt_step = torch.minimum(
+                    actual_dt_step * torch.ones_like(active_times),
+                    1.0 - active_times,
+                )
+
+                # Randomly select a warp function for each sample
+                warp_indices = torch.randint(
+                    0, num_warp_fns, (len(active_samples),), device=self.device
+                )
+
+                # Apply the selected warp functions
+                warped_times = torch.zeros_like(active_times)
+                warp_derivs = torch.zeros_like(active_times)
+
+                for i in range(num_warp_fns):
+                    mask = warp_indices == i
+                    if torch.any(mask):
+                        orig_t = active_times[mask]
+                        warped_t = warp_fns[i](orig_t)
+                        final_warped_t = (
+                            1 - warp_scale
+                        ) * orig_t + warp_scale * warped_t
+                        warped_times[mask] = final_warped_t
+
+                        orig_deriv = warp_deriv_fns[i](orig_t)
+                        final_warp_deriv = (1 - warp_scale) * torch.ones_like(
+                            orig_deriv
+                        ) + warp_scale * orig_deriv
+                        warp_derivs[mask] = final_warp_deriv
+
+                # Compute velocity and update samples
+                velocity = self.flow_model(warped_times, active_samples, active_label)
+
+                # Apply velocity with time warping (chain rule)
+                update = (
+                    velocity * warp_derivs.view(-1, 1, 1, 1) * dt_step.view(-1, 1, 1, 1)
+                )
+                active_samples = active_samples + update
+
+                # Update times
+                active_times = active_times + dt_step
+
+                # Update the main tensors
+                current_samples[active_mask] = active_samples
+                current_times[active_mask] = active_times
+
+            return self.unnormalize_images(current_samples)
 
     def batch_sample_with_path_exploration_timewarp_shifted(
         self,
