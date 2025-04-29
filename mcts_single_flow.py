@@ -1979,7 +1979,7 @@ class MCTSFlowSampler:
     ):
         """
         Sample using continuous timewarping without branching, with shifted warping.
-        Similar to path exploration shifted but with num_branches=1, without scoring/selection.
+        Uses warped time as the true time parameter of the system.
 
         Args:
             class_label: Tensor of class labels for each sample
@@ -1988,10 +1988,10 @@ class MCTSFlowSampler:
             branch_dt: Step size to use (if None, uses base_dt)
             sqrt_epsilon: Small value for numerical stability
         """
-        print("using shifted timewarp-only sampler")
+        print("using shifted timewarp-only sampler (warped time as true time)")
 
         # Number of different warp functions to choose from
-        num_warp_fns = 2
+        num_warp_fns = 4
 
         self.flow_model.eval()
         actual_dt_step = (
@@ -2007,14 +2007,14 @@ class MCTSFlowSampler:
                 self.image_size,
                 device=self.device,
             )
+            # Track internal times (0 to 1 parameter)
             current_times = torch.zeros(batch_size, device=self.device)
-            current_warped_times = (
-                current_times.clone()
-            )  # Track warped times separately
+            # Track warped times (true time parameter for the system)
+            current_warped_times = torch.zeros(batch_size, device=self.device)
 
-            # Main sampling loop
-            while torch.any(current_times < 1.0):
-                active_mask = current_times < 1.0
+            # Main sampling loop - continue until all warped times reach 1.0
+            while torch.any(current_warped_times < 1.0):
+                active_mask = current_warped_times < 1.0
                 if not torch.any(active_mask):
                     break
 
@@ -2023,7 +2023,7 @@ class MCTSFlowSampler:
                 active_warped_times = current_warped_times[active_mask]
                 active_label = class_label[active_mask]
 
-                # Compute step size
+                # Compute step size for internal time
                 dt_step = torch.minimum(
                     actual_dt_step * torch.ones_like(active_times),
                     1.0 - active_times,
@@ -2034,7 +2034,7 @@ class MCTSFlowSampler:
                     0, num_warp_fns, (len(active_samples),), device=self.device
                 )
 
-                # Create all warping functions for each sample directly
+                # Create warping functions for each sample
                 all_warp_fns = []
                 all_warp_deriv_fns = []
 
@@ -2059,14 +2059,14 @@ class MCTSFlowSampler:
                     all_warp_deriv_fns.append(warp_deriv_fns_i[warp_idx])
 
                 # Apply warping to each sample
-                warped_times = torch.zeros_like(active_times)
+                next_warped_times = torch.zeros_like(active_times)
                 warp_derivs = torch.zeros_like(active_times)
 
                 for i in range(len(active_samples)):
                     t = active_times[i]
                     warped_t = all_warp_fns[i](t.unsqueeze(0)).squeeze()
                     final_warped_t = (1 - warp_scale) * t + warp_scale * warped_t
-                    warped_times[i] = final_warped_t
+                    next_warped_times[i] = final_warped_t
 
                     warp_deriv = all_warp_deriv_fns[i](t.unsqueeze(0)).squeeze()
                     final_warp_deriv = (1 - warp_scale) * torch.ones_like(
@@ -2074,23 +2074,35 @@ class MCTSFlowSampler:
                     ) + warp_scale * warp_deriv
                     warp_derivs[i] = final_warp_deriv
 
-                # Compute velocity using the warped times
-                velocity = self.flow_model(warped_times, active_samples, active_label)
-
-                # Apply velocity with time warping (chain rule)
-                update = (
-                    velocity * warp_derivs.view(-1, 1, 1, 1) * dt_step.view(-1, 1, 1, 1)
+                # Compute velocity using the newly calculated warped times
+                velocity = self.flow_model(
+                    next_warped_times, active_samples, active_label
                 )
+
+                # Calculate effective dt in warped time
+                warped_dt = next_warped_times - active_warped_times
+
+                # Ensure we don't overshoot beyond warped time = 1.0
+                scale_factor = torch.ones_like(warped_dt)
+                overshoot_mask = next_warped_times > 1.0
+                if torch.any(overshoot_mask):
+                    # Scale down the step so warped time exactly reaches 1.0
+                    scale_factor[overshoot_mask] = (
+                        1.0 - active_warped_times[overshoot_mask]
+                    ) / warped_dt[overshoot_mask]
+                    next_warped_times[overshoot_mask] = 1.0
+
+                # Apply velocity with adjusted step size
+                update = velocity * scale_factor.view(-1, 1, 1, 1)
                 active_samples = active_samples + update
 
-                # Update times and warped times
+                # Update times
                 active_times = active_times + dt_step
-                active_warped_times = warped_times.clone()  # Store for next iteration
 
                 # Update the main tensors
                 current_samples[active_mask] = active_samples
                 current_times[active_mask] = active_times
-                current_warped_times[active_mask] = active_warped_times
+                current_warped_times[active_mask] = next_warped_times
 
             return self.unnormalize_images(current_samples)
 
