@@ -3599,6 +3599,7 @@ class MCTSFlowSampler:
             use_global: Whether to use global statistics instead of class-specific ones
             branch_start_time: Time point at which to start branching (0.0 to 1.0)
         """
+        print("using sde path exploration sampler")
         if num_branches == 1 and num_keep == 1:
             return self.batch_sample_sde(class_label, batch_size, noise_scale)
 
