@@ -559,7 +559,6 @@ def generate_and_compute_metrics(
                 selector=scoring_function,
                 use_global=True,
                 branch_start_time=branch_start_time,
-                branch_dt=branch_dt,
                 noise_scale=0.05,
             )
         else:
