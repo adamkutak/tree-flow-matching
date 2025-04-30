@@ -3792,7 +3792,16 @@ class MCTSFlowSampler:
                 best_idx = torch.argmax(batch_data["scores"])
                 final_samples.append(batch_data["samples"][best_idx])
 
-        breakpoint()
+        del (
+            current_samples,
+            current_times,
+            current_label,
+            final_scores,
+            batch_indices,
+            samples_by_batch,
+            batch_data,
+        )
+        torch.cuda.empty_cache()
         return self.unnormalize_images(torch.stack(final_samples))
 
     def save_models(self, path="saved_models"):
