@@ -3470,8 +3470,6 @@ class MCTSFlowSampler:
         batch_size = latents.shape[0]
         max_batch_size = 64  # this is based on a 24GB RTX 6000
 
-        breakpoint()
-
         if batch_size <= max_batch_size:
             # Convert latents to half precision to match VAE parameters
             latents_half = latents.half()
@@ -3794,6 +3792,7 @@ class MCTSFlowSampler:
                 best_idx = torch.argmax(batch_data["scores"])
                 final_samples.append(batch_data["samples"][best_idx])
 
+        breakpoint()
         return self.unnormalize_images(torch.stack(final_samples))
 
     def save_models(self, path="saved_models"):
