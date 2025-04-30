@@ -545,9 +545,21 @@ def generate_and_compute_metrics(
                 use_global=True,
             )
         elif sample_method == "sde":
-            sample = sampler.sde_batch_sample(
+            sample = sampler.batch_sample_sde(
                 class_label=random_class_labels,
                 batch_size=current_batch_size,
+                noise_scale=0.05,
+            )
+        elif sample_method == "sde_path_exploration":
+            sample = sampler.batch_sample_sde_path_exploration(
+                class_label=random_class_labels,
+                batch_size=current_batch_size,
+                num_branches=num_branches,
+                num_keep=num_keep,
+                selector=scoring_function,
+                use_global=True,
+                branch_start_time=branch_start_time,
+                branch_dt=branch_dt,
                 noise_scale=0.05,
             )
         else:
@@ -823,6 +835,7 @@ if __name__ == "__main__":
             "regular",
             "random_search",
             "sde",
+            "sde_path_exploration",
             "path_exploration",
             "path_exploration_timewarp",
             "path_exploration_timewarp_shifted",
