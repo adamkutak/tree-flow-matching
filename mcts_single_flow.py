@@ -3483,7 +3483,7 @@ class MCTSFlowSampler:
                 batch_latents_half = batch_latents.half()
                 batch_images = self.vae.decode(batch_latents_half / 0.18215).sample
                 batch_images = torch.clamp((batch_images + 1) / 2, 0.0, 1.0).float()
-                decoded_images.append(batch_images.cpu())
+                decoded_images.append(batch_images)
 
             return torch.cat(decoded_images, dim=0)
 
