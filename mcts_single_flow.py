@@ -1524,7 +1524,6 @@ class MCTSFlowSampler:
                 best_idx_in_batch = torch.argmax(batch_final_scores)
                 final_samples.append(batch_final_samples[best_idx_in_batch])
 
-            breakpoint()
             return self.unnormalize_images(torch.stack(final_samples))
 
     def batch_sample_with_timewarp_only(
@@ -3793,6 +3792,7 @@ class MCTSFlowSampler:
                 best_idx = torch.argmax(batch_data["scores"])
                 final_samples.append(batch_data["samples"][best_idx])
 
+        breakpoint()
         return self.unnormalize_images(torch.stack(final_samples))
 
     def save_models(self, path="saved_models"):
