@@ -1156,6 +1156,7 @@ class MCTSFlowSampler:
                 else:
                     final_scores = score_fn(simulated_samples, branched_label)
 
+                breakpoint()
                 # Select best branches for each batch element
                 selected_samples = []
                 selected_times = []
@@ -3716,7 +3717,6 @@ class MCTSFlowSampler:
                 else:
                     final_scores = score_fn(simulated_samples, branched_label)
 
-                breakpoint()
                 # Select best branches for each batch element
                 selected_samples = []
                 selected_times = []

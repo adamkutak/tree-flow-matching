@@ -30,11 +30,11 @@ DEFAULT_BRANCH_PAIRS = "2:1,4:1,8:1"
 # Time step defaults
 DEFAULT_BRANCH_DT = 0.05
 DEFAULT_BRANCH_START_TIME = 0.5
-DEFAULT_DT_STD = 0.7
+DEFAULT_DT_STD = 1
 DEFAULT_WARP_SCALE = 1
 
 # Sampling method defaults
-DEFAULT_SAMPLE_METHOD = "sde_path_exploration"
+DEFAULT_SAMPLE_METHOD = "path_exploration"
 DEFAULT_SCORING_FUNCTION = "dino_score"
 
 # Batch optimization defaults
