@@ -3468,7 +3468,7 @@ class MCTSFlowSampler:
         Decode latents to images using VAE.
         """
         batch_size = latents.shape[0]
-        max_batch_size = 64
+        max_batch_size = 64  # this is based on a 24GB RTX 6000
 
         if batch_size <= max_batch_size:
             # Convert latents to half precision to match VAE parameters
