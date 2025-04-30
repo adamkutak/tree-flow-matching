@@ -1659,7 +1659,7 @@ class MCTSFlowSampler:
             sqrt_epsilon: Small value for numerical stability
         """
         if num_branches == 1 and num_keep == 1:
-            return self.sde_batch_sample(class_label, batch_size)
+            return self.batch_sample_with_shifted_timewarp_only(class_label, batch_size)
 
         assert (
             num_branches % num_keep == 0

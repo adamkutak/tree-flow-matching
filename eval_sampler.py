@@ -34,7 +34,7 @@ DEFAULT_DT_STD = 0.7
 DEFAULT_WARP_SCALE = 1
 
 # Sampling method defaults
-DEFAULT_SAMPLE_METHOD = "path_exploration_timewarp_shifted"
+DEFAULT_SAMPLE_METHOD = "sde"
 DEFAULT_SCORING_FUNCTION = "dino_score"
 
 # Batch optimization defaults
@@ -544,6 +544,12 @@ def generate_and_compute_metrics(
                 selector=scoring_function,
                 use_global=True,
             )
+        elif sample_method == "sde":
+            sample = sampler.sde_batch_sample(
+                class_label=random_class_labels,
+                batch_size=current_batch_size,
+                noise_scale=0.05,
+            )
         else:
             raise ValueError(f"Unsupported sample method: {sample_method}")
 
@@ -816,6 +822,7 @@ if __name__ == "__main__":
         choices=[
             "regular",
             "random_search",
+            "sde",
             "path_exploration",
             "path_exploration_timewarp",
             "path_exploration_timewarp_shifted",
