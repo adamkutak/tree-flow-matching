@@ -469,7 +469,7 @@ def generate_and_compute_metrics(
     """
     fid.reset()
 
-    generation_batch_size = int(64 / num_branches)
+    generation_batch_size = int(64 / num_branches)  # this is based on a 24GB RTX 6000
     metric_batch_size = 64
     generated_samples = []
     mahalanobis_distances = []
