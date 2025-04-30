@@ -3461,7 +3461,7 @@ class MCTSFlowSampler:
         std = torch.tensor([0.229, 0.224, 0.225], device=self.device).view(1, 3, 1, 1)
 
         unnormalized = images * std + mean
-        return torch.clamp(unnormalized, 0.0, 1.0)
+        return torch.clamp(unnormalized, 0.0, 1.0).cpu()
 
     def decode_latents(self, latents):
         """
@@ -3483,7 +3483,7 @@ class MCTSFlowSampler:
                 batch_latents_half = batch_latents.half()
                 batch_images = self.vae.decode(batch_latents_half / 0.18215).sample
                 batch_images = torch.clamp((batch_images + 1) / 2, 0.0, 1.0).float()
-                decoded_images.append(batch_images)
+                decoded_images.append(batch_images.cpu())
 
             return torch.cat(decoded_images, dim=0)
 
