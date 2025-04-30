@@ -1156,7 +1156,6 @@ class MCTSFlowSampler:
                 else:
                     final_scores = score_fn(simulated_samples, branched_label)
 
-                breakpoint()
                 # Select best branches for each batch element
                 selected_samples = []
                 selected_times = []
@@ -3588,14 +3587,15 @@ class MCTSFlowSampler:
     ):
         """
         Flow matching sampling with SDE and path exploration.
-        Explores multiple paths by adding different noise samples at each branching step.
+        Explores multiple paths by adding different noise samples at each branching step,
+        then simulates deterministic paths to evaluate branches.
 
         Args:
             class_label: Target class(es) to generate. Can be a single integer or a tensor of class labels.
             batch_size: Number of samples to generate
             num_branches: Number of branches per batch element at each step
             num_keep: Number of samples to keep before next branching
-            noise_scale: Scale of the noise to add during sampling
+            noise_scale: Scale of the noise to add during branching
             selector: Selection criteria - options include "fid", "mahalanobis", "mean", "inception_score", "dino_score"
             use_global: Whether to use global statistics instead of class-specific ones
             branch_start_time: Time point at which to start branching (0.0 to 1.0)
@@ -3659,7 +3659,7 @@ class MCTSFlowSampler:
                 )
                 dt = torch.clamp(
                     torch.full((len(branched_samples),), base_dt, device=self.device),
-                    min=torch.tensor(0.0, device=self.device),
+                    min=0.0,
                     max=1.0 - branched_times,
                 )
 
@@ -3676,7 +3676,7 @@ class MCTSFlowSampler:
                 )
                 branched_times = branched_times + dt
 
-                # Simulate each branch to completion (t=1) without further branching
+                # Simulate each branch to completion (t=1) WITHOUT noise (deterministic)
                 simulated_samples = branched_samples.clone()
                 simulated_times = branched_times.clone()
 
@@ -3697,18 +3697,10 @@ class MCTSFlowSampler:
                         1.0 - simulated_times[active_mask],
                     )
 
-                    # Add SDE noise during simulation
-                    sim_noise = (
-                        torch.randn_like(simulated_samples[active_mask])
-                        * torch.sqrt(dt.view(-1, 1, 1, 1))
-                        * noise_scale
-                    )
-
-                    simulated_samples[active_mask] = (
-                        simulated_samples[active_mask]
-                        + velocity * dt.view(-1, 1, 1, 1)
-                        + sim_noise
-                    )
+                    # No noise during simulation phase - deterministic
+                    simulated_samples[active_mask] = simulated_samples[
+                        active_mask
+                    ] + velocity * dt.view(-1, 1, 1, 1)
                     simulated_times[active_mask] = simulated_times[active_mask] + dt
 
                 # Evaluate final samples
