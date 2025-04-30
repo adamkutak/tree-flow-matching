@@ -1175,6 +1175,7 @@ class MCTSFlowSampler:
                     top_k_values, top_k_indices = torch.topk(
                         batch_scores, k=min(num_keep, len(batch_scores)), dim=0
                     )
+                    breakpoint()
 
                     selected_samples.append(batch_samples[top_k_indices])
                     selected_times.append(batch_times[top_k_indices])
