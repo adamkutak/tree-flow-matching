@@ -1255,7 +1255,6 @@ class MCTSFlowSampler:
             branch_dt: Step size to use after branching begins (if None, uses base_dt)
             sqrt_epsilon: Small value for numerical stability
         """
-        print("using path exploration timewarp sampler")
         if num_branches == 1 and num_keep == 1:
             return self.batch_sample_with_timewarp_only(class_label, batch_size)
 
