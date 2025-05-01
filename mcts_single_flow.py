@@ -3601,7 +3601,7 @@ class MCTSFlowSampler:
             branch_start_time: Time point at which to start branching (0.0 to 1.0)
         """
         if num_branches == 1 and num_keep == 1:
-            return self.batch_sample_sde(class_label, batch_size, noise_scale)
+            return self.regular_batch_sample(class_label, batch_size)
 
         assert (
             num_branches % num_keep == 0
