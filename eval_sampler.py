@@ -24,8 +24,8 @@ DEFAULT_REAL_SAMPLES = 128
 DEFAULT_EVAL_MODE = "single_samples"
 
 # Sample generation defaults
-DEFAULT_N_SAMPLES = 32
-DEFAULT_BRANCH_PAIRS = "2:1,4:1,8:1"
+DEFAULT_N_SAMPLES = 128
+DEFAULT_BRANCH_PAIRS = "1:1,2:1,4:1,8:1"
 
 # Time step defaults
 DEFAULT_BRANCH_DT = 0.05
