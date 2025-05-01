@@ -18,13 +18,13 @@ from run_mcts_flow import calculate_inception_score, compute_dino_accuracy
 
 DEFAULT_DATASET = "imagenet256"
 DEFAULT_DEVICE = "cuda:1"
-DEFAULT_REAL_SAMPLES = 128
+DEFAULT_REAL_SAMPLES = 5000
 
 # Evaluation mode defaults
 DEFAULT_EVAL_MODE = "single_samples"
 
 # Sample generation defaults
-DEFAULT_N_SAMPLES = 5000
+DEFAULT_N_SAMPLES = 128
 DEFAULT_BRANCH_PAIRS = "1:1,2:1,4:1,8:1"
 
 # Time step defaults
@@ -559,7 +559,7 @@ def generate_and_compute_metrics(
                 selector=scoring_function,
                 use_global=True,
                 branch_start_time=branch_start_time,
-                noise_scale=0.05,
+                noise_scale=0.1,
             )
         else:
             raise ValueError(f"Unsupported sample method: {sample_method}")
