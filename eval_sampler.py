@@ -18,13 +18,13 @@ from run_mcts_flow import calculate_inception_score, compute_dino_accuracy
 
 DEFAULT_DATASET = "imagenet256"
 DEFAULT_DEVICE = "cuda:5"
-DEFAULT_REAL_SAMPLES = 5000
+DEFAULT_REAL_SAMPLES = 100
 
 # Evaluation mode defaults
 DEFAULT_EVAL_MODE = "single_samples"
 
 # Sample generation defaults
-DEFAULT_N_SAMPLES = 1024
+DEFAULT_N_SAMPLES = 128
 DEFAULT_BRANCH_PAIRS = "1:1,2:1,4:1,8:1"
 
 # Time step defaults
@@ -537,8 +537,8 @@ def generate_and_compute_metrics(
                 branch_dt=branch_dt,
             )
         elif sample_method == "random_search":
-            # sample = sampler.batch_sample_with_random_search(
-            sample = sampler.batch_sample_with_random_search_sde(
+            sample = sampler.batch_sample_with_random_search(
+                # sample = sampler.batch_sample_with_random_search_sde(
                 class_label=random_class_labels,
                 batch_size=current_batch_size,
                 num_branches=num_branches,
@@ -582,12 +582,10 @@ def generate_and_compute_metrics(
     # Compute FID score
     fid_score = fid.compute().item()
 
-    # Compute Inception Score with batching
+    # Compute Inception Score
+    generated_tensor_device = torch.stack(generated_samples).to(device)
     inception_score, inception_std = calculate_inception_score(
-        torch.stack(generated_samples),
-        device=device,
-        batch_size=metric_batch_size,
-        splits=10,
+        generated_tensor_device, device=device, batch_size=metric_batch_size, splits=10
     )
 
     # Compute average Mahalanobis distance
@@ -598,33 +596,10 @@ def generate_and_compute_metrics(
     # Combine all class labels
     all_class_labels = torch.cat(all_class_labels, dim=0)
 
-    # Compute DINO accuracy with batching
-    dino_top1 = 0
-    dino_top5 = 0
-    total_samples = 0
-
-    for i in range(0, len(generated_samples), metric_batch_size):
-        batch_end = min(i + metric_batch_size, len(generated_samples))
-        batch_size = batch_end - i
-        total_samples += batch_size
-
-        batch_samples = torch.stack(generated_samples[i:batch_end]).to(device)
-        batch_labels = all_class_labels[i:batch_end]
-
-        batch_accuracy = compute_dino_accuracy(sampler, batch_samples, batch_labels)
-
-        # Sum the weighted accuracy
-        dino_top1 += batch_accuracy["top1_accuracy"] * batch_size
-        dino_top5 += batch_accuracy["top5_accuracy"] * batch_size
-
-        # Free up memory
-        batch_samples = batch_samples.cpu()
-
-    # Calculate final average
-    dino_accuracy = {
-        "top1_accuracy": dino_top1 / total_samples,
-        "top5_accuracy": dino_top5 / total_samples,
-    }
+    # Compute DINO accuracy
+    dino_accuracy = compute_dino_accuracy(
+        sampler, generated_tensor_device, all_class_labels
+    )
 
     # Return results including samples and labels for plotting
     results = {
@@ -640,6 +615,7 @@ def generate_and_compute_metrics(
 
     # Clean up memory
     generated_tensor = None
+    generated_tensor_device = None
     torch.cuda.empty_cache()
 
     return results
