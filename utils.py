@@ -2,11 +2,6 @@ import torch
 
 
 def score_si_linear(x, t_batch, u_t):
-    """
-    x        : (B,C,H,W)
-    t_batch  : (B,) scalar times in (0,1]
-    u_t      : velocity tensor (same shape as x)
-    """
     one_minus_t = 1.0 - t_batch.view(-1, *([1] * (x.ndim - 1)))
     t = t_batch.view(-1, *([1] * (x.ndim - 1)))
 
@@ -15,15 +10,13 @@ def score_si_linear(x, t_batch, u_t):
 
 
 def divfree_swirl_si(x, t_batch, y, u_t, eps=1e-8):
-    """
-    Same signature as before, but the score comes from Eq.(9)
-    — no autograd trace needed.
-    """
     eps_raw = torch.randn_like(x)
     score = score_si_linear(x, t_batch, u_t)
 
-    proj = (eps_raw * score).sum(dim=tuple(range(1, x.ndim)), keepdim=True) / (
-        score.norm(dim=tuple(range(1, x.ndim)), keepdim=True) ** 2 + eps
-    )
+    dims = tuple(range(1, x.ndim))
+    dot = eps_raw * score).sum(dim=dims, keepdim=True)
+    s_norm  = torch.linalg.vector_norm(score, dim=dims, keepdim=True) + eps
+    s_norm2 = s_norm.pow(2)
+    proj = dot / s_norm2
     w = eps_raw - proj * score
     return w
