@@ -6,7 +6,9 @@ def score_si_linear(x, t_batch, u_t):
     t = t_batch.view(-1, *([1] * (x.ndim - 1)))
 
     # s(x,t) = -((1-t) * u_t + x) / t
-    return -((one_minus_t * u_t + x) / t)
+    score = -((one_minus_t * u_t + x) / t)
+    breakpoint()
+    return score
 
 
 def divfree_swirl_si(x, t_batch, y, u_t, eps=1e-8):
@@ -20,5 +22,4 @@ def divfree_swirl_si(x, t_batch, y, u_t, eps=1e-8):
     proj = dot / s_norm2
     w = eps_raw - proj * score
 
-    breakpoint()
     return w
