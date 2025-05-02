@@ -582,9 +582,12 @@ def generate_and_compute_metrics(
     # Compute FID score
     fid_score = fid.compute().item()
 
-    # Compute Inception Score with explicit batching
+    # Compute Inception Score with batching
     inception_score, inception_std = calculate_inception_score(
-        generated_samples, device=device, batch_size=metric_batch_size, splits=10
+        torch.stack(generated_samples),
+        device=device,
+        batch_size=metric_batch_size,
+        splits=10,
     )
 
     # Compute average Mahalanobis distance
@@ -595,21 +598,33 @@ def generate_and_compute_metrics(
     # Combine all class labels
     all_class_labels = torch.cat(all_class_labels, dim=0)
 
-    # Compute DINO accuracy with explicit batching
+    # Compute DINO accuracy with batching
     dino_top1 = 0
     dino_top5 = 0
+    total_samples = 0
+
     for i in range(0, len(generated_samples), metric_batch_size):
         batch_end = min(i + metric_batch_size, len(generated_samples))
+        batch_size = batch_end - i
+        total_samples += batch_size
+
         batch_samples = torch.stack(generated_samples[i:batch_end]).to(device)
         batch_labels = all_class_labels[i:batch_end]
+
         batch_accuracy = compute_dino_accuracy(sampler, batch_samples, batch_labels)
-        # Weight the contribution by batch size
-        batch_weight = (batch_end - i) / len(generated_samples)
-        dino_top1 += batch_accuracy["top1_accuracy"] * batch_weight
-        dino_top5 += batch_accuracy["top5_accuracy"] * batch_weight
+
+        # Sum the weighted accuracy
+        dino_top1 += batch_accuracy["top1_accuracy"] * batch_size
+        dino_top5 += batch_accuracy["top5_accuracy"] * batch_size
+
+        # Free up memory
         batch_samples = batch_samples.cpu()
 
-    dino_accuracy = {"top1_accuracy": dino_top1, "top5_accuracy": dino_top5}
+    # Calculate final average
+    dino_accuracy = {
+        "top1_accuracy": dino_top1 / total_samples,
+        "top5_accuracy": dino_top5 / total_samples,
+    }
 
     # Return results including samples and labels for plotting
     results = {
