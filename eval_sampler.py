@@ -24,7 +24,7 @@ DEFAULT_REAL_SAMPLES = 100
 DEFAULT_EVAL_MODE = "single_samples"
 
 # Sample generation defaults
-DEFAULT_N_SAMPLES = 512
+DEFAULT_N_SAMPLES = 128
 DEFAULT_BRANCH_PAIRS = "1:1,2:1,4:1,8:1"
 
 # Time step defaults
@@ -34,7 +34,7 @@ DEFAULT_DT_STD = 1
 DEFAULT_WARP_SCALE = 1
 
 # Sampling method defaults
-DEFAULT_SAMPLE_METHOD = "random_search"
+DEFAULT_SAMPLE_METHOD = "regular"
 DEFAULT_SCORING_FUNCTION = "dino_score"
 
 # Batch optimization defaults
@@ -497,7 +497,8 @@ def generate_and_compute_metrics(
 
         # Generate samples using the specified method
         if sample_method == "regular":
-            sample = sampler.batch_sample_ode(
+            # sample = sampler.batch_sample_ode(
+            sample = sampler.batch_sample_ode_divfree(
                 class_label=random_class_labels, batch_size=current_batch_size
             )
         elif sample_method == "path_exploration_timewarp":
