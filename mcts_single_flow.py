@@ -1,26 +1,16 @@
 from collections import deque
 import torch
-import torch.utils.data as data
-import torchdiffeq
 from tqdm import tqdm
-import matplotlib.pyplot as plt
-from torchvision.utils import make_grid
-import torchvision.transforms as transforms
 from torchcfm.models.unet import UNetModel
 from torchcfm.conditional_flow_matching import (
     ExactOptimalTransportConditionalFlowMatcher,
-    ConditionalFlowMatcher,
 )
 import numpy as np
-import torch.nn as nn
-import torch.nn.functional as F
 import os
-import torchvision.models as models
 import pickle
 from scipy.linalg import sqrtm
-from pytorch_fid import fid_score
 from torchmetrics.image.fid import NoTrainInceptionV3
-from dino_v2_classifier_training import DINOv2Classifier
+from utils import divfree_swirl_si
 
 
 class MCTSFlowSampler:
@@ -3573,6 +3563,40 @@ class MCTSFlowSampler:
                 current_samples = current_samples + velocity * dt + noise
 
             return self.unnormalize_images(current_samples)
+
+    def batch_sample_ode_divfree(
+        self,
+        class_label,
+        batch_size=16,
+        lambda_div=0.1,
+    ):
+        self.flow_model.eval()
+
+        x = torch.randn(
+            batch_size,
+            self.channels,
+            self.image_size,
+            self.image_size,
+            device=self.device,
+        )
+        y = (
+            class_label
+            if torch.is_tensor(class_label)
+            else torch.full(
+                (batch_size,), class_label, device=self.device, dtype=torch.long
+            )
+        )
+
+        for step, t in enumerate(self.timesteps[:-1]):
+            dt = self.timesteps[step + 1] - t
+            t_batch = torch.full((batch_size,), t.item(), device=self.device)
+
+            u_t = self.flow_model(t_batch, x, y)  # drift
+            w = lambda_div * divfree_swirl_si(x, t_batch, y, self.flow_model)
+
+            x = x + (u_t + w) * dt  # Euler ODE step
+
+        return self.unnormalize_images(x)
 
     def batch_sample_sde_path_exploration(
         self,
