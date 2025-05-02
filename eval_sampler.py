@@ -24,7 +24,7 @@ DEFAULT_REAL_SAMPLES = 5000
 DEFAULT_EVAL_MODE = "single_samples"
 
 # Sample generation defaults
-DEFAULT_N_SAMPLES = 128
+DEFAULT_N_SAMPLES = 256
 DEFAULT_BRANCH_PAIRS = "1:1,2:1,4:1,8:1"
 
 # Time step defaults
@@ -537,7 +537,8 @@ def generate_and_compute_metrics(
                 branch_dt=branch_dt,
             )
         elif sample_method == "random_search":
-            sample = sampler.batch_sample_with_random_search(
+            sample = sampler.batch_sample_with_random_search_sde(
+                # sample = sampler.batch_sample_with_random_search(
                 class_label=random_class_labels,
                 batch_size=current_batch_size,
                 num_branches=num_branches,
