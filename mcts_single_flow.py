@@ -3592,7 +3592,7 @@ class MCTSFlowSampler:
             t_batch = torch.full((batch_size,), t.item(), device=self.device)
 
             u_t = self.flow_model(t_batch, x, y)  # drift
-            w = lambda_div * divfree_swirl_si(x, t_batch, y, self.flow_model)
+            w = lambda_div * divfree_swirl_si(x, t_batch, y, u_t)
 
             x = x + (u_t + w) * dt  # Euler ODE step
 

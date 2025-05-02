@@ -14,13 +14,12 @@ def score_si_linear(x, t_batch, u_t):
     return -((one_minus_t * u_t + x) / t)
 
 
-def divfree_swirl_si(x, t_batch, y, v_fn, eps=1e-8):
+def divfree_swirl_si(x, t_batch, y, u_t, eps=1e-8):
     """
     Same signature as before, but the score comes from Eq.(9)
     — no autograd trace needed.
     """
     eps_raw = torch.randn_like(x)
-    u_t = v_fn(t_batch, x, y)
     score = score_si_linear(x, t_batch, u_t)
 
     proj = (eps_raw * score).sum(dim=tuple(range(1, x.ndim)), keepdim=True) / (
