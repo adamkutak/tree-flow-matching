@@ -3597,6 +3597,7 @@ class MCTSFlowSampler:
                 w = lambda_div * divfree_swirl_si(x, t_batch, y, u_t)
 
                 # print magnitude of w and u_t
+                breakpoint()
                 print(f"w magnitude: {w.norm()}")
                 print(f"u_t magnitude: {u_t.norm()}")
 
