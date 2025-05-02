@@ -19,4 +19,6 @@ def divfree_swirl_si(x, t_batch, y, u_t, eps=1e-8):
     s_norm2 = s_norm.pow(2)
     proj = dot / s_norm2
     w = eps_raw - proj * score
+
+    breakpoint()
     return w
