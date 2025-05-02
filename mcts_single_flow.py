@@ -3772,6 +3772,102 @@ class MCTSFlowSampler:
 
             return self.unnormalize_images(torch.stack(final_samples))
 
+    def batch_sample_with_random_search_sde(
+        self,
+        class_label,
+        batch_size=16,
+        num_branches=4,
+        selector="fid",
+        use_global=False,
+        noise_scale=0.05,
+    ):
+        """
+        Simple random search sampling method using SDE (stochastic differential equation) that:
+        1. Runs num_branches independent flow matching batches with noise
+        2. Evaluates all samples using selected metric
+        3. Returns the best sample for each class position
+
+        Args:
+            class_label: Tensor of class labels for the batch
+            batch_size: Number of final samples to generate
+            num_branches: Number of branches to evaluate per sample
+            selector: Selection criteria - "fid", "mahalanobis", "mean", "inception_score", or "dino_score"
+            use_global: Whether to use global statistics instead of class-specific ones
+            noise_scale: Scale of the noise to add during sampling
+        """
+        assert (
+            len(class_label) == batch_size
+        ), "class_label tensor length must match batch_size"
+
+        if num_branches == 1:
+            return self.regular_batch_sample(class_label, batch_size)
+
+        score_fn, use_global = self._get_score_function(selector, use_global)
+
+        self.flow_model.eval()
+
+        with torch.no_grad():
+            # Generate num_branches batches of samples
+            all_samples = []
+
+            for _ in range(num_branches):
+                # Initialize one batch of samples
+                current_samples = torch.randn(
+                    batch_size,
+                    self.channels,
+                    self.image_size,
+                    self.image_size,
+                    device=self.device,
+                )
+
+                # SDE flow matching for this batch
+                for step, t in enumerate(self.timesteps[:-1]):
+                    dt = self.timesteps[step + 1] - t
+                    t_batch = torch.full((batch_size,), t.item(), device=self.device)
+
+                    # Flow step with SDE noise term
+                    velocity = self.flow_model(t_batch, current_samples, class_label)
+
+                    # Add noise scaled by dt and noise_scale
+                    noise = (
+                        torch.randn_like(current_samples) * torch.sqrt(dt) * noise_scale
+                    )
+
+                    # Euler-Maruyama update
+                    current_samples = current_samples + velocity * dt + noise
+
+                all_samples.append(current_samples)
+
+            # Calculate scores for each complete batch
+            all_scores = []
+            for branch_samples in all_samples:
+                if use_global:
+                    scores = score_fn(branch_samples)
+                else:
+                    scores = score_fn(branch_samples, class_label)
+                all_scores.append(scores)
+
+            # Stack scores for each batch [num_branches, batch_size]
+            all_scores = torch.stack(all_scores, dim=0)
+
+            # Find best branch for each position
+            best_branch_indices = torch.argmax(all_scores, dim=0)  # Shape: [batch_size]
+
+            # Construct final batch by selecting best sample for each position
+            final_samples = torch.zeros(
+                batch_size,
+                self.channels,
+                self.image_size,
+                self.image_size,
+                device=self.device,
+            )
+
+            for i in range(batch_size):
+                best_branch = best_branch_indices[i]
+                final_samples[i] = all_samples[best_branch][i]
+
+            return self.unnormalize_images(final_samples)
+
     def save_models(self, path="saved_models"):
         """Save flow and value models separately."""
         os.makedirs(path, exist_ok=True)
