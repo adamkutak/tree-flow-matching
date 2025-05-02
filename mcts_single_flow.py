@@ -1055,7 +1055,7 @@ class MCTSFlowSampler:
             branch_dt: Step size to use after branching begins (if None, uses base_dt)
         """
         if num_branches == 1 and num_keep == 1:
-            return self.regular_batch_sample(class_label, batch_size)
+            return self.batch_sample_ode(class_label, batch_size)
 
         assert (
             num_branches % num_keep == 0
@@ -2163,7 +2163,7 @@ class MCTSFlowSampler:
         ), "class_label tensor length must match batch_size"
 
         if num_branches == 1:
-            return self.regular_batch_sample(class_label, batch_size)
+            return self.batch_sample_ode(class_label, batch_size)
 
         score_fn, use_global = self._get_score_function(selector, use_global)
 
@@ -3486,7 +3486,7 @@ class MCTSFlowSampler:
 
             return torch.cat(decoded_images, dim=0)
 
-    def regular_batch_sample(self, class_label, batch_size=16):
+    def batch_sample_ode(self, class_label, batch_size=16):
         """
         Regular flow matching sampling without branching.
 
@@ -3601,7 +3601,7 @@ class MCTSFlowSampler:
             branch_start_time: Time point at which to start branching (0.0 to 1.0)
         """
         if num_branches == 1 and num_keep == 1:
-            return self.regular_batch_sample(class_label, batch_size)
+            return self.batch_sample_ode(class_label, batch_size)
 
         assert (
             num_branches % num_keep == 0
@@ -3800,7 +3800,7 @@ class MCTSFlowSampler:
         ), "class_label tensor length must match batch_size"
 
         if num_branches == 1:
-            return self.regular_batch_sample(class_label, batch_size)
+            return self.batch_sample_ode(class_label, batch_size)
 
         score_fn, use_global = self._get_score_function(selector, use_global)
 
@@ -4223,7 +4223,7 @@ class MCTSFlowSampler:
     #         Tensor of [batch_size, C, H, W] generated samples.
     #     """
     #     if num_branches == 1:
-    #         return self.regular_batch_sample(class_label, batch_size)
+    #         return self.batch_sample_ode(class_label, batch_size)
 
     #     assert 0.0 <= branch_start_time < 1.0, "branch_start_time must be in [0, 1)"
     #     assert num_scoring_batches > 0, "num_scoring_batches must be positive"
@@ -4576,7 +4576,7 @@ class MCTSFlowSampler:
     #         Tensor of [batch_size, C, H, W] generated samples.
     #     """
     #     if num_branches == 1:
-    #         return self.regular_batch_sample(class_label, batch_size)
+    #         return self.batch_sample_ode(class_label, batch_size)
 
     #     assert 0.0 <= branch_start_time < 1.0, "branch_start_time must be in [0, 1)"
     #     assert num_scoring_batches > 0, "num_scoring_batches must be positive"
@@ -4823,7 +4823,7 @@ class MCTSFlowSampler:
     #         Tensor of [batch_size, C, H, W] generated samples corresponding to the best batch FID.
     #     """
     #     if num_branches == 1:
-    #         return self.regular_batch_sample(class_label, batch_size)
+    #         return self.batch_sample_ode(class_label, batch_size)
 
     #     # Calculate the total number of candidates based on batch_size and num_branches
     #     num_candidates = batch_size * num_branches
