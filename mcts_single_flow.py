@@ -3570,33 +3570,35 @@ class MCTSFlowSampler:
         batch_size=16,
         lambda_div=0.1,
     ):
+        is_tensor = torch.is_tensor(class_label)
         self.flow_model.eval()
 
-        x = torch.randn(
-            batch_size,
-            self.channels,
-            self.image_size,
-            self.image_size,
-            device=self.device,
-        )
-        y = (
-            class_label
-            if torch.is_tensor(class_label)
-            else torch.full(
-                (batch_size,), class_label, device=self.device, dtype=torch.long
+        with torch.no_grad():
+            x = torch.randn(
+                batch_size,
+                self.channels,
+                self.image_size,
+                self.image_size,
+                device=self.device,
             )
-        )
 
-        for step, t in enumerate(self.timesteps[:-1]):
-            dt = self.timesteps[step + 1] - t
-            t_batch = torch.full((batch_size,), t.item(), device=self.device)
+            if is_tensor:
+                y = class_label
+            else:
+                y = torch.full(
+                    (batch_size,), class_label, device=self.device, dtype=torch.long
+                )
 
-            u_t = self.flow_model(t_batch, x, y)  # drift
-            w = lambda_div * divfree_swirl_si(x, t_batch, y, u_t)
+            for step, t in enumerate(self.timesteps[:-1]):
+                dt = self.timesteps[step + 1] - t
+                t_batch = torch.full((batch_size,), t.item(), device=self.device)
 
-            x = x + (u_t + w) * dt  # Euler ODE step
+                u_t = self.flow_model(t_batch, x, y)  # drift
+                w = lambda_div * divfree_swirl_si(x, t_batch, y, u_t)
 
-        return self.unnormalize_images(x)
+                x = x + (u_t + w) * dt  # Euler ODE step
+
+            return self.unnormalize_images(x)
 
     def batch_sample_sde_path_exploration(
         self,
