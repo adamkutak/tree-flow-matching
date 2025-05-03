@@ -2,13 +2,15 @@ import torch
 
 
 def score_si_linear(x, t_batch, u_t):
-    one_minus_t = 1.0 - t_batch.view(-1, *([1] * (x.ndim - 1)))
-    t = t_batch.view(-1, *([1] * (x.ndim - 1)))
+    t_scalar = t_batch[0].item()
 
-    # s(x,t) = -((1-t) * u_t + x) / t
-    score = -((one_minus_t * u_t + x) / t)
-    breakpoint()
-    return score
+    if t_scalar == 0.0:
+        # limit t → 0  gives score = −x
+        return -x
+    else:
+        one_minus_t = 1.0 - t_batch.view(-1, *([1] * (x.ndim - 1)))
+        t = t_batch.view(-1, *([1] * (x.ndim - 1)))
+        return -((one_minus_t * u_t + x) / t)
 
 
 def divfree_swirl_si(x, t_batch, y, u_t, eps=1e-8):
