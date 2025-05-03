@@ -3598,6 +3598,10 @@ class MCTSFlowSampler:
 
                 print(f"w magnitude: {w.norm()}")
                 print(f"u_t magnitude: {u_t.norm()}")
+
+                # check the diff between U_t and w
+                print(f"diff between U_t and w: {(u_t + w).norm()}")
+
                 x = x + (u_t + w) * dt  # Euler ODE step
 
             return self.unnormalize_images(x)
