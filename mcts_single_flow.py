@@ -3568,7 +3568,7 @@ class MCTSFlowSampler:
         self,
         class_label,
         batch_size=16,
-        lambda_div=0.1,
+        lambda_div=0.2,
     ):
         is_tensor = torch.is_tensor(class_label)
         self.flow_model.eval()
@@ -3595,8 +3595,6 @@ class MCTSFlowSampler:
 
                 u_t = self.flow_model(t_batch, x, y)  # drift
                 w = lambda_div * divfree_swirl_si(x, t_batch, y, u_t)
-
-                breakpoint()
 
                 x = x + (u_t + w) * dt  # Euler ODE step
 
