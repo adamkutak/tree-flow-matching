@@ -3568,7 +3568,7 @@ class MCTSFlowSampler:
         self,
         class_label,
         batch_size=16,
-        lambda_div=0.2,
+        lambda_div=0.4,
     ):
         is_tensor = torch.is_tensor(class_label)
         self.flow_model.eval()
