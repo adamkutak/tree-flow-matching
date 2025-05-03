@@ -3596,12 +3596,7 @@ class MCTSFlowSampler:
                 u_t = self.flow_model(t_batch, x, y)  # drift
                 w = lambda_div * divfree_swirl_si(x, t_batch, y, u_t)
 
-                print(f"w magnitude: {w.norm()}")
-                print(f"u_t magnitude: {u_t.norm()}")
-
-                # check the diff between U_t and w
-                print(f"diff between U_t and w: {(u_t + w).norm()}")
-
+                breakpoint()
                 x = x + (u_t + w) * dt  # Euler ODE step
 
             return self.unnormalize_images(x)
