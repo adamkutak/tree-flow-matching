@@ -540,7 +540,6 @@ def generate_and_compute_metrics(
             )
         elif sample_method == "random_search":
             sample = sampler.batch_sample_with_random_search(
-                # sample = sampler.batch_sample_with_random_search_sde(
                 class_label=random_class_labels,
                 batch_size=current_batch_size,
                 num_branches=num_branches,

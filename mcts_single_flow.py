@@ -3597,6 +3597,7 @@ class MCTSFlowSampler:
                 w = lambda_div * divfree_swirl_si(x, t_batch, y, u_t)
 
                 x = x + (u_t + w) * dt  # Euler ODE step
+                breakpoint()
 
             return self.unnormalize_images(x)
 
