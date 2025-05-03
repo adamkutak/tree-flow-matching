@@ -34,7 +34,7 @@ DEFAULT_DT_STD = 1
 DEFAULT_WARP_SCALE = 1
 
 # Sampling method defaults
-DEFAULT_SAMPLE_METHOD = "regular"
+DEFAULT_SAMPLE_METHOD = "sde"
 DEFAULT_SCORING_FUNCTION = "dino_score"
 
 # Batch optimization defaults
@@ -550,7 +550,7 @@ def generate_and_compute_metrics(
             sample = sampler.batch_sample_sde(
                 class_label=random_class_labels,
                 batch_size=current_batch_size,
-                noise_scale=0.05,
+                noise_scale=1,
             )
         elif sample_method == "sde_path_exploration":
             sample = sampler.batch_sample_sde_path_exploration(
