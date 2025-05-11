@@ -35,7 +35,7 @@ DEFAULT_WARP_SCALE = 1
 
 # Sampling method defaults
 DEFAULT_SAMPLE_METHOD = "ode_divfree_path_exploration"
-DEFAULT_SCORING_FUNCTION = "inception_score"
+DEFAULT_SCORING_FUNCTION = "dino_score"
 
 # Batch optimization defaults
 DEFAULT_REFINEMENT_BATCH_SIZE = 32
