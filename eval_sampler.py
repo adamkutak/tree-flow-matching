@@ -569,7 +569,7 @@ def generate_and_compute_metrics(
                 batch_size=current_batch_size,
                 num_branches=num_branches,
                 num_keep=num_keep,
-                lambda_div=0.25,
+                lambda_div=0.4,
                 selector=scoring_function,
                 use_global=True,
                 branch_start_time=branch_start_time,
