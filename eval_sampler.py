@@ -18,7 +18,7 @@ from run_mcts_flow import calculate_inception_score, compute_dino_accuracy
 
 DEFAULT_DATASET = "imagenet256"
 DEFAULT_DEVICE = "cuda:5"
-DEFAULT_REAL_SAMPLES = 5000
+DEFAULT_REAL_SAMPLES = 10000
 
 # Evaluation mode defaults
 DEFAULT_EVAL_MODE = "single_samples"
@@ -151,40 +151,21 @@ def evaluate_sampler(args):
     os.makedirs(args.output_dir, exist_ok=True)
 
     # Run the appropriate evaluation
-    if args.eval_mode == "single_samples":
-        results = evaluate_single_samples(
-            sampler=sampler,
-            device=device,
-            n_samples=args.n_samples,
-            branch_pairs=args.branch_pairs,
-            scoring_function=args.scoring_function,
-            sample_method=args.sample_method,
-            branch_dt=args.branch_dt,
-            branch_start_time=args.branch_start_time,
-            fid=fid,
-            args=args,
-            noise_scale=args.noise_scale,
-            lambda_div=args.lambda_div,
-        )
-    elif args.eval_mode == "batch_optimization":
-        results = evaluate_batch_optimization(
-            sampler=sampler,
-            device=device,
-            n_samples=args.n_samples,
-            branch_pairs=args.branch_pairs,
-            refinement_batch_size=args.refinement_batch_size,
-            num_iterations=args.num_iterations,
-            fid=fid,
-            sample_method=args.sample_method,
-            branch_dt=args.branch_dt,
-            branch_start_time=args.branch_start_time,
-            dt_std=args.dt_std,
-            warp_scale=args.warp_scale,
-            dataset=dataset,
-            args=args,
-        )
-    else:
-        raise ValueError(f"Unsupported evaluation mode: {args.eval_mode}")
+    results = evaluate_single_samples(
+        sampler=sampler,
+        device=device,
+        n_samples=args.n_samples,
+        branch_pairs=args.branch_pairs,
+        scoring_function=args.scoring_function,
+        sample_method=args.sample_method,
+        branch_dt=args.branch_dt,
+        branch_start_time=args.branch_start_time,
+        fid=fid,
+        args=args,
+        noise_scale=args.noise_scale,
+        lambda_div=args.lambda_div,
+        dataset=args.dataset,
+    )
 
     # Add configuration to results
     results["config"] = vars(args)
@@ -218,6 +199,7 @@ def evaluate_single_samples(
     args,
     noise_scale=0.1,
     lambda_div=0.2,
+    dataset=None,
 ):
     """
     Evaluate sampling methods that select individual samples
@@ -282,163 +264,6 @@ def evaluate_single_samples(
         )
 
     return results
-
-
-def evaluate_batch_optimization(
-    sampler,
-    device,
-    n_samples,
-    branch_pairs,
-    refinement_batch_size,
-    num_iterations,
-    fid,
-    sample_method,
-    branch_dt=0.1,
-    branch_start_time=0.5,
-    dt_std=0.7,
-    warp_scale=0.5,
-    dataset=None,
-    args=None,
-):
-    """
-    Evaluate batch optimization methods
-    """
-    results = {
-        "branch_pairs": {},
-        "refinement_batch_size": refinement_batch_size,
-        "num_iterations": num_iterations,
-        "n_samples": n_samples,
-        "sample_method": sample_method,
-        "branch_dt": branch_dt,
-        "branch_start_time": branch_start_time,
-        "dt_std": dt_std,
-        "warp_scale": warp_scale,
-    }
-
-    for num_branches, num_batches in branch_pairs:
-        print(f"\nEvaluating with branches={num_branches}, batches={num_batches}")
-
-        fid.reset()
-        random_class_labels = torch.randint(
-            0, sampler.num_classes, (n_samples,), device=device
-        )
-
-        # Map the sample_method to the appropriate batch optimization function
-        if sample_method == "random_search":
-            final_samples = sampler.batch_sample_refine_global_fid_random(
-                n_samples=n_samples,
-                refinement_batch_size=refinement_batch_size,
-                num_branches=num_branches,
-                num_batches=num_batches,
-                num_iterations=num_iterations,
-                use_global=True,
-            )
-        elif sample_method == "path_exploration":
-            final_samples = sampler.batch_sample_refine_global_fid_path_explore(
-                n_samples=n_samples,
-                refinement_batch_size=refinement_batch_size,
-                num_branches=num_branches,
-                num_batches=num_batches,
-                branch_start_time=branch_start_time,
-                branch_dt=branch_dt,
-                dt_std=dt_std,
-                num_iterations=num_iterations,
-                use_global=True,
-            )
-        elif sample_method == "path_exploration_timewarp":
-            final_samples = sampler.batch_sample_refine_global_fid_timewarp(
-                n_samples=n_samples,
-                refinement_batch_size=refinement_batch_size,
-                num_branches=num_branches,
-                num_batches=num_batches,
-                branch_dt=branch_dt,
-                warp_scale=warp_scale,
-                num_iterations=num_iterations,
-                use_global=True,
-                branch_start_time=branch_start_time,
-            )
-        else:
-            raise ValueError(
-                f"Unsupported sample method for batch optimization: {sample_method}"
-            )
-
-        # Process final samples to compute metrics
-        metrics = process_batch_samples(
-            sampler, final_samples, random_class_labels, device, fid
-        )
-
-        # Store results for this branch/batch pair
-        pair_key = f"{num_branches}_{num_batches}"
-        results["branch_pairs"][pair_key] = metrics
-
-        # Print metrics for this configuration
-        print(f"\nResults for branches={num_branches}, batches={num_batches}:")
-        print(f"FID Score: {metrics['fid_score']:.4f}")
-        print(
-            f"Inception Score: {metrics['inception_score']:.4f} ± {metrics['inception_std']:.4f}"
-        )
-        print(f"Average Mahalanobis Distance: {metrics['avg_mahalanobis']:.4f}")
-        print(f"DINO Top-1 Accuracy: {metrics['dino_top1_accuracy']:.2f}%")
-        print(f"DINO Top-5 Accuracy: {metrics['dino_top5_accuracy']:.2f}%")
-
-        # Create and save sample comparison plot
-        save_sample_comparison_plot(
-            generated_samples=final_samples.cpu(),
-            dataset=dataset,
-            class_labels=random_class_labels,
-            args=args,
-            metrics=metrics,
-            branch_keep_pair=(num_branches, num_batches),
-            num_display=16,
-        )
-
-    return results
-
-
-def process_batch_samples(sampler, samples, class_labels, device, fid):
-    """
-    Process batch optimization samples and compute metrics
-
-    Args:
-        sampler: The MCTSFlowSampler instance
-        samples: Generated samples
-        class_labels: Class labels for the samples
-        device: Device to use for computation
-        fid: FID instance for calculation
-
-    Returns:
-        Dictionary of metrics
-    """
-    metric_batch_size = 64
-
-    # Compute mahalanobis distances
-    mahalanobis_dist = sampler.batch_compute_global_mean_difference(samples)
-    avg_mahalanobis = mahalanobis_dist.mean().item()
-
-    # Process samples for FID
-    for i in range(0, len(samples), metric_batch_size):
-        batch = samples[i : i + metric_batch_size]
-        fid.update(batch, real=False)
-
-    # Compute FID score
-    fid_score = fid.compute().item()
-
-    # Compute Inception Score
-    inception_score, inception_std = calculate_inception_score(
-        samples, device=device, batch_size=metric_batch_size, splits=10
-    )
-
-    # Compute DINO accuracy
-    dino_accuracy = compute_dino_accuracy(sampler, samples, class_labels)
-
-    return {
-        "fid_score": fid_score,
-        "inception_score": inception_score,
-        "inception_std": inception_std,
-        "avg_mahalanobis": avg_mahalanobis,
-        "dino_top1_accuracy": dino_accuracy["top1_accuracy"],
-        "dino_top5_accuracy": dino_accuracy["top5_accuracy"],
-    }
 
 
 def generate_and_compute_metrics(
@@ -520,6 +345,36 @@ def generate_and_compute_metrics(
                 batch_size=current_batch_size,
                 noise_scale=noise_scale,
             )
+        elif sample_method == "random_search":
+            sample = sampler.batch_sample_with_random_search(
+                class_label=random_class_labels,
+                batch_size=current_batch_size,
+                num_branches=num_branches,
+                selector=scoring_function,
+                use_global=True,
+            )
+        elif sample_method == "sde_path_exploration":
+            sample = sampler.batch_sample_sde_path_exploration(
+                class_label=random_class_labels,
+                batch_size=current_batch_size,
+                num_branches=num_branches,
+                num_keep=num_keep,
+                selector=scoring_function,
+                use_global=True,
+                branch_start_time=branch_start_time,
+                noise_scale=noise_scale,
+            )
+        elif sample_method == "ode_divfree_path_exploration":
+            sample = sampler.batch_sample_ode_divfree_path_exploration(
+                class_label=random_class_labels,
+                batch_size=current_batch_size,
+                num_branches=num_branches,
+                num_keep=num_keep,
+                lambda_div=lambda_div,
+                selector=scoring_function,
+                use_global=True,
+                branch_start_time=branch_start_time,
+            )
         elif sample_method == "path_exploration_timewarp":
             sample = sampler.batch_sample_with_path_exploration_timewarp(
                 class_label=random_class_labels,
@@ -555,36 +410,6 @@ def generate_and_compute_metrics(
                 use_global=True,
                 branch_start_time=branch_start_time,
                 branch_dt=branch_dt,
-            )
-        elif sample_method == "random_search":
-            sample = sampler.batch_sample_with_random_search(
-                class_label=random_class_labels,
-                batch_size=current_batch_size,
-                num_branches=num_branches,
-                selector=scoring_function,
-                use_global=True,
-            )
-        elif sample_method == "sde_path_exploration":
-            sample = sampler.batch_sample_sde_path_exploration(
-                class_label=random_class_labels,
-                batch_size=current_batch_size,
-                num_branches=num_branches,
-                num_keep=num_keep,
-                selector=scoring_function,
-                use_global=True,
-                branch_start_time=branch_start_time,
-                noise_scale=noise_scale,
-            )
-        elif sample_method == "ode_divfree_path_exploration":
-            sample = sampler.batch_sample_ode_divfree_path_exploration(
-                class_label=random_class_labels,
-                batch_size=current_batch_size,
-                num_branches=num_branches,
-                num_keep=num_keep,
-                lambda_div=lambda_div,
-                selector=scoring_function,
-                use_global=True,
-                branch_start_time=branch_start_time,
             )
         else:
             raise ValueError(f"Unsupported sample method: {sample_method}")
@@ -812,8 +637,8 @@ if __name__ == "__main__":
         "--eval_mode",
         type=str,
         default=DEFAULT_EVAL_MODE,
-        choices=["single_samples", "batch_optimization"],
-        help="Evaluation mode (single_samples or batch_optimization)",
+        choices=["single_samples"],
+        help="Evaluation mode (single_samples)",
     )
 
     # Sample generation parameters
@@ -878,7 +703,6 @@ if __name__ == "__main__":
             "inception_score",
             "dino_score",
             "global_mean_difference",
-            "inception_classifier_score",
         ],
         help="Scoring function for sample selection",
     )

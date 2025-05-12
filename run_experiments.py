@@ -4,19 +4,25 @@ import json
 from datetime import datetime
 
 # Configuration constants for experiments
-DATASET = "imagenet32"
-SAMPLE_METHODS = ["random_search", "path_exploration", "path_exploration_timewarp"]
+DATASET = "imagenet256"
+SAMPLE_METHODS = [
+    "random_search",
+    "ode_divfree_path_exploration",
+    "sde_path_exploration",
+]
 TIMESTEP_CONFIGS = [
     (10, 0.1, 0.5),
     (20, 0.05, 0.5),
+    (20, 0.05, 0.1),
 ]  # (num_timesteps, branch_dt, branch_start_time)
 SAMPLE_SIZES = [1000, 5000]
 BRANCH_PAIRS = "1:1,2:1,4:1,8:1"  # Always use these branch pairs
-BRANCH_PAIRS_BATCH = "2:4,4:8,8:16"  # Use different pairs for batch optimization
-SCORING_FUNCTION = "inception_score, inception_classifier"  # Default scoring function
+SCORING_FUNCTION = "inception_score"  # Default scoring function
 DT_STD = 0.7  # Path exploration time step standard deviation
 WARP_SCALE = 0.5  # Time warp scale factor
-DEVICE = "cuda:0"  # Default device
+DEVICE = "cuda:1"  # Default device
+NOISE_SCALE = 0.1
+LAMBDA_DIV = 0.25
 
 
 def run_experiment(cmd):
@@ -59,6 +65,8 @@ def main():
         "scoring_function": SCORING_FUNCTION,
         "dt_std": DT_STD,
         "warp_scale": WARP_SCALE,
+        "noise_scale": NOISE_SCALE,
+        "lambda_div": LAMBDA_DIV,
         "device": DEVICE,
     }
 
@@ -99,6 +107,10 @@ def main():
                     str(WARP_SCALE),
                     "--device",
                     DEVICE,
+                    "--noise_scale",
+                    str(NOISE_SCALE),
+                    "--lambda_div",
+                    str(LAMBDA_DIV),
                 ]
 
                 # Run the experiment
@@ -110,48 +122,8 @@ def main():
                 if run_experiment(cmd):
                     completed_experiments += 1
 
-    # Run batch optimization experiments
-    print("\n=== Running batch optimization experiments ===")
-    for sample_method in SAMPLE_METHODS:
-        for num_timesteps, branch_dt, branch_start_time in TIMESTEP_CONFIGS:
-            for n_samples in SAMPLE_SIZES:
-                # Build command
-                cmd = base_cmd + [
-                    "--eval_mode",
-                    "batch_optimization",
-                    "--sample_method",
-                    sample_method,
-                    "--n_samples",
-                    str(n_samples),
-                    "--branch_pairs",
-                    BRANCH_PAIRS_BATCH,
-                    "--refinement_batch_size",
-                    "32",
-                    "--num_iterations",
-                    "1",
-                    "--branch_dt",
-                    str(branch_dt),
-                    "--branch_start_time",
-                    str(branch_start_time),
-                    "--dt_std",
-                    str(DT_STD),
-                    "--warp_scale",
-                    str(WARP_SCALE),
-                    "--device",
-                    DEVICE,
-                ]
-
-                # Run the experiment
-                print(f"\nRunning batch experiment with:")
-                print(f"  Sample method: {sample_method}")
-                print(f"  Time steps: {num_timesteps} (dt={branch_dt})")
-                print(f"  Samples: {n_samples}")
-
-                if run_experiment(cmd):
-                    completed_experiments += 1
-
     print(
-        f"\nSweep completed! {completed_experiments}/{total_experiments*2} experiments ran successfully."
+        f"\nSweep completed! {completed_experiments}/{total_experiments} experiments ran successfully."
     )
     print(f"Results saved to {results_dir}")
 
