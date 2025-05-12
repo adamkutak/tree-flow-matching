@@ -253,15 +253,15 @@ def evaluate_single_samples(
         print(f"DINO Top-5 Accuracy: {metrics['dino_top5_accuracy']:.2f}%")
 
         # Create and save sample comparison plot
-        save_sample_comparison_plot(
-            generated_samples=metrics["samples"],
-            dataset=dataset,
-            class_labels=metrics["class_labels"],
-            args=args,
-            metrics=metrics,
-            branch_keep_pair=(num_branches, num_keep),
-            num_display=16,
-        )
+        # save_sample_comparison_plot(
+        #     generated_samples=metrics["samples"],
+        #     dataset=dataset,
+        #     class_labels=metrics["class_labels"],
+        #     args=args,
+        #     metrics=metrics,
+        #     branch_keep_pair=(num_branches, num_keep),
+        #     num_display=16,
+        # )
 
     return results
 
