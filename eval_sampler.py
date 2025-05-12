@@ -14,27 +14,27 @@ import torchmetrics.image.fid as FID
 
 from mcts_single_flow import MCTSFlowSampler
 from imagenet_dataset import ImageNet32Dataset
-from run_mcts_flow import calculate_inception_score
+from run_mcts_flow import calculate_inception_score, compute_dino_accuracy
 
 DEFAULT_DATASET = "imagenet256"
-DEFAULT_DEVICE = "cuda:1"
-DEFAULT_REAL_SAMPLES = 100
+DEFAULT_DEVICE = "cuda:5"
+DEFAULT_REAL_SAMPLES = 5000
 
 # Evaluation mode defaults
 DEFAULT_EVAL_MODE = "single_samples"
 
 # Sample generation defaults
-DEFAULT_N_SAMPLES = 64
+DEFAULT_N_SAMPLES = 128
 DEFAULT_BRANCH_PAIRS = "1:1,2:1,4:1,8:1"
 
 # Time step defaults
 DEFAULT_BRANCH_DT = 0.05
 DEFAULT_BRANCH_START_TIME = 0.5
-DEFAULT_DT_STD = 0.7
+DEFAULT_DT_STD = 1
 DEFAULT_WARP_SCALE = 1
 
 # Sampling method defaults
-DEFAULT_SAMPLE_METHOD = "path_exploration_timewarp_shifted"
+DEFAULT_SAMPLE_METHOD = "ode_divfree_path_exploration"
 DEFAULT_SCORING_FUNCTION = "dino_score"
 
 # Batch optimization defaults
@@ -43,6 +43,9 @@ DEFAULT_NUM_ITERATIONS = 1
 
 # Output defaults
 DEFAULT_OUTPUT_DIR = "./results"
+
+DEFAULT_NOISE_SCALE = 0.1
+DEFAULT_LAMBDA_DIV = 0.2
 
 
 def evaluate_sampler(args):
@@ -159,8 +162,9 @@ def evaluate_sampler(args):
             branch_dt=args.branch_dt,
             branch_start_time=args.branch_start_time,
             fid=fid,
-            dataset=dataset,
             args=args,
+            noise_scale=args.noise_scale,
+            lambda_div=args.lambda_div,
         )
     elif args.eval_mode == "batch_optimization":
         results = evaluate_batch_optimization(
@@ -211,8 +215,9 @@ def evaluate_single_samples(
     branch_dt,
     branch_start_time,
     fid,
-    dataset,
     args,
+    noise_scale=0.1,
+    lambda_div=0.2,
 ):
     """
     Evaluate sampling methods that select individual samples
@@ -240,7 +245,8 @@ def evaluate_single_samples(
             branch_dt=branch_dt,
             branch_start_time=branch_start_time,
             fid=fid,
-            dataset=dataset,
+            noise_scale=noise_scale,
+            lambda_div=lambda_div,
         )
 
         # Store results for this branch/keep pair
@@ -250,6 +256,8 @@ def evaluate_single_samples(
             "inception_score": metrics["inception_score"],
             "inception_std": metrics["inception_std"],
             "avg_mahalanobis": metrics["avg_mahalanobis"],
+            "dino_top1_accuracy": metrics["dino_top1_accuracy"],
+            "dino_top5_accuracy": metrics["dino_top5_accuracy"],
         }
 
         # Print metrics for this configuration
@@ -258,7 +266,9 @@ def evaluate_single_samples(
         print(
             f"Inception Score: {metrics['inception_score']:.4f} ± {metrics['inception_std']:.4f}"
         )
-        print(f"Average Mahalanobis Distance: {metrics['avg_mahalanobis']:.4f}")
+        print(f"Average Mean Distance: {metrics['avg_mahalanobis']:.4f}")
+        print(f"DINO Top-1 Accuracy: {metrics['dino_top1_accuracy']:.2f}%")
+        print(f"DINO Top-5 Accuracy: {metrics['dino_top5_accuracy']:.2f}%")
 
         # Create and save sample comparison plot
         save_sample_comparison_plot(
@@ -368,6 +378,8 @@ def evaluate_batch_optimization(
             f"Inception Score: {metrics['inception_score']:.4f} ± {metrics['inception_std']:.4f}"
         )
         print(f"Average Mahalanobis Distance: {metrics['avg_mahalanobis']:.4f}")
+        print(f"DINO Top-1 Accuracy: {metrics['dino_top1_accuracy']:.2f}%")
+        print(f"DINO Top-5 Accuracy: {metrics['dino_top5_accuracy']:.2f}%")
 
         # Create and save sample comparison plot
         save_sample_comparison_plot(
@@ -416,11 +428,16 @@ def process_batch_samples(sampler, samples, class_labels, device, fid):
         samples, device=device, batch_size=metric_batch_size, splits=10
     )
 
+    # Compute DINO accuracy
+    dino_accuracy = compute_dino_accuracy(sampler, samples, class_labels)
+
     return {
         "fid_score": fid_score,
         "inception_score": inception_score,
         "inception_std": inception_std,
         "avg_mahalanobis": avg_mahalanobis,
+        "dino_top1_accuracy": dino_accuracy["top1_accuracy"],
+        "dino_top5_accuracy": dino_accuracy["top5_accuracy"],
     }
 
 
@@ -435,7 +452,8 @@ def generate_and_compute_metrics(
     branch_dt,
     branch_start_time,
     fid,
-    dataset=None,  # Add dataset parameter
+    noise_scale=0.1,
+    lambda_div=0.2,
 ):
     """
     Generate samples and compute metrics
@@ -458,7 +476,7 @@ def generate_and_compute_metrics(
     """
     fid.reset()
 
-    generation_batch_size = int(64 / num_branches)
+    generation_batch_size = int(64 / num_branches)  # this is based on a 24GB RTX 6000
     metric_batch_size = 64
     generated_samples = []
     mahalanobis_distances = []
@@ -485,9 +503,22 @@ def generate_and_compute_metrics(
         all_class_labels.append(random_class_labels)
 
         # Generate samples using the specified method
-        if sample_method == "regular":
-            sample = sampler.regular_batch_sample(
-                class_label=random_class_labels, batch_size=current_batch_size
+        if sample_method == "ode":
+            sample = sampler.batch_sample_ode(
+                class_label=random_class_labels,
+                batch_size=current_batch_size,
+            )
+        elif sample_method == "ode_divfree":
+            sample = sampler.batch_sample_ode_divfree(
+                class_label=random_class_labels,
+                batch_size=current_batch_size,
+                lambda_div=lambda_div,
+            )
+        elif sample_method == "sde":
+            sample = sampler.batch_sample_sde(
+                class_label=random_class_labels,
+                batch_size=current_batch_size,
+                noise_scale=noise_scale,
             )
         elif sample_method == "path_exploration_timewarp":
             sample = sampler.batch_sample_with_path_exploration_timewarp(
@@ -533,6 +564,28 @@ def generate_and_compute_metrics(
                 selector=scoring_function,
                 use_global=True,
             )
+        elif sample_method == "sde_path_exploration":
+            sample = sampler.batch_sample_sde_path_exploration(
+                class_label=random_class_labels,
+                batch_size=current_batch_size,
+                num_branches=num_branches,
+                num_keep=num_keep,
+                selector=scoring_function,
+                use_global=True,
+                branch_start_time=branch_start_time,
+                noise_scale=noise_scale,
+            )
+        elif sample_method == "ode_divfree_path_exploration":
+            sample = sampler.batch_sample_ode_divfree_path_exploration(
+                class_label=random_class_labels,
+                batch_size=current_batch_size,
+                num_branches=num_branches,
+                num_keep=num_keep,
+                lambda_div=lambda_div,
+                selector=scoring_function,
+                use_global=True,
+                branch_start_time=branch_start_time,
+            )
         else:
             raise ValueError(f"Unsupported sample method: {sample_method}")
 
@@ -561,9 +614,16 @@ def generate_and_compute_metrics(
 
     # Compute average Mahalanobis distance
     avg_mahalanobis = sum(mahalanobis_distances) / len(mahalanobis_distances)
+    mahalanobis_variance = np.var(mahalanobis_distances)
+    print(f"Mahalanobis variance: {mahalanobis_variance}")
 
     # Combine all class labels
     all_class_labels = torch.cat(all_class_labels, dim=0)
+
+    # Compute DINO accuracy
+    dino_accuracy = compute_dino_accuracy(
+        sampler, generated_tensor_device, all_class_labels
+    )
 
     # Return results including samples and labels for plotting
     results = {
@@ -571,6 +631,8 @@ def generate_and_compute_metrics(
         "inception_score": inception_score,
         "inception_std": inception_std,
         "avg_mahalanobis": avg_mahalanobis,
+        "dino_top1_accuracy": dino_accuracy["top1_accuracy"],
+        "dino_top5_accuracy": dino_accuracy["top5_accuracy"],
         "samples": generated_samples,
         "class_labels": all_class_labels,
     }
@@ -794,8 +856,12 @@ if __name__ == "__main__":
         type=str,
         default=DEFAULT_SAMPLE_METHOD,
         choices=[
-            "regular",
+            "ode",
+            "ode_divfree",
+            "ode_divfree_path_exploration",
             "random_search",
+            "sde",
+            "sde_path_exploration",
             "path_exploration",
             "path_exploration_timewarp",
             "path_exploration_timewarp_shifted",
@@ -851,6 +917,20 @@ if __name__ == "__main__":
         type=float,
         default=DEFAULT_WARP_SCALE,
         help="Scale factor for time warping",
+    )
+
+    parser.add_argument(
+        "--noise_scale",
+        type=float,
+        default=DEFAULT_NOISE_SCALE,
+        help="Noise scale for SDE sampling",
+    )
+
+    parser.add_argument(
+        "--lambda_div",
+        type=float,
+        default=DEFAULT_LAMBDA_DIV,
+        help="Lambda for divergence-free sampling",
     )
 
     args = parser.parse_args()

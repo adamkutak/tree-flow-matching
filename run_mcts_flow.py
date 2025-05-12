@@ -748,5 +748,74 @@ def calculate_inception_score(images, device, batch_size=32, splits=10):
     return np.mean(scores), np.std(scores)
 
 
+def compute_dino_accuracy(sampler, samples, class_labels, batch_size=32):
+    """
+    Compute DINO model classification accuracy on the generated samples.
+    Processes samples in batches to prevent memory issues.
+
+    Args:
+        sampler: The MCTSFlowSampler instance
+        samples: Generated samples tensor
+        class_labels: True class labels for the samples
+        batch_size: Batch size for processing
+
+    Returns:
+        Dictionary with top-1 and top-5 accuracy
+    """
+    total_samples = samples.shape[0]
+    total_correct_top1 = 0
+    total_correct_top5 = 0
+
+    with torch.no_grad():
+        for i in range(0, total_samples, batch_size):
+            # Get batch
+            end_idx = min(i + batch_size, total_samples)
+            batch_samples = samples[i:end_idx]
+            batch_labels = class_labels[i:end_idx]
+
+            # Prepare images for DINO model
+            images = sampler.unnormalize_images(batch_samples)
+
+            # Apply ImageNet normalization
+            mean = torch.tensor(
+                [0.485, 0.456, 0.406], device=batch_samples.device
+            ).view(1, 3, 1, 1)
+            std = torch.tensor([0.229, 0.224, 0.225], device=batch_samples.device).view(
+                1, 3, 1, 1
+            )
+            images = (images - mean) / std
+
+            # Resize images to 224x224 if needed
+            if images.shape[-1] != 224:
+                images = torch.nn.functional.interpolate(
+                    images, size=(224, 224), mode="bilinear", align_corners=False
+                )
+
+            # Forward pass through DINO model
+            logits = sampler.dino_model(images)
+
+            # Calculate top-1 accuracy
+            predicted_classes = torch.argmax(logits, dim=1)
+            correct_predictions = predicted_classes == batch_labels
+            total_correct_top1 += correct_predictions.sum().item()
+
+            # Calculate top-5 accuracy
+            _, top5_preds = logits.topk(5, 1, True, True)
+            top5_correct = torch.zeros_like(batch_labels, dtype=torch.bool)
+            for j in range(5):
+                top5_correct = top5_correct | (top5_preds[:, j] == batch_labels)
+            total_correct_top5 += top5_correct.sum().item()
+
+            # Free memory
+            del images, logits
+            torch.cuda.empty_cache()
+
+    # Calculate final accuracies
+    top1_accuracy = (total_correct_top1 / total_samples) * 100
+    top5_accuracy = (total_correct_top5 / total_samples) * 100
+
+    return {"top1_accuracy": top1_accuracy, "top5_accuracy": top5_accuracy}
+
+
 if __name__ == "__main__":
     main()
