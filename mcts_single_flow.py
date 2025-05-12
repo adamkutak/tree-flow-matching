@@ -31,7 +31,6 @@ class MCTSFlowSampler:
         dataset="cifar10",
         flow_model_config=None,
         load_dino=True,
-        dino_classifier_path="saved_models/dino_imagenet32_best.pt",
     ):
         # Check if CUDA is available and set device
         if torch.cuda.is_available():
