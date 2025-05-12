@@ -856,7 +856,9 @@ if __name__ == "__main__":
         type=str,
         default=DEFAULT_SAMPLE_METHOD,
         choices=[
-            "regular",
+            "ode",
+            "ode_divfree",
+            "ode_divfree_path_exploration",
             "random_search",
             "sde",
             "sde_path_exploration",
