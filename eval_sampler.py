@@ -44,6 +44,9 @@ DEFAULT_NUM_ITERATIONS = 1
 # Output defaults
 DEFAULT_OUTPUT_DIR = "./results"
 
+DEFAULT_NOISE_SCALE = 0.1
+DEFAULT_LAMBDA_DIV = 0.2
+
 
 def evaluate_sampler(args):
     """
@@ -159,8 +162,9 @@ def evaluate_sampler(args):
             branch_dt=args.branch_dt,
             branch_start_time=args.branch_start_time,
             fid=fid,
-            dataset=dataset,
             args=args,
+            noise_scale=args.noise_scale,
+            lambda_div=args.lambda_div,
         )
     elif args.eval_mode == "batch_optimization":
         results = evaluate_batch_optimization(
@@ -211,8 +215,9 @@ def evaluate_single_samples(
     branch_dt,
     branch_start_time,
     fid,
-    dataset,
     args,
+    noise_scale=0.1,
+    lambda_div=0.2,
 ):
     """
     Evaluate sampling methods that select individual samples
@@ -240,7 +245,8 @@ def evaluate_single_samples(
             branch_dt=branch_dt,
             branch_start_time=branch_start_time,
             fid=fid,
-            dataset=dataset,
+            noise_scale=noise_scale,
+            lambda_div=lambda_div,
         )
 
         # Store results for this branch/keep pair
@@ -446,7 +452,8 @@ def generate_and_compute_metrics(
     branch_dt,
     branch_start_time,
     fid,
-    dataset=None,  # Add dataset parameter
+    noise_scale=0.1,
+    lambda_div=0.2,
 ):
     """
     Generate samples and compute metrics
@@ -496,11 +503,22 @@ def generate_and_compute_metrics(
         all_class_labels.append(random_class_labels)
 
         # Generate samples using the specified method
-        if sample_method == "regular":
-            # sample = sampler.batch_sample_ode(
+        if sample_method == "ode":
+            sample = sampler.batch_sample_ode(
+                class_label=random_class_labels,
+                batch_size=current_batch_size,
+            )
+        elif sample_method == "ode_divfree":
             sample = sampler.batch_sample_ode_divfree(
                 class_label=random_class_labels,
                 batch_size=current_batch_size,
+                lambda_div=lambda_div,
+            )
+        elif sample_method == "sde":
+            sample = sampler.batch_sample_sde(
+                class_label=random_class_labels,
+                batch_size=current_batch_size,
+                noise_scale=noise_scale,
             )
         elif sample_method == "path_exploration_timewarp":
             sample = sampler.batch_sample_with_path_exploration_timewarp(
@@ -546,12 +564,6 @@ def generate_and_compute_metrics(
                 selector=scoring_function,
                 use_global=True,
             )
-        elif sample_method == "sde":
-            sample = sampler.batch_sample_sde(
-                class_label=random_class_labels,
-                batch_size=current_batch_size,
-                noise_scale=0.1,
-            )
         elif sample_method == "sde_path_exploration":
             sample = sampler.batch_sample_sde_path_exploration(
                 class_label=random_class_labels,
@@ -561,7 +573,7 @@ def generate_and_compute_metrics(
                 selector=scoring_function,
                 use_global=True,
                 branch_start_time=branch_start_time,
-                noise_scale=0.1,
+                noise_scale=noise_scale,
             )
         elif sample_method == "ode_divfree_path_exploration":
             sample = sampler.batch_sample_ode_divfree_path_exploration(
@@ -569,7 +581,7 @@ def generate_and_compute_metrics(
                 batch_size=current_batch_size,
                 num_branches=num_branches,
                 num_keep=num_keep,
-                lambda_div=0.3,
+                lambda_div=lambda_div,
                 selector=scoring_function,
                 use_global=True,
                 branch_start_time=branch_start_time,
@@ -903,6 +915,20 @@ if __name__ == "__main__":
         type=float,
         default=DEFAULT_WARP_SCALE,
         help="Scale factor for time warping",
+    )
+
+    parser.add_argument(
+        "--noise_scale",
+        type=float,
+        default=DEFAULT_NOISE_SCALE,
+        help="Noise scale for SDE sampling",
+    )
+
+    parser.add_argument(
+        "--lambda_div",
+        type=float,
+        default=DEFAULT_LAMBDA_DIV,
+        help="Lambda for divergence-free sampling",
     )
 
     args = parser.parse_args()
