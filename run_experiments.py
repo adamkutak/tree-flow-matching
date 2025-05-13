@@ -15,12 +15,12 @@ TIMESTEP_CONFIGS = [
     (20, 0.05, 0.5),
     (20, 0.05, 0.1),
 ]  # (num_timesteps, branch_dt, branch_start_time)
-SAMPLE_SIZES = [1000]
+SAMPLE_SIZES = [256]
 BRANCH_PAIRS = "1:1,2:1,4:1,8:1"  # Always use these branch pairs
 SCORING_FUNCTION = "dino_score"  # Default scoring function
 DT_STD = 0.7  # Path exploration time step standard deviation
 WARP_SCALE = 0.5  # Time warp scale factor
-DEVICE = "cuda:1"  # Default device
+DEVICE = "cuda:3"  # Default device
 NOISE_SCALE = 0.1
 LAMBDA_DIV = 0.25
 
