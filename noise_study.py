@@ -287,8 +287,9 @@ def run_experiment(args):
 
     # Load real images for FID calculation
     print(f"Loading dataset for FID calculation...")
-    sample_size = min(args.real_samples, len(dataset))
-    indices = np.random.choice(len(dataset), sample_size, replace=False)
+    fid_real_samples = 10000
+    sample_size = min(args.real_samples, fid_real_samples)
+    indices = np.random.choice(fid_real_samples, sample_size, replace=False)
     real_images = torch.stack([dataset[i][0] for i in indices]).to(device)
 
     # Process real images in batches
