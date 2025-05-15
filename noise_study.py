@@ -374,7 +374,7 @@ def run_experiment(args):
 
 def run_ode_experiment(sampler, device, fid, n_samples, batch_size):
     """Run baseline ODE (regular flow matching) experiment."""
-    fid.reset_fake_features()
+    fid.reset_features()
 
     generated_samples = []
     total_velocity_magnitude = 0.0
@@ -434,7 +434,7 @@ def run_ode_experiment(sampler, device, fid, n_samples, batch_size):
 
 def run_sde_experiment(sampler, device, fid, n_samples, batch_size, noise_scale):
     """Run SDE experiment with the given noise scale."""
-    fid.reset_fake_features()
+    fid.reset_features()
 
     generated_samples = []
     total_velocity_magnitude = 0.0
@@ -519,7 +519,7 @@ def run_sde_experiment(sampler, device, fid, n_samples, batch_size, noise_scale)
 
 def run_ode_divfree_experiment(sampler, device, fid, n_samples, batch_size, lambda_div):
     """Run ODE-divfree experiment with the given lambda_div value."""
-    fid.reset_fake_features()
+    fid.reset_features()
 
     generated_samples = []
     total_velocity_magnitude = 0.0
