@@ -18,7 +18,7 @@ from run_mcts_flow import calculate_inception_score, compute_dino_accuracy
 
 DEFAULT_DATASET = "imagenet256"
 DEFAULT_DEVICE = "cuda:5"
-DEFAULT_REAL_SAMPLES = 10000
+DEFAULT_REAL_SAMPLES = 100
 
 # Evaluation mode defaults
 DEFAULT_EVAL_MODE = "single_samples"
@@ -34,7 +34,7 @@ DEFAULT_DT_STD = 1
 DEFAULT_WARP_SCALE = 1
 
 # Sampling method defaults
-DEFAULT_SAMPLE_METHOD = "ode_divfree_path_exploration"
+DEFAULT_SAMPLE_METHOD = "ode_divfree"
 DEFAULT_SCORING_FUNCTION = "dino_score"
 
 # Batch optimization defaults
