@@ -3822,7 +3822,7 @@ class MCTSFlowSampler:
             branch_start_time: Time point at which to start branching (0.0 to 1.0)
         """
         if num_branches == 1 and num_keep == 1:
-            return self.batch_sample_sde(class_label, batch_size, noise_scale)
+            return self.batch_sample_ode(class_label, batch_size)
 
         assert (
             num_branches % num_keep == 0
@@ -4021,7 +4021,7 @@ class MCTSFlowSampler:
         ), "class_label tensor length must match batch_size"
 
         if num_branches == 1:
-            return self.batch_sample_sde(class_label, batch_size, noise_scale)
+            return self.batch_sample_ode(class_label, batch_size)
 
         score_fn, use_global = self._get_score_function(selector, use_global)
 
