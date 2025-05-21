@@ -12,7 +12,7 @@ from tqdm import tqdm
 
 from mcts_single_flow import MCTSFlowSampler
 from imagenet_dataset import ImageNet32Dataset
-from run_mcts_flow import calculate_inception_score, compute_dino_accuracy
+from run_mcts_flow import calculate_inception_score
 from utils import divfree_swirl_si
 
 
@@ -631,7 +631,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--batch_size",
         type=int,
-        default=64,
+        default=256,
         help="Batch size for sample generation",
     )
     parser.add_argument(
