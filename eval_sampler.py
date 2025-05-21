@@ -24,7 +24,7 @@ DEFAULT_REAL_SAMPLES = 100
 DEFAULT_EVAL_MODE = "single_samples"
 
 # Sample generation defaults
-DEFAULT_N_SAMPLES = 128
+DEFAULT_N_SAMPLES = 512
 DEFAULT_BRANCH_PAIRS = "1:1,2:1,4:1,8:1"
 
 # Time step defaults
@@ -47,7 +47,7 @@ DEFAULT_OUTPUT_DIR = "./results"
 DEFAULT_NOISE_SCALE = 0.1
 DEFAULT_LAMBDA_DIV = 0.2
 
-BATCH_SIZE = 256
+BATCH_SIZE = 512
 
 
 def evaluate_sampler(args):
