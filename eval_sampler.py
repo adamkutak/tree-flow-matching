@@ -47,6 +47,8 @@ DEFAULT_OUTPUT_DIR = "./results"
 DEFAULT_NOISE_SCALE = 0.1
 DEFAULT_LAMBDA_DIV = 0.2
 
+BATCH_SIZE = 256
+
 
 def evaluate_sampler(args):
     """
@@ -301,7 +303,7 @@ def generate_and_compute_metrics(
     """
     fid.reset()
 
-    generation_batch_size = int(64 / num_branches)  # this is based on a 24GB RTX 6000
+    generation_batch_size = int(BATCH_SIZE / num_branches)
     metric_batch_size = 64
     generated_samples = []
     mahalanobis_distances = []
