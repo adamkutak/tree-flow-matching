@@ -18,7 +18,7 @@ BRANCH_PAIRS = "1:1,2:1,4:1,8:1"  # Always use these branch pairs
 SCORING_FUNCTION = "dino_score"  # Default scoring function
 DT_STD = 0.7  # Path exploration time step standard deviation
 WARP_SCALE = 0.5  # Time warp scale factor
-DEVICE = "cuda:3"  # Default device
+DEVICE = "cuda:0"  # Default device
 NOISE_SCALE = 0.1
 LAMBDA_DIV = 0.3
 
