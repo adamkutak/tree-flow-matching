@@ -17,7 +17,7 @@ from imagenet_dataset import ImageNet32Dataset
 from run_mcts_flow import calculate_inception_score, compute_dino_accuracy
 
 DEFAULT_DATASET = "imagenet256"
-DEFAULT_DEVICE = "cuda:5"
+DEFAULT_DEVICE = "cuda"
 DEFAULT_REAL_SAMPLES = 100
 
 # Evaluation mode defaults
