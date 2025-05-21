@@ -50,7 +50,7 @@ def compute_dataset_statistics(dataset_name, feature_dim=64, pca_dim=None):
     )
     inception.eval()
 
-    device = torch.device("cuda:2" if torch.cuda.is_available() else "cpu")
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     inception = inception.to(device)
 
     # Load dataset
