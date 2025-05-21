@@ -210,7 +210,7 @@ def run_experiment(args):
     Run experiments to measure the effect of different noise levels on sampling quality.
     """
     # Set up device
-    device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+    device = torch.device("cuda:1" if torch.cuda.is_available() else "cpu")
     print(f"Using device: {device}")
 
     # Determine dataset parameters
@@ -617,7 +617,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--device",
         type=str,
-        default="cuda:0",
+        default="cuda:1",
         help="Device to use for computation",
     )
 
@@ -631,7 +631,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--batch_size",
         type=int,
-        default=256,
+        default=128,
         help="Batch size for sample generation",
     )
     parser.add_argument(
