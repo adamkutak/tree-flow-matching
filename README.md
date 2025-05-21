@@ -17,3 +17,6 @@ add imagenet1k validation set (for calculating FID) in `data/` folder:
 `wget https://image-net.org/data/ILSVRC/2012/ILSVRC2012_img_val.tar --no-check-certificate`
 
 `wget https://image-net.org/data/ILSVRC/2012/ILSVRC2012_devkit_t12.tar.gz --no-check-certificate`
+
+run experiments (from `/` root directory):
+`python run_experiments.py`
