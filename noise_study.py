@@ -66,14 +66,16 @@ def batch_sample_sde_with_metrics(
     sampler, class_label, batch_size=16, noise_scale=0.05
 ):
     """
-    Flow matching sampling with added noise (SDE sampling), with noise magnitude tracking.
+    Flow matching sampling with correct Euler-Maruyama scheme for SDE sampling.
+    The update rule is:
+    x_{t+Δt} = x_t + [v_θ(x_t,t) + (σ_t^2/2t)(x_t + (1-t)v_θ(x_t,t))]Δt + σ_t√Δt ϵ
     """
     is_tensor = torch.is_tensor(class_label)
     sampler.flow_model.eval()
 
-    velocity_magnitudes = []
+    drift_magnitudes = []
     noise_magnitudes = []
-    noise_to_velocity_ratios = []
+    noise_to_drift_ratios = []
 
     with torch.no_grad():
         current_samples = torch.randn(
@@ -95,13 +97,27 @@ def batch_sample_sde_with_metrics(
             dt = sampler.timesteps[step + 1] - t
             t_batch = torch.full((batch_size,), t.item(), device=sampler.device)
 
-            # Flow step with SDE noise term
+            # Get velocity from model
             velocity = sampler.flow_model(t_batch, current_samples, current_label)
 
-            # Track velocity magnitude
-            dims = tuple(range(1, velocity.ndim))
-            vel_mag = torch.linalg.vector_norm(velocity, dim=dims).mean().item()
-            velocity_magnitudes.append(vel_mag)
+            # Calculate drift correction term: (σ_t^2/2t)(x_t + (1-t)v_θ(x_t,t))
+            sigma_t = noise_scale
+            sigma_t_squared = sigma_t**2
+
+            # Avoid division by zero at t=0
+            t_safe = torch.maximum(t_batch, torch.tensor(1e-5, device=sampler.device))
+
+            drift_correction = (sigma_t_squared / (2 * t_safe)).view(-1, 1, 1, 1) * (
+                current_samples + (1 - t_batch).view(-1, 1, 1, 1) * velocity
+            )
+
+            # Total drift is velocity + drift_correction
+            total_drift = velocity + drift_correction
+
+            # Track total drift magnitude
+            dims = tuple(range(1, total_drift.ndim))
+            drift_mag = torch.linalg.vector_norm(total_drift, dim=dims).mean().item()
+            drift_magnitudes.append(drift_mag)
 
             # Add noise scaled by dt and noise_scale
             noise = torch.randn_like(current_samples) * torch.sqrt(dt) * noise_scale
@@ -110,27 +126,140 @@ def batch_sample_sde_with_metrics(
             noise_mag = torch.linalg.vector_norm(noise, dim=dims).mean().item()
             noise_magnitudes.append(noise_mag)
 
-            # Track ratio
-            ratio = noise_mag / vel_mag if vel_mag > 0 else 0
-            noise_to_velocity_ratios.append(ratio)
+            # Track ratio of noise to total drift
+            ratio = noise_mag / drift_mag if drift_mag > 0 else 0
+            noise_to_drift_ratios.append(ratio)
 
-            # Euler-Maruyama update
-            current_samples = current_samples + velocity * dt + noise
+            # Correct Euler-Maruyama update
+            current_samples = current_samples + total_drift * dt + noise
 
-        avg_velocity_magnitude = sum(velocity_magnitudes) / len(velocity_magnitudes)
+        avg_drift_magnitude = sum(drift_magnitudes) / len(drift_magnitudes)
         avg_noise_magnitude = sum(noise_magnitudes) / len(noise_magnitudes)
-        avg_noise_to_velocity_ratio = sum(noise_to_velocity_ratios) / len(
-            noise_to_velocity_ratios
+        avg_noise_to_drift_ratio = sum(noise_to_drift_ratios) / len(
+            noise_to_drift_ratios
         )
 
         return (
             sampler.unnormalize_images(current_samples),
-            avg_velocity_magnitude,
+            avg_drift_magnitude,
             avg_noise_magnitude,
-            avg_noise_to_velocity_ratio,
-            velocity_magnitudes,
+            avg_noise_to_drift_ratio,
+            drift_magnitudes,
             noise_magnitudes,
-            noise_to_velocity_ratios,
+            noise_to_drift_ratios,
+        )
+
+
+def batch_sample_sde_divfree_with_metrics(
+    sampler, class_label, batch_size=16, noise_scale=0.05, lambda_div=0.2
+):
+    """
+    Flow matching sampling with correct Euler-Maruyama scheme for SDE sampling,
+    with added divergence-free field.
+    """
+    is_tensor = torch.is_tensor(class_label)
+    sampler.flow_model.eval()
+
+    drift_magnitudes = []
+    noise_magnitudes = []
+    divfree_magnitudes = []
+    noise_to_drift_ratios = []
+    divfree_to_drift_ratios = []
+
+    with torch.no_grad():
+        current_samples = torch.randn(
+            batch_size,
+            sampler.channels,
+            sampler.image_size,
+            sampler.image_size,
+            device=sampler.device,
+        )
+
+        if is_tensor:
+            current_label = class_label
+        else:
+            current_label = torch.full(
+                (batch_size,), class_label, device=sampler.device, dtype=torch.long
+            )
+
+        for step, t in enumerate(sampler.timesteps[:-1]):
+            dt = sampler.timesteps[step + 1] - t
+            t_batch = torch.full((batch_size,), t.item(), device=sampler.device)
+
+            # Get velocity from model
+            velocity = sampler.flow_model(t_batch, current_samples, current_label)
+
+            # Calculate divergence-free field
+            w_unscaled = divfree_swirl_si(
+                current_samples, t_batch, current_label, velocity
+            )
+            w = lambda_div * w_unscaled
+
+            # Calculate drift correction term: (σ_t^2/2t)(x_t + (1-t)v_θ(x_t,t))
+            sigma_t = noise_scale
+            sigma_t_squared = sigma_t**2
+
+            # Avoid division by zero at t=0
+            t_safe = torch.maximum(t_batch, torch.tensor(1e-5, device=sampler.device))
+
+            # For the drift correction, we use velocity + w as our drift
+            combined_velocity = velocity + w
+
+            drift_correction = (sigma_t_squared / (2 * t_safe)).view(-1, 1, 1, 1) * (
+                current_samples + (1 - t_batch).view(-1, 1, 1, 1) * combined_velocity
+            )
+
+            # Total drift is velocity + w + drift_correction
+            total_drift = combined_velocity + drift_correction
+
+            # Track magnitudes
+            dims = tuple(range(1, velocity.ndim))
+            drift_mag = torch.linalg.vector_norm(total_drift, dim=dims).mean().item()
+            drift_magnitudes.append(drift_mag)
+
+            div_mag = torch.linalg.vector_norm(w, dim=dims).mean().item()
+            divfree_magnitudes.append(div_mag)
+
+            # Add noise scaled by dt and noise_scale
+            noise = torch.randn_like(current_samples) * torch.sqrt(dt) * noise_scale
+
+            # Track noise magnitude
+            noise_mag = torch.linalg.vector_norm(noise, dim=dims).mean().item()
+            noise_magnitudes.append(noise_mag)
+
+            # Track ratios
+            noise_ratio = noise_mag / drift_mag if drift_mag > 0 else 0
+            noise_to_drift_ratios.append(noise_ratio)
+
+            divfree_ratio = div_mag / drift_mag if drift_mag > 0 else 0
+            divfree_to_drift_ratios.append(divfree_ratio)
+
+            # Correct Euler-Maruyama update with divergence-free field
+            current_samples = current_samples + total_drift * dt + noise
+
+        # Calculate averages
+        avg_drift_magnitude = sum(drift_magnitudes) / len(drift_magnitudes)
+        avg_noise_magnitude = sum(noise_magnitudes) / len(noise_magnitudes)
+        avg_divfree_magnitude = sum(divfree_magnitudes) / len(divfree_magnitudes)
+        avg_noise_to_drift_ratio = sum(noise_to_drift_ratios) / len(
+            noise_to_drift_ratios
+        )
+        avg_divfree_to_drift_ratio = sum(divfree_to_drift_ratios) / len(
+            divfree_to_drift_ratios
+        )
+
+        return (
+            sampler.unnormalize_images(current_samples),
+            avg_drift_magnitude,
+            avg_noise_magnitude,
+            avg_divfree_magnitude,
+            avg_noise_to_drift_ratio,
+            avg_divfree_to_drift_ratio,
+            drift_magnitudes,
+            noise_magnitudes,
+            divfree_magnitudes,
+            noise_to_drift_ratios,
+            divfree_to_drift_ratios,
         )
 
 
@@ -203,6 +332,342 @@ def batch_sample_ode_divfree_with_metrics(
             divfree_magnitudes,
             divfree_to_velocity_ratios,
         )
+
+
+def run_ode_experiment(sampler, device, fid, n_samples, batch_size):
+    """Run baseline ODE (regular flow matching) experiment."""
+    fid.reset()
+
+    generated_samples = []
+    total_velocity_magnitude = 0.0
+    velocity_magnitudes_all = []
+
+    # Calculate number of batches
+    num_batches = n_samples // batch_size
+    if n_samples % batch_size != 0:
+        num_batches += 1
+
+    print(f"Generating {n_samples} samples using regular ODE sampling...")
+
+    for i in tqdm(range(num_batches)):
+        current_batch_size = min(batch_size, n_samples - i * batch_size)
+
+        # Random class labels
+        class_labels = torch.randint(
+            0, sampler.num_classes, (current_batch_size,), device=device
+        )
+
+        # Generate samples
+        samples, avg_velocity, velocity_magnitudes = batch_sample_ode_with_metrics(
+            sampler, class_labels, current_batch_size
+        )
+
+        # Update metrics
+        generated_samples.extend(samples.cpu())
+        total_velocity_magnitude += avg_velocity * current_batch_size
+        velocity_magnitudes_all.extend(velocity_magnitudes)
+
+        # Update FID
+        fid.update(samples.to(device), real=False)
+
+    # Compute average velocity magnitude
+    avg_velocity_magnitude = total_velocity_magnitude / n_samples
+
+    # Compute FID
+    fid_score = fid.compute().item()
+
+    # Compute Inception Score
+    generated_tensor = torch.stack(generated_samples).to(device)
+    inception_score, inception_std = calculate_inception_score(
+        generated_tensor, device=device, batch_size=64, splits=10
+    )
+
+    # Return metrics
+    metrics = {
+        "fid_score": fid_score,
+        "inception_score": inception_score,
+        "inception_std": inception_std,
+        "avg_velocity_magnitude": avg_velocity_magnitude,
+        "velocity_magnitudes": velocity_magnitudes_all,
+    }
+
+    return metrics
+
+
+def run_sde_experiment(sampler, device, fid, n_samples, batch_size, noise_scale):
+    """Run SDE experiment with the correct Euler-Maruyama scheme."""
+    fid.reset()
+
+    generated_samples = []
+    total_drift_magnitude = 0.0
+    total_noise_magnitude = 0.0
+    total_noise_to_drift_ratio = 0.0
+    drift_magnitudes_all = []
+    noise_magnitudes_all = []
+    noise_to_drift_ratios_all = []
+
+    # Calculate number of batches
+    num_batches = n_samples // batch_size
+    if n_samples % batch_size != 0:
+        num_batches += 1
+
+    print(
+        f"Generating {n_samples} samples using correct SDE sampling with noise_scale={noise_scale}..."
+    )
+
+    for i in tqdm(range(num_batches)):
+        current_batch_size = min(batch_size, n_samples - i * batch_size)
+
+        # Random class labels
+        class_labels = torch.randint(
+            0, sampler.num_classes, (current_batch_size,), device=device
+        )
+
+        # Generate samples
+        (
+            samples,
+            avg_drift,
+            avg_noise,
+            avg_ratio,
+            drift_magnitudes,
+            noise_magnitudes,
+            noise_to_drift_ratios,
+        ) = batch_sample_sde_with_metrics(
+            sampler, class_labels, current_batch_size, noise_scale
+        )
+
+        # Update metrics
+        generated_samples.extend(samples.cpu())
+        total_drift_magnitude += avg_drift * current_batch_size
+        total_noise_magnitude += avg_noise * current_batch_size
+        total_noise_to_drift_ratio += avg_ratio * current_batch_size
+        drift_magnitudes_all.extend(drift_magnitudes)
+        noise_magnitudes_all.extend(noise_magnitudes)
+        noise_to_drift_ratios_all.extend(noise_to_drift_ratios)
+
+        # Update FID
+        fid.update(samples.to(device), real=False)
+
+    # Compute averages
+    avg_drift_magnitude = total_drift_magnitude / n_samples
+    avg_noise_magnitude = total_noise_magnitude / n_samples
+    avg_noise_to_drift_ratio = total_noise_to_drift_ratio / n_samples
+
+    # Compute FID
+    fid_score = fid.compute().item()
+
+    # Compute Inception Score
+    generated_tensor = torch.stack(generated_samples).to(device)
+    inception_score, inception_std = calculate_inception_score(
+        generated_tensor, device=device, batch_size=64, splits=10
+    )
+
+    # Return metrics
+    metrics = {
+        "fid_score": fid_score,
+        "inception_score": inception_score,
+        "inception_std": inception_std,
+        "noise_scale": noise_scale,
+        "avg_drift_magnitude": avg_drift_magnitude,
+        "avg_noise_magnitude": avg_noise_magnitude,
+        "avg_noise_to_drift_ratio": avg_noise_to_drift_ratio,
+        "drift_magnitudes": drift_magnitudes_all,
+        "noise_magnitudes": noise_magnitudes_all,
+        "noise_to_drift_ratios": noise_to_drift_ratios_all,
+    }
+
+    return metrics
+
+
+def run_sde_divfree_experiment(
+    sampler, device, fid, n_samples, batch_size, noise_scale, lambda_div
+):
+    """Run SDE experiment with the correct Euler-Maruyama scheme and divergence-free field."""
+    fid.reset()
+
+    generated_samples = []
+    total_drift_magnitude = 0.0
+    total_noise_magnitude = 0.0
+    total_divfree_magnitude = 0.0
+    total_noise_to_drift_ratio = 0.0
+    total_divfree_to_drift_ratio = 0.0
+    drift_magnitudes_all = []
+    noise_magnitudes_all = []
+    divfree_magnitudes_all = []
+    noise_to_drift_ratios_all = []
+    divfree_to_drift_ratios_all = []
+
+    # Calculate number of batches
+    num_batches = n_samples // batch_size
+    if n_samples % batch_size != 0:
+        num_batches += 1
+
+    print(
+        f"Generating {n_samples} samples using SDE-divfree sampling with noise_scale={noise_scale}, lambda_div={lambda_div}..."
+    )
+
+    for i in tqdm(range(num_batches)):
+        current_batch_size = min(batch_size, n_samples - i * batch_size)
+
+        # Random class labels
+        class_labels = torch.randint(
+            0, sampler.num_classes, (current_batch_size,), device=device
+        )
+
+        # Generate samples
+        (
+            samples,
+            avg_drift,
+            avg_noise,
+            avg_divfree,
+            avg_noise_ratio,
+            avg_divfree_ratio,
+            drift_magnitudes,
+            noise_magnitudes,
+            divfree_magnitudes,
+            noise_to_drift_ratios,
+            divfree_to_drift_ratios,
+        ) = batch_sample_sde_divfree_with_metrics(
+            sampler, class_labels, current_batch_size, noise_scale, lambda_div
+        )
+
+        # Update metrics
+        generated_samples.extend(samples.cpu())
+        total_drift_magnitude += avg_drift * current_batch_size
+        total_noise_magnitude += avg_noise * current_batch_size
+        total_divfree_magnitude += avg_divfree * current_batch_size
+        total_noise_to_drift_ratio += avg_noise_ratio * current_batch_size
+        total_divfree_to_drift_ratio += avg_divfree_ratio * current_batch_size
+        drift_magnitudes_all.extend(drift_magnitudes)
+        noise_magnitudes_all.extend(noise_magnitudes)
+        divfree_magnitudes_all.extend(divfree_magnitudes)
+        noise_to_drift_ratios_all.extend(noise_to_drift_ratios)
+        divfree_to_drift_ratios_all.extend(divfree_to_drift_ratios)
+
+        # Update FID
+        fid.update(samples.to(device), real=False)
+
+    # Compute averages
+    avg_drift_magnitude = total_drift_magnitude / n_samples
+    avg_noise_magnitude = total_noise_magnitude / n_samples
+    avg_divfree_magnitude = total_divfree_magnitude / n_samples
+    avg_noise_to_drift_ratio = total_noise_to_drift_ratio / n_samples
+    avg_divfree_to_drift_ratio = total_divfree_to_drift_ratio / n_samples
+
+    # Compute FID
+    fid_score = fid.compute().item()
+
+    # Compute Inception Score
+    generated_tensor = torch.stack(generated_samples).to(device)
+    inception_score, inception_std = calculate_inception_score(
+        generated_tensor, device=device, batch_size=64, splits=10
+    )
+
+    # Return metrics
+    metrics = {
+        "fid_score": fid_score,
+        "inception_score": inception_score,
+        "inception_std": inception_std,
+        "noise_scale": noise_scale,
+        "lambda_div": lambda_div,
+        "avg_drift_magnitude": avg_drift_magnitude,
+        "avg_noise_magnitude": avg_noise_magnitude,
+        "avg_divfree_magnitude": avg_divfree_magnitude,
+        "avg_noise_to_drift_ratio": avg_noise_to_drift_ratio,
+        "avg_divfree_to_drift_ratio": avg_divfree_to_drift_ratio,
+        "drift_magnitudes": drift_magnitudes_all,
+        "noise_magnitudes": noise_magnitudes_all,
+        "divfree_magnitudes": divfree_magnitudes_all,
+        "noise_to_drift_ratios": noise_to_drift_ratios_all,
+        "divfree_to_drift_ratios": divfree_to_drift_ratios_all,
+    }
+
+    return metrics
+
+
+def run_ode_divfree_experiment(sampler, device, fid, n_samples, batch_size, lambda_div):
+    """Run ODE-divfree experiment with the given lambda_div value."""
+    fid.reset()
+
+    generated_samples = []
+    total_velocity_magnitude = 0.0
+    total_divfree_magnitude = 0.0
+    total_divfree_to_velocity_ratio = 0.0
+    velocity_magnitudes_all = []
+    divfree_magnitudes_all = []
+    divfree_to_velocity_ratios_all = []
+
+    # Calculate number of batches
+    num_batches = n_samples // batch_size
+    if n_samples % batch_size != 0:
+        num_batches += 1
+
+    print(
+        f"Generating {n_samples} samples using ODE-divfree sampling with lambda_div={lambda_div}..."
+    )
+
+    for i in tqdm(range(num_batches)):
+        current_batch_size = min(batch_size, n_samples - i * batch_size)
+
+        # Random class labels
+        class_labels = torch.randint(
+            0, sampler.num_classes, (current_batch_size,), device=device
+        )
+
+        # Generate samples
+        (
+            samples,
+            avg_velocity,
+            avg_divfree,
+            avg_ratio,
+            velocity_magnitudes,
+            divfree_magnitudes,
+            divfree_to_velocity_ratios,
+        ) = batch_sample_ode_divfree_with_metrics(
+            sampler, class_labels, current_batch_size, lambda_div
+        )
+
+        # Update metrics
+        generated_samples.extend(samples.cpu())
+        total_velocity_magnitude += avg_velocity * current_batch_size
+        total_divfree_magnitude += avg_divfree * current_batch_size
+        total_divfree_to_velocity_ratio += avg_ratio * current_batch_size
+        velocity_magnitudes_all.extend(velocity_magnitudes)
+        divfree_magnitudes_all.extend(divfree_magnitudes)
+        divfree_to_velocity_ratios_all.extend(divfree_to_velocity_ratios)
+
+        # Update FID
+        fid.update(samples.to(device), real=False)
+
+    # Compute averages
+    avg_velocity_magnitude = total_velocity_magnitude / n_samples
+    avg_divfree_magnitude = total_divfree_magnitude / n_samples
+    avg_divfree_to_velocity_ratio = total_divfree_to_velocity_ratio / n_samples
+
+    # Compute FID
+    fid_score = fid.compute().item()
+
+    # Compute Inception Score
+    generated_tensor = torch.stack(generated_samples).to(device)
+    inception_score, inception_std = calculate_inception_score(
+        generated_tensor, device=device, batch_size=64, splits=10
+    )
+
+    # Return metrics
+    metrics = {
+        "fid_score": fid_score,
+        "inception_score": inception_score,
+        "inception_std": inception_std,
+        "lambda_div": lambda_div,
+        "avg_velocity_magnitude": avg_velocity_magnitude,
+        "avg_divfree_magnitude": avg_divfree_magnitude,
+        "avg_divfree_to_velocity_ratio": avg_divfree_to_velocity_ratio,
+        "velocity_magnitudes": velocity_magnitudes_all,
+        "divfree_magnitudes": divfree_magnitudes_all,
+        "divfree_to_velocity_ratios": divfree_to_velocity_ratios_all,
+    }
+
+    return metrics
 
 
 def run_experiment(args):
@@ -312,6 +777,16 @@ def run_experiment(args):
         "experiments": [],
     }
 
+    # Determine which experiments to run
+    run_ode = True  # Always run baseline ODE
+    run_sde = args.run_sde or args.run_all
+    run_ode_divfree = args.run_ode_divfree or args.run_all
+    run_sde_divfree = args.run_sde_divfree or args.run_all
+
+    # If no specific experiment is selected, run all
+    if not (run_sde or run_ode_divfree or run_sde_divfree) and not args.run_all:
+        run_sde = run_ode_divfree = run_sde_divfree = True
+
     # Run baseline ODE experiment
     print("\n\n===== Running baseline ODE experiment =====")
     ode_metrics = run_ode_experiment(
@@ -323,46 +798,85 @@ def run_experiment(args):
     )
 
     # Run SDE experiments
-    print("\n\n===== Running SDE experiments =====")
-    for noise_scale in args.noise_scales:
-        print(f"\nTesting SDE with noise_scale={noise_scale}")
-        sde_metrics = run_sde_experiment(
-            sampler, device, fid, args.num_samples, args.batch_size, noise_scale
-        )
+    if run_sde:
+        print("\n\n===== Running SDE experiments =====")
+        for noise_scale in args.noise_scales:
+            print(f"\nTesting SDE with noise_scale={noise_scale}")
+            sde_metrics = run_sde_experiment(
+                sampler, device, fid, args.num_samples, args.batch_size, noise_scale
+            )
 
-        results["experiments"].append(
-            {"type": "sde", "noise_scale": noise_scale, "metrics": sde_metrics}
-        )
+            results["experiments"].append(
+                {"type": "sde", "noise_scale": noise_scale, "metrics": sde_metrics}
+            )
 
-        print(
-            f"SDE (noise_scale={noise_scale}) - FID: {sde_metrics['fid_score']:.4f}, IS: {sde_metrics['inception_score']:.4f}±{sde_metrics['inception_std']:.4f}"
-        )
-        print(
-            f"Average noise/velocity ratio: {sde_metrics['avg_noise_to_velocity_ratio']:.4f}"
-        )
+            print(
+                f"SDE (noise_scale={noise_scale}) - FID: {sde_metrics['fid_score']:.4f}, IS: {sde_metrics['inception_score']:.4f}±{sde_metrics['inception_std']:.4f}"
+            )
+            print(
+                f"Average noise/drift ratio: {sde_metrics['avg_noise_to_drift_ratio']:.4f}"
+            )
 
     # Run ODE-divfree experiments
-    print("\n\n===== Running ODE-divfree experiments =====")
-    for lambda_div in args.lambda_divs:
-        print(f"\nTesting ODE-divfree with lambda_div={lambda_div}")
-        divfree_metrics = run_ode_divfree_experiment(
-            sampler, device, fid, args.num_samples, args.batch_size, lambda_div
-        )
+    if run_ode_divfree:
+        print("\n\n===== Running ODE-divfree experiments =====")
+        for lambda_div in args.lambda_divs:
+            print(f"\nTesting ODE-divfree with lambda_div={lambda_div}")
+            divfree_metrics = run_ode_divfree_experiment(
+                sampler, device, fid, args.num_samples, args.batch_size, lambda_div
+            )
 
-        results["experiments"].append(
-            {
-                "type": "ode_divfree",
-                "lambda_div": lambda_div,
-                "metrics": divfree_metrics,
-            }
-        )
+            results["experiments"].append(
+                {
+                    "type": "ode_divfree",
+                    "lambda_div": lambda_div,
+                    "metrics": divfree_metrics,
+                }
+            )
 
-        print(
-            f"ODE-divfree (lambda_div={lambda_div}) - FID: {divfree_metrics['fid_score']:.4f}, IS: {divfree_metrics['inception_score']:.4f}±{divfree_metrics['inception_std']:.4f}"
-        )
-        print(
-            f"Average divfree/velocity ratio: {divfree_metrics['avg_divfree_to_velocity_ratio']:.4f}"
-        )
+            print(
+                f"ODE-divfree (lambda_div={lambda_div}) - FID: {divfree_metrics['fid_score']:.4f}, IS: {divfree_metrics['inception_score']:.4f}±{divfree_metrics['inception_std']:.4f}"
+            )
+            print(
+                f"Average divfree/velocity ratio: {divfree_metrics['avg_divfree_to_velocity_ratio']:.4f}"
+            )
+
+    # Run SDE with divergence-free field experiments
+    if run_sde_divfree:
+        print("\n\n===== Running SDE with divergence-free field experiments =====")
+        for noise_scale in args.noise_scales:
+            for lambda_div in args.lambda_divs:
+                print(
+                    f"\nTesting SDE-divfree with noise_scale={noise_scale}, lambda_div={lambda_div}"
+                )
+                sde_divfree_metrics = run_sde_divfree_experiment(
+                    sampler,
+                    device,
+                    fid,
+                    args.num_samples,
+                    args.batch_size,
+                    noise_scale,
+                    lambda_div,
+                )
+
+                results["experiments"].append(
+                    {
+                        "type": "sde_divfree",
+                        "noise_scale": noise_scale,
+                        "lambda_div": lambda_div,
+                        "metrics": sde_divfree_metrics,
+                    }
+                )
+
+                print(
+                    f"SDE-divfree (noise_scale={noise_scale}, lambda_div={lambda_div}) - "
+                    f"FID: {sde_divfree_metrics['fid_score']:.4f}, "
+                    f"IS: {sde_divfree_metrics['inception_score']:.4f}±{sde_divfree_metrics['inception_std']:.4f}"
+                )
+                print(
+                    f"Average noise/drift ratio: {sde_divfree_metrics['avg_noise_to_drift_ratio']:.4f}, "
+                    f"Average divfree/drift ratio: {sde_divfree_metrics['avg_divfree_to_drift_ratio']:.4f}"
+                )
 
     # Save results
     result_file = os.path.join(results_dir, f"noise_study_results_{timestamp}.json")
@@ -371,236 +885,6 @@ def run_experiment(args):
 
     print(f"\nResults saved to {result_file}")
     return results
-
-
-def run_ode_experiment(sampler, device, fid, n_samples, batch_size):
-    """Run baseline ODE (regular flow matching) experiment."""
-    fid.reset()
-
-    generated_samples = []
-    total_velocity_magnitude = 0.0
-    velocity_magnitudes_all = []
-
-    # Calculate number of batches
-    num_batches = n_samples // batch_size
-    if n_samples % batch_size != 0:
-        num_batches += 1
-
-    print(f"Generating {n_samples} samples using regular ODE sampling...")
-
-    for i in tqdm(range(num_batches)):
-        current_batch_size = min(batch_size, n_samples - i * batch_size)
-
-        # Random class labels
-        class_labels = torch.randint(
-            0, sampler.num_classes, (current_batch_size,), device=device
-        )
-
-        # Generate samples
-        samples, avg_velocity, velocity_magnitudes = batch_sample_ode_with_metrics(
-            sampler, class_labels, current_batch_size
-        )
-
-        # Update metrics
-        generated_samples.extend(samples.cpu())
-        total_velocity_magnitude += avg_velocity * current_batch_size
-        velocity_magnitudes_all.extend(velocity_magnitudes)
-
-        # Update FID
-        fid.update(samples.to(device), real=False)
-
-    # Compute average velocity magnitude
-    avg_velocity_magnitude = total_velocity_magnitude / n_samples
-
-    # Compute FID
-    fid_score = fid.compute().item()
-
-    # Compute Inception Score
-    generated_tensor = torch.stack(generated_samples).to(device)
-    inception_score, inception_std = calculate_inception_score(
-        generated_tensor, device=device, batch_size=64, splits=10
-    )
-
-    # Return metrics
-    metrics = {
-        "fid_score": fid_score,
-        "inception_score": inception_score,
-        "inception_std": inception_std,
-        "avg_velocity_magnitude": avg_velocity_magnitude,
-        "velocity_magnitudes": velocity_magnitudes_all,
-    }
-
-    return metrics
-
-
-def run_sde_experiment(sampler, device, fid, n_samples, batch_size, noise_scale):
-    """Run SDE experiment with the given noise scale."""
-    fid.reset()
-
-    generated_samples = []
-    total_velocity_magnitude = 0.0
-    total_noise_magnitude = 0.0
-    total_noise_to_velocity_ratio = 0.0
-    velocity_magnitudes_all = []
-    noise_magnitudes_all = []
-    noise_to_velocity_ratios_all = []
-
-    # Calculate number of batches
-    num_batches = n_samples // batch_size
-    if n_samples % batch_size != 0:
-        num_batches += 1
-
-    print(
-        f"Generating {n_samples} samples using SDE sampling with noise_scale={noise_scale}..."
-    )
-
-    for i in tqdm(range(num_batches)):
-        current_batch_size = min(batch_size, n_samples - i * batch_size)
-
-        # Random class labels
-        class_labels = torch.randint(
-            0, sampler.num_classes, (current_batch_size,), device=device
-        )
-
-        # Generate samples
-        (
-            samples,
-            avg_velocity,
-            avg_noise,
-            avg_ratio,
-            velocity_magnitudes,
-            noise_magnitudes,
-            noise_to_velocity_ratios,
-        ) = batch_sample_sde_with_metrics(
-            sampler, class_labels, current_batch_size, noise_scale
-        )
-
-        # Update metrics
-        generated_samples.extend(samples.cpu())
-        total_velocity_magnitude += avg_velocity * current_batch_size
-        total_noise_magnitude += avg_noise * current_batch_size
-        total_noise_to_velocity_ratio += avg_ratio * current_batch_size
-        velocity_magnitudes_all.extend(velocity_magnitudes)
-        noise_magnitudes_all.extend(noise_magnitudes)
-        noise_to_velocity_ratios_all.extend(noise_to_velocity_ratios)
-
-        # Update FID
-        fid.update(samples.to(device), real=False)
-
-    # Compute averages
-    avg_velocity_magnitude = total_velocity_magnitude / n_samples
-    avg_noise_magnitude = total_noise_magnitude / n_samples
-    avg_noise_to_velocity_ratio = total_noise_to_velocity_ratio / n_samples
-
-    # Compute FID
-    fid_score = fid.compute().item()
-
-    # Compute Inception Score
-    generated_tensor = torch.stack(generated_samples).to(device)
-    inception_score, inception_std = calculate_inception_score(
-        generated_tensor, device=device, batch_size=64, splits=10
-    )
-
-    # Return metrics
-    metrics = {
-        "fid_score": fid_score,
-        "inception_score": inception_score,
-        "inception_std": inception_std,
-        "noise_scale": noise_scale,
-        "avg_velocity_magnitude": avg_velocity_magnitude,
-        "avg_noise_magnitude": avg_noise_magnitude,
-        "avg_noise_to_velocity_ratio": avg_noise_to_velocity_ratio,
-        "velocity_magnitudes": velocity_magnitudes_all,
-        "noise_magnitudes": noise_magnitudes_all,
-        "noise_to_velocity_ratios": noise_to_velocity_ratios_all,
-    }
-
-    return metrics
-
-
-def run_ode_divfree_experiment(sampler, device, fid, n_samples, batch_size, lambda_div):
-    """Run ODE-divfree experiment with the given lambda_div value."""
-    fid.reset()
-
-    generated_samples = []
-    total_velocity_magnitude = 0.0
-    total_divfree_magnitude = 0.0
-    total_divfree_to_velocity_ratio = 0.0
-    velocity_magnitudes_all = []
-    divfree_magnitudes_all = []
-    divfree_to_velocity_ratios_all = []
-
-    # Calculate number of batches
-    num_batches = n_samples // batch_size
-    if n_samples % batch_size != 0:
-        num_batches += 1
-
-    print(
-        f"Generating {n_samples} samples using ODE-divfree sampling with lambda_div={lambda_div}..."
-    )
-
-    for i in tqdm(range(num_batches)):
-        current_batch_size = min(batch_size, n_samples - i * batch_size)
-
-        # Random class labels
-        class_labels = torch.randint(
-            0, sampler.num_classes, (current_batch_size,), device=device
-        )
-
-        # Generate samples
-        (
-            samples,
-            avg_velocity,
-            avg_divfree,
-            avg_ratio,
-            velocity_magnitudes,
-            divfree_magnitudes,
-            divfree_to_velocity_ratios,
-        ) = batch_sample_ode_divfree_with_metrics(
-            sampler, class_labels, current_batch_size, lambda_div
-        )
-
-        # Update metrics
-        generated_samples.extend(samples.cpu())
-        total_velocity_magnitude += avg_velocity * current_batch_size
-        total_divfree_magnitude += avg_divfree * current_batch_size
-        total_divfree_to_velocity_ratio += avg_ratio * current_batch_size
-        velocity_magnitudes_all.extend(velocity_magnitudes)
-        divfree_magnitudes_all.extend(divfree_magnitudes)
-        divfree_to_velocity_ratios_all.extend(divfree_to_velocity_ratios)
-
-        # Update FID
-        fid.update(samples.to(device), real=False)
-
-    # Compute averages
-    avg_velocity_magnitude = total_velocity_magnitude / n_samples
-    avg_divfree_magnitude = total_divfree_magnitude / n_samples
-    avg_divfree_to_velocity_ratio = total_divfree_to_velocity_ratio / n_samples
-
-    # Compute FID
-    fid_score = fid.compute().item()
-
-    # Compute Inception Score
-    generated_tensor = torch.stack(generated_samples).to(device)
-    inception_score, inception_std = calculate_inception_score(
-        generated_tensor, device=device, batch_size=64, splits=10
-    )
-
-    # Return metrics
-    metrics = {
-        "fid_score": fid_score,
-        "inception_score": inception_score,
-        "inception_std": inception_std,
-        "lambda_div": lambda_div,
-        "avg_velocity_magnitude": avg_velocity_magnitude,
-        "avg_divfree_magnitude": avg_divfree_magnitude,
-        "avg_divfree_to_velocity_ratio": avg_divfree_to_velocity_ratio,
-        "velocity_magnitudes": velocity_magnitudes_all,
-        "divfree_magnitudes": divfree_magnitudes_all,
-        "divfree_to_velocity_ratios": divfree_to_velocity_ratios_all,
-    }
-
-    return metrics
 
 
 if __name__ == "__main__":
@@ -625,7 +909,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--num_samples",
         type=int,
-        default=1000,
+        default=50,
         help="Number of samples to generate for each experiment",
     )
     parser.add_argument(
@@ -663,6 +947,28 @@ if __name__ == "__main__":
         type=str,
         default="./results",
         help="Directory to save results",
+    )
+
+    # Add experiment selection options
+    parser.add_argument(
+        "--run_sde",
+        action="store_true",
+        help="Run SDE experiments with correct Euler-Maruyama scheme",
+    )
+    parser.add_argument(
+        "--run_ode_divfree",
+        action="store_true",
+        help="Run ODE with divergence-free field experiments",
+    )
+    parser.add_argument(
+        "--run_sde_divfree",
+        action="store_true",
+        help="Run SDE with divergence-free field experiments",
+    )
+    parser.add_argument(
+        "--run_all",
+        action="store_true",
+        help="Run all experiment types",
     )
 
     args = parser.parse_args()
