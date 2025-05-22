@@ -625,7 +625,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--num_samples",
         type=int,
-        default=1000,
+        default=5000,
         help="Number of samples to generate for each experiment",
     )
     parser.add_argument(
