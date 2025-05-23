@@ -1,0 +1,327 @@
+import torch
+import torch.utils.data as data
+import torchvision.transforms as transforms
+import torchvision.datasets as datasets
+import os
+import numpy as np
+import argparse
+import json
+from datetime import datetime
+from tqdm import tqdm
+import itertools
+
+from mcts_single_flow import MCTSFlowSampler
+from imagenet_dataset import ImageNet32Dataset
+from utils import divfree_swirl_si
+
+
+def batch_sample_ode_fixed_noise(sampler, class_label, initial_noise):
+    """
+    Regular flow matching sampling with fixed initial noise.
+    """
+    sampler.flow_model.eval()
+    batch_size = initial_noise.shape[0]
+
+    with torch.no_grad():
+        current_samples = initial_noise.clone()
+        current_label = torch.full((batch_size,), class_label, device=sampler.device)
+
+        for step, t in enumerate(sampler.timesteps[:-1]):
+            dt = sampler.timesteps[step + 1] - t
+            t_batch = torch.full((batch_size,), t.item(), device=sampler.device)
+
+            velocity = sampler.flow_model(t_batch, current_samples, current_label)
+            current_samples = current_samples + velocity * dt
+
+        return sampler.unnormalize_images(current_samples)
+
+
+def batch_sample_sde_fixed_noise(sampler, class_label, initial_noise, noise_scale=0.05):
+    """
+    SDE sampling with fixed initial noise.
+    """
+    sampler.flow_model.eval()
+    batch_size = initial_noise.shape[0]
+
+    with torch.no_grad():
+        current_samples = initial_noise.clone()
+        current_label = torch.full((batch_size,), class_label, device=sampler.device)
+
+        for step, t in enumerate(sampler.timesteps[:-1]):
+            dt = sampler.timesteps[step + 1] - t
+            t_batch = torch.full((batch_size,), t.item(), device=sampler.device)
+
+            velocity = sampler.flow_model(t_batch, current_samples, current_label)
+
+            # Add SDE noise
+            noise = torch.randn_like(current_samples) * torch.sqrt(dt) * noise_scale
+            current_samples = current_samples + velocity * dt + noise
+
+        return sampler.unnormalize_images(current_samples)
+
+
+def batch_sample_ode_divfree_fixed_noise(
+    sampler, class_label, initial_noise, lambda_div=0.2
+):
+    """
+    ODE-divfree sampling with fixed initial noise.
+    """
+    sampler.flow_model.eval()
+    batch_size = initial_noise.shape[0]
+
+    with torch.no_grad():
+        x = initial_noise.clone()
+        y = torch.full(
+            (batch_size,), class_label, device=sampler.device, dtype=torch.long
+        )
+
+        for step, t in enumerate(sampler.timesteps[:-1]):
+            dt = sampler.timesteps[step + 1] - t
+            t_batch = torch.full((batch_size,), t.item(), device=sampler.device)
+
+            u_t = sampler.flow_model(t_batch, x, y)
+            w_unscaled = divfree_swirl_si(x, t_batch, y, u_t)
+            w = lambda_div * w_unscaled
+
+            x = x + (u_t + w) * dt
+
+        return sampler.unnormalize_images(x)
+
+
+def calculate_batch_diversity(features):
+    """
+    Calculate average pairwise distance between features in a batch.
+
+    Args:
+        features: numpy array of shape (batch_size, feature_dim)
+
+    Returns:
+        float: average pairwise distance
+    """
+    batch_size = features.shape[0]
+    if batch_size < 2:
+        return 0.0
+
+    total_distance = 0.0
+    num_pairs = 0
+
+    # Calculate pairwise distances
+    for i, j in itertools.combinations(range(batch_size), 2):
+        distance = np.linalg.norm(features[i] - features[j])
+        total_distance += distance
+        num_pairs += 1
+
+    return total_distance / num_pairs
+
+
+def run_diversity_experiment(args):
+    """
+    Run diversity experiments comparing different sampling methods with fixed initial noise.
+    """
+    # Set up device
+    device = (
+        torch.device(args.device) if torch.cuda.is_available() else torch.device("cpu")
+    )
+    print(f"Using device: {device}")
+
+    # Determine dataset parameters
+    if args.dataset.lower() == "cifar10":
+        num_classes = 10
+        print("Using CIFAR-10 dataset")
+    elif args.dataset.lower() == "imagenet32" or args.dataset.lower() == "imagenet256":
+        num_classes = 1000
+        print(f"Using {args.dataset} dataset")
+    else:
+        raise ValueError(f"Unsupported dataset: {args.dataset}")
+
+    # Common parameters
+    image_size = 32
+    channels = 4 if args.dataset.lower() == "imagenet256" else 3
+    flow_model_name = f"flow_model_{args.dataset}.pt"
+    num_timesteps = 20
+
+    # Initialize sampler
+    sampler = MCTSFlowSampler(
+        image_size=image_size,
+        channels=channels,
+        device=device,
+        num_timesteps=num_timesteps,
+        num_classes=num_classes,
+        buffer_size=10,
+        load_models=True,
+        flow_model=flow_model_name,
+        num_channels=256,
+        inception_layer=0,
+        dataset=args.dataset,
+        flow_model_config=(
+            {
+                "num_res_blocks": 3,
+                "attention_resolutions": "16,8",
+            }
+            if args.dataset.lower() == "imagenet32"
+            else None
+        ),
+        load_dino=False,  # Don't need DINO for this experiment
+    )
+
+    # Create output directory for results
+    timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    results_dir = os.path.join(args.output_dir, f"diversity_study_{timestamp}")
+    os.makedirs(results_dir, exist_ok=True)
+
+    results = {
+        "timestamp": timestamp,
+        "dataset": args.dataset,
+        "batch_size": args.batch_size,
+        "num_batches": args.num_batches,
+        "timesteps": num_timesteps,
+        "experiments": [],
+    }
+
+    print(
+        f"\nRunning diversity experiments with {args.num_batches} batches of size {args.batch_size}"
+    )
+
+    # For each batch, test all methods with the same initial noise and class
+    for batch_idx in tqdm(range(args.num_batches), desc="Processing batches"):
+        # Generate fixed initial noise for this batch
+        initial_noise = torch.randn(
+            args.batch_size, channels, image_size, image_size, device=device
+        )
+
+        # Use a random class for this batch
+        class_label = torch.randint(0, num_classes, (1,)).item()
+
+        batch_results = {
+            "batch_idx": batch_idx,
+            "class_label": class_label,
+            "methods": {},
+        }
+
+        # Test ODE baseline
+        ode_samples = batch_sample_ode_fixed_noise(sampler, class_label, initial_noise)
+        ode_features = sampler.extract_inception_features(ode_samples)
+        ode_diversity = calculate_batch_diversity(ode_features)
+        batch_results["methods"]["ode"] = {"diversity": ode_diversity}
+
+        # Test SDE with different noise scales
+        for noise_scale in args.noise_scales:
+            sde_samples = batch_sample_sde_fixed_noise(
+                sampler, class_label, initial_noise, noise_scale
+            )
+            sde_features = sampler.extract_inception_features(sde_samples)
+            sde_diversity = calculate_batch_diversity(sde_features)
+            batch_results["methods"][f"sde_{noise_scale}"] = {
+                "diversity": sde_diversity
+            }
+
+        # Test ODE-divfree with different lambda values
+        for lambda_div in args.lambda_divs:
+            divfree_samples = batch_sample_ode_divfree_fixed_noise(
+                sampler, class_label, initial_noise, lambda_div
+            )
+            divfree_features = sampler.extract_inception_features(divfree_samples)
+            divfree_diversity = calculate_batch_diversity(divfree_features)
+            batch_results["methods"][f"divfree_{lambda_div}"] = {
+                "diversity": divfree_diversity
+            }
+
+        results["experiments"].append(batch_results)
+
+    # Calculate summary statistics
+    print("\n" + "=" * 50)
+    print("DIVERSITY RESULTS SUMMARY")
+    print("=" * 50)
+
+    summary = {}
+
+    # Collect all diversity scores by method
+    method_diversities = {}
+    for experiment in results["experiments"]:
+        for method_name, method_data in experiment["methods"].items():
+            if method_name not in method_diversities:
+                method_diversities[method_name] = []
+            method_diversities[method_name].append(method_data["diversity"])
+
+    # Calculate mean and std for each method
+    for method_name, diversities in method_diversities.items():
+        mean_diversity = np.mean(diversities)
+        std_diversity = np.std(diversities)
+        summary[method_name] = {
+            "mean_diversity": float(mean_diversity),
+            "std_diversity": float(std_diversity),
+            "all_diversities": [float(d) for d in diversities],
+        }
+        print(f"{method_name:15s}: {mean_diversity:.4f} ± {std_diversity:.4f}")
+
+    results["summary"] = summary
+
+    # Save results
+    result_file = os.path.join(results_dir, f"diversity_study_results_{timestamp}.json")
+    with open(result_file, "w") as f:
+        json.dump(results, f, indent=2)
+
+    print(f"\nResults saved to {result_file}")
+    return results
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="Flow matching diversity study")
+
+    # Dataset and device parameters
+    parser.add_argument(
+        "--dataset",
+        type=str,
+        default="imagenet256",
+        choices=["cifar10", "imagenet32", "imagenet256"],
+        help="Dataset to use (cifar10, imagenet32, or imagenet256)",
+    )
+    parser.add_argument(
+        "--device",
+        type=str,
+        default="cuda:1",
+        help="Device to use for computation",
+    )
+
+    # Experiment parameters
+    parser.add_argument(
+        "--batch_size",
+        type=int,
+        default=32,
+        help="Batch size for diversity measurement",
+    )
+    parser.add_argument(
+        "--num_batches",
+        type=int,
+        default=50,
+        help="Number of batches to test",
+    )
+
+    # Noise parameters
+    parser.add_argument(
+        "--noise_scales",
+        type=float,
+        nargs="+",
+        default=[0.1, 0.2, 0.4, 0.6, 1.0],
+        help="Noise scale values to test for SDE sampling",
+    )
+    parser.add_argument(
+        "--lambda_divs",
+        type=float,
+        nargs="+",
+        default=[0.1, 0.2, 0.3, 0.6, 1.0, 2.0],
+        help="Lambda values for divergence-free flow to test",
+    )
+
+    # Output parameters
+    parser.add_argument(
+        "--output_dir",
+        type=str,
+        default="./results",
+        help="Directory to save results",
+    )
+
+    args = parser.parse_args()
+
+    # Run the experiments
+    run_diversity_experiment(args)
