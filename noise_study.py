@@ -631,7 +631,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--batch_size",
         type=int,
-        default=128,
+        default=256,
         help="Batch size for sample generation",
     )
     parser.add_argument(
