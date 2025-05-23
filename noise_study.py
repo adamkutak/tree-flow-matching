@@ -12,7 +12,7 @@ from tqdm import tqdm
 
 from mcts_single_flow import MCTSFlowSampler
 from imagenet_dataset import ImageNet32Dataset
-from run_mcts_flow import calculate_inception_score
+from run_mcts_flow import calculate_inception_score, compute_dino_accuracy
 from utils import divfree_swirl_si
 
 
@@ -314,14 +314,13 @@ def run_experiment(args):
         "experiments": [],
     }
 
-    # Run baseline ODE experiment
     print("\n\n===== Running baseline ODE experiment =====")
     ode_metrics = run_ode_experiment(
         sampler, device, fid, args.num_samples, args.batch_size
     )
     results["ode_baseline"] = ode_metrics
     print(
-        f"Baseline ODE - FID: {ode_metrics['fid_score']:.4f}, IS: {ode_metrics['inception_score']:.4f}±{ode_metrics['inception_std']:.4f}"
+        f"Baseline ODE - FID: {ode_metrics['fid_score']:.4f}, IS: {ode_metrics['inception_score']:.4f}±{ode_metrics['inception_std']:.4f}, DINO Top-1: {ode_metrics['dino_top1_accuracy']:.2f}%, Top-5: {ode_metrics['dino_top5_accuracy']:.2f}%"
     )
 
     # Run SDE experiments
@@ -337,7 +336,7 @@ def run_experiment(args):
         )
 
         print(
-            f"SDE (noise_scale={noise_scale}) - FID: {sde_metrics['fid_score']:.4f}, IS: {sde_metrics['inception_score']:.4f}±{sde_metrics['inception_std']:.4f}"
+            f"SDE (noise_scale={noise_scale}) - FID: {sde_metrics['fid_score']:.4f}, IS: {sde_metrics['inception_score']:.4f}±{sde_metrics['inception_std']:.4f}, DINO Top-1: {sde_metrics['dino_top1_accuracy']:.2f}%, Top-5: {sde_metrics['dino_top5_accuracy']:.2f}%"
         )
         print(
             f"Average noise/velocity ratio: {sde_metrics['avg_noise_to_velocity_ratio']:.4f}"
@@ -360,7 +359,7 @@ def run_experiment(args):
         )
 
         print(
-            f"ODE-divfree (lambda_div={lambda_div}) - FID: {divfree_metrics['fid_score']:.4f}, IS: {divfree_metrics['inception_score']:.4f}±{divfree_metrics['inception_std']:.4f}"
+            f"ODE-divfree (lambda_div={lambda_div}) - FID: {divfree_metrics['fid_score']:.4f}, IS: {divfree_metrics['inception_score']:.4f}±{divfree_metrics['inception_std']:.4f}, DINO Top-1: {divfree_metrics['dino_top1_accuracy']:.2f}%, Top-5: {divfree_metrics['dino_top5_accuracy']:.2f}%"
         )
         print(
             f"Average divfree/velocity ratio: {divfree_metrics['avg_divfree_to_velocity_ratio']:.4f}"
@@ -369,10 +368,28 @@ def run_experiment(args):
     # Save results
     result_file = os.path.join(results_dir, f"noise_study_results_{timestamp}.json")
     with open(result_file, "w") as f:
-        json.dump(results, f, indent=2)
+        json.dump(convert_to_serializable(results), f, indent=2)
 
     print(f"\nResults saved to {result_file}")
     return results
+
+
+def convert_to_serializable(obj):
+    """
+    Convert numpy float32s and other non-serializable types to Python native types.
+    """
+    if isinstance(obj, dict):
+        return {key: convert_to_serializable(value) for key, value in obj.items()}
+    elif isinstance(obj, list):
+        return [convert_to_serializable(item) for item in obj]
+    elif isinstance(obj, (np.float32, np.float64)):
+        return float(obj)
+    elif isinstance(obj, (np.int32, np.int64)):
+        return int(obj)
+    elif torch.is_tensor(obj):
+        return obj.item() if obj.numel() == 1 else obj.tolist()
+    else:
+        return obj
 
 
 def run_ode_experiment(sampler, device, fid, n_samples, batch_size):
@@ -382,6 +399,7 @@ def run_ode_experiment(sampler, device, fid, n_samples, batch_size):
     generated_samples = []
     total_velocity_magnitude = 0.0
     velocity_magnitudes_all = []
+    class_labels_all = []
 
     # Calculate number of batches
     num_batches = n_samples // batch_size
@@ -397,6 +415,7 @@ def run_ode_experiment(sampler, device, fid, n_samples, batch_size):
         class_labels = torch.randint(
             0, sampler.num_classes, (current_batch_size,), device=device
         )
+        class_labels_all.append(class_labels.cpu())
 
         # Generate samples
         samples, avg_velocity, velocity_magnitudes = batch_sample_ode_with_metrics(
@@ -417,10 +436,18 @@ def run_ode_experiment(sampler, device, fid, n_samples, batch_size):
     # Compute FID
     fid_score = fid.compute().item()
 
-    # Compute Inception Score
+    # Stack generated samples and class labels
     generated_tensor = torch.stack(generated_samples).to(device)
+    class_labels_tensor = torch.cat(class_labels_all).to(device)
+
+    # Compute Inception Score
     inception_score, inception_std = calculate_inception_score(
         generated_tensor, device=device, batch_size=64, splits=10
+    )
+
+    # Compute DINO accuracy
+    dino_accuracy = compute_dino_accuracy(
+        sampler, generated_tensor, class_labels_tensor, batch_size=64
     )
 
     # Return metrics
@@ -430,6 +457,8 @@ def run_ode_experiment(sampler, device, fid, n_samples, batch_size):
         "inception_std": inception_std,
         "avg_velocity_magnitude": avg_velocity_magnitude,
         "velocity_magnitudes": velocity_magnitudes_all,
+        "dino_top1_accuracy": dino_accuracy["top1_accuracy"],
+        "dino_top5_accuracy": dino_accuracy["top5_accuracy"],
     }
 
     return metrics
@@ -446,6 +475,7 @@ def run_sde_experiment(sampler, device, fid, n_samples, batch_size, noise_scale)
     velocity_magnitudes_all = []
     noise_magnitudes_all = []
     noise_to_velocity_ratios_all = []
+    class_labels_all = []
 
     # Calculate number of batches
     num_batches = n_samples // batch_size
@@ -463,6 +493,7 @@ def run_sde_experiment(sampler, device, fid, n_samples, batch_size, noise_scale)
         class_labels = torch.randint(
             0, sampler.num_classes, (current_batch_size,), device=device
         )
+        class_labels_all.append(class_labels.cpu())
 
         # Generate samples
         (
@@ -497,10 +528,18 @@ def run_sde_experiment(sampler, device, fid, n_samples, batch_size, noise_scale)
     # Compute FID
     fid_score = fid.compute().item()
 
-    # Compute Inception Score
+    # Stack generated samples and class labels
     generated_tensor = torch.stack(generated_samples).to(device)
+    class_labels_tensor = torch.cat(class_labels_all).to(device)
+
+    # Compute Inception Score
     inception_score, inception_std = calculate_inception_score(
         generated_tensor, device=device, batch_size=64, splits=10
+    )
+
+    # Compute DINO accuracy
+    dino_accuracy = compute_dino_accuracy(
+        sampler, generated_tensor, class_labels_tensor, batch_size=64
     )
 
     # Return metrics
@@ -515,6 +554,8 @@ def run_sde_experiment(sampler, device, fid, n_samples, batch_size, noise_scale)
         "velocity_magnitudes": velocity_magnitudes_all,
         "noise_magnitudes": noise_magnitudes_all,
         "noise_to_velocity_ratios": noise_to_velocity_ratios_all,
+        "dino_top1_accuracy": dino_accuracy["top1_accuracy"],
+        "dino_top5_accuracy": dino_accuracy["top5_accuracy"],
     }
 
     return metrics
@@ -531,6 +572,7 @@ def run_ode_divfree_experiment(sampler, device, fid, n_samples, batch_size, lamb
     velocity_magnitudes_all = []
     divfree_magnitudes_all = []
     divfree_to_velocity_ratios_all = []
+    class_labels_all = []
 
     # Calculate number of batches
     num_batches = n_samples // batch_size
@@ -548,6 +590,7 @@ def run_ode_divfree_experiment(sampler, device, fid, n_samples, batch_size, lamb
         class_labels = torch.randint(
             0, sampler.num_classes, (current_batch_size,), device=device
         )
+        class_labels_all.append(class_labels.cpu())
 
         # Generate samples
         (
@@ -582,10 +625,18 @@ def run_ode_divfree_experiment(sampler, device, fid, n_samples, batch_size, lamb
     # Compute FID
     fid_score = fid.compute().item()
 
-    # Compute Inception Score
+    # Stack generated samples and class labels
     generated_tensor = torch.stack(generated_samples).to(device)
+    class_labels_tensor = torch.cat(class_labels_all).to(device)
+
+    # Compute Inception Score
     inception_score, inception_std = calculate_inception_score(
         generated_tensor, device=device, batch_size=64, splits=10
+    )
+
+    # Compute DINO accuracy
+    dino_accuracy = compute_dino_accuracy(
+        sampler, generated_tensor, class_labels_tensor, batch_size=64
     )
 
     # Return metrics
@@ -600,6 +651,8 @@ def run_ode_divfree_experiment(sampler, device, fid, n_samples, batch_size, lamb
         "velocity_magnitudes": velocity_magnitudes_all,
         "divfree_magnitudes": divfree_magnitudes_all,
         "divfree_to_velocity_ratios": divfree_to_velocity_ratios_all,
+        "dino_top1_accuracy": dino_accuracy["top1_accuracy"],
+        "dino_top5_accuracy": dino_accuracy["top5_accuracy"],
     }
 
     return metrics
