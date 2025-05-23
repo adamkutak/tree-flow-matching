@@ -648,14 +648,14 @@ if __name__ == "__main__":
         "--noise_scales",
         type=float,
         nargs="+",
-        default=[0.1, 0.2, 0.3, 0.4, 0.6, 1.0],
+        default=[0.1, 0.2, 0.4, 0.6, 1.0],
         help="Noise scale values to test for SDE sampling",
     )
     parser.add_argument(
         "--lambda_divs",
         type=float,
         nargs="+",
-        default=[0.1, 0.2, 0.3, 0.4, 0.6, 1.0],
+        default=[0.1, 0.2, 0.3, 0.6, 1.0, 2.0],
         help="Lambda values for divergence-free flow to test",
     )
 
