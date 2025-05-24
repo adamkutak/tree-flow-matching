@@ -15,15 +15,16 @@ from imagenet_dataset import ImageNet32Dataset
 from utils import divfree_swirl_si
 
 
-def batch_sample_ode_fixed_noise(sampler, class_label, initial_noise):
+def batch_sample_ode_identical_start(sampler, class_label, single_noise, batch_size):
     """
-    Regular flow matching sampling with fixed initial noise.
+    Regular flow matching sampling where all samples start from identical noise.
+    Should produce identical outputs (deterministic).
     """
     sampler.flow_model.eval()
-    batch_size = initial_noise.shape[0]
 
     with torch.no_grad():
-        current_samples = initial_noise.clone()
+        # All samples start identical
+        current_samples = single_noise.unsqueeze(0).repeat(batch_size, 1, 1, 1)
         current_label = torch.full((batch_size,), class_label, device=sampler.device)
 
         for step, t in enumerate(sampler.timesteps[:-1]):
@@ -36,15 +37,18 @@ def batch_sample_ode_fixed_noise(sampler, class_label, initial_noise):
         return sampler.unnormalize_images(current_samples)
 
 
-def batch_sample_sde_fixed_noise(sampler, class_label, initial_noise, noise_scale=0.05):
+def batch_sample_sde_identical_start(
+    sampler, class_label, single_noise, batch_size, noise_scale=0.05
+):
     """
-    SDE sampling with fixed initial noise.
+    SDE sampling where all samples start from identical noise.
+    Should produce different outputs due to stochastic noise.
     """
     sampler.flow_model.eval()
-    batch_size = initial_noise.shape[0]
 
     with torch.no_grad():
-        current_samples = initial_noise.clone()
+        # All samples start identical
+        current_samples = single_noise.unsqueeze(0).repeat(batch_size, 1, 1, 1)
         current_label = torch.full((batch_size,), class_label, device=sampler.device)
 
         for step, t in enumerate(sampler.timesteps[:-1]):
@@ -53,24 +57,25 @@ def batch_sample_sde_fixed_noise(sampler, class_label, initial_noise, noise_scal
 
             velocity = sampler.flow_model(t_batch, current_samples, current_label)
 
-            # Add SDE noise
+            # Add different random noise to each sample
             noise = torch.randn_like(current_samples) * torch.sqrt(dt) * noise_scale
             current_samples = current_samples + velocity * dt + noise
 
         return sampler.unnormalize_images(current_samples)
 
 
-def batch_sample_ode_divfree_fixed_noise(
-    sampler, class_label, initial_noise, lambda_div=0.2
+def batch_sample_ode_divfree_identical_start(
+    sampler, class_label, single_noise, batch_size, lambda_div=0.2
 ):
     """
-    ODE-divfree sampling with fixed initial noise.
+    ODE-divfree sampling where all samples start from identical noise.
+    Should produce different outputs due to divergence-free field, even though deterministic.
     """
     sampler.flow_model.eval()
-    batch_size = initial_noise.shape[0]
 
     with torch.no_grad():
-        x = initial_noise.clone()
+        # All samples start identical
+        x = single_noise.unsqueeze(0).repeat(batch_size, 1, 1, 1)
         y = torch.full(
             (batch_size,), class_label, device=sampler.device, dtype=torch.long
         )
@@ -116,7 +121,7 @@ def calculate_batch_diversity(features):
 
 def run_diversity_experiment(args):
     """
-    Run diversity experiments comparing different sampling methods with fixed initial noise.
+    Run diversity experiments testing how much samples diverge when starting from identical initial noise.
     """
     # Set up device
     device = (
@@ -161,7 +166,7 @@ def run_diversity_experiment(args):
             if args.dataset.lower() == "imagenet32"
             else None
         ),
-        load_dino=False,  # Don't need DINO for this experiment
+        load_dino=False,
     )
 
     # Create output directory for results
@@ -173,65 +178,69 @@ def run_diversity_experiment(args):
         "timestamp": timestamp,
         "dataset": args.dataset,
         "batch_size": args.batch_size,
-        "num_batches": args.num_batches,
+        "num_trials": args.num_trials,
         "timesteps": num_timesteps,
         "experiments": [],
     }
 
     print(
-        f"\nRunning diversity experiments with {args.num_batches} batches of size {args.batch_size}"
+        f"\nRunning diversity experiments with {args.num_trials} trials of batch size {args.batch_size}"
+    )
+    print(
+        "Testing how much samples diverge when starting from IDENTICAL initial noise..."
     )
 
-    # For each batch, test all methods with the same initial noise and class
-    for batch_idx in tqdm(range(args.num_batches), desc="Processing batches"):
-        # Generate fixed initial noise for this batch
-        initial_noise = torch.randn(
-            args.batch_size, channels, image_size, image_size, device=device
-        )
+    # For each trial, test all methods starting from the same single noise sample
+    for trial_idx in tqdm(range(args.num_trials), desc="Processing trials"):
+        # Generate a single noise sample that all batch samples will start from
+        single_noise = torch.randn(channels, image_size, image_size, device=device)
 
-        # Use a random class for this batch
+        # Use a random class for this trial
         class_label = torch.randint(0, num_classes, (1,)).item()
 
-        batch_results = {
-            "batch_idx": batch_idx,
+        trial_results = {
+            "trial_idx": trial_idx,
             "class_label": class_label,
             "methods": {},
         }
 
-        # Test ODE baseline
-        ode_samples = batch_sample_ode_fixed_noise(sampler, class_label, initial_noise)
+        # Test ODE baseline (should produce identical samples)
+        ode_samples = batch_sample_ode_identical_start(
+            sampler, class_label, single_noise, args.batch_size
+        )
         ode_features = sampler.extract_inception_features(ode_samples)
         ode_diversity = calculate_batch_diversity(ode_features)
-        batch_results["methods"]["ode"] = {"diversity": ode_diversity}
+        trial_results["methods"]["ode"] = {"diversity": ode_diversity}
 
         # Test SDE with different noise scales
         for noise_scale in args.noise_scales:
-            sde_samples = batch_sample_sde_fixed_noise(
-                sampler, class_label, initial_noise, noise_scale
+            sde_samples = batch_sample_sde_identical_start(
+                sampler, class_label, single_noise, args.batch_size, noise_scale
             )
             sde_features = sampler.extract_inception_features(sde_samples)
             sde_diversity = calculate_batch_diversity(sde_features)
-            batch_results["methods"][f"sde_{noise_scale}"] = {
+            trial_results["methods"][f"sde_{noise_scale}"] = {
                 "diversity": sde_diversity
             }
 
         # Test ODE-divfree with different lambda values
         for lambda_div in args.lambda_divs:
-            divfree_samples = batch_sample_ode_divfree_fixed_noise(
-                sampler, class_label, initial_noise, lambda_div
+            divfree_samples = batch_sample_ode_divfree_identical_start(
+                sampler, class_label, single_noise, args.batch_size, lambda_div
             )
             divfree_features = sampler.extract_inception_features(divfree_samples)
             divfree_diversity = calculate_batch_diversity(divfree_features)
-            batch_results["methods"][f"divfree_{lambda_div}"] = {
+            trial_results["methods"][f"divfree_{lambda_div}"] = {
                 "diversity": divfree_diversity
             }
 
-        results["experiments"].append(batch_results)
+        results["experiments"].append(trial_results)
 
     # Calculate summary statistics
-    print("\n" + "=" * 50)
+    print("\n" + "=" * 60)
     print("DIVERSITY RESULTS SUMMARY")
-    print("=" * 50)
+    print("(How much do samples diverge when starting from identical noise?)")
+    print("=" * 60)
 
     summary = {}
 
@@ -252,7 +261,13 @@ def run_diversity_experiment(args):
             "std_diversity": float(std_diversity),
             "all_diversities": [float(d) for d in diversities],
         }
-        print(f"{method_name:15s}: {mean_diversity:.4f} ± {std_diversity:.4f}")
+
+        if method_name == "ode":
+            print(
+                f"{method_name:15s}: {mean_diversity:.6f} ± {std_diversity:.6f} (should be ~0)"
+            )
+        else:
+            print(f"{method_name:15s}: {mean_diversity:.4f} ± {std_diversity:.4f}")
 
     results["summary"] = summary
 
@@ -266,7 +281,9 @@ def run_diversity_experiment(args):
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Flow matching diversity study")
+    parser = argparse.ArgumentParser(
+        description="Flow matching diversity study - identical start test"
+    )
 
     # Dataset and device parameters
     parser.add_argument(
@@ -279,7 +296,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--device",
         type=str,
-        default="cuda",
+        default="cuda:1",
         help="Device to use for computation",
     )
 
@@ -287,14 +304,14 @@ if __name__ == "__main__":
     parser.add_argument(
         "--batch_size",
         type=int,
-        default=32,
+        default=16,
         help="Batch size for diversity measurement",
     )
     parser.add_argument(
-        "--num_batches",
+        "--num_trials",
         type=int,
-        default=10,
-        help="Number of batches to test",
+        default=50,
+        help="Number of trials to test",
     )
 
     # Noise parameters
