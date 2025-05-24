@@ -293,7 +293,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--num_batches",
         type=int,
-        default=50,
+        default=10,
         help="Number of batches to test",
     )
 
