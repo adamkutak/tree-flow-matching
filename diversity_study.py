@@ -296,7 +296,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--device",
         type=str,
-        default="cuda:1",
+        default="cuda",
         help="Device to use for computation",
     )
 
