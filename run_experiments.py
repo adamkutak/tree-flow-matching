@@ -15,12 +15,12 @@ TIMESTEP_CONFIGS = [
 ]  # (num_timesteps, branch_dt, branch_start_time)
 SAMPLE_SIZES = [128]
 BRANCH_PAIRS = "1:1,2:1,4:1,8:1"  # Always use these branch pairs
-SCORING_FUNCTION = "dino_score"  # Default scoring function
+SCORING_FUNCTION = "inception_score"  # Default scoring function
 DT_STD = 0.7  # Path exploration time step standard deviation
 WARP_SCALE = 0.5  # Time warp scale factor
 DEVICE = "cuda"  # Default device
 NOISE_SCALE = 0.1
-LAMBDA_DIV = 0.3
+LAMBDA_DIV = 0.35
 
 
 def run_experiment(cmd):
