@@ -15,16 +15,40 @@ from imagenet_dataset import ImageNet32Dataset
 from utils import divfree_swirl_si
 
 
-def batch_sample_ode_identical_start(sampler, class_label, single_noise, batch_size):
+def convert_to_serializable(obj):
     """
-    Regular flow matching sampling where all samples start from identical noise.
-    Should produce identical outputs (deterministic).
+    Convert numpy float32s and other non-serializable types to Python native types.
+    """
+    if isinstance(obj, dict):
+        return {key: convert_to_serializable(value) for key, value in obj.items()}
+    elif isinstance(obj, list):
+        return [convert_to_serializable(item) for item in obj]
+    elif isinstance(obj, (np.float32, np.float64)):
+        return float(obj)
+    elif isinstance(obj, (np.int32, np.int64)):
+        return int(obj)
+    elif torch.is_tensor(obj):
+        return obj.item() if obj.numel() == 1 else obj.tolist()
+    else:
+        return obj
+
+
+def batch_sample_ode_random_start(sampler, class_label, batch_size):
+    """
+    Regular flow matching sampling where each sample starts from different random noise.
+    This serves as a baseline for maximum expected diversity from random initialization.
     """
     sampler.flow_model.eval()
 
     with torch.no_grad():
-        # All samples start identical
-        current_samples = single_noise.unsqueeze(0).repeat(batch_size, 1, 1, 1)
+        # Each sample starts from different random noise
+        current_samples = torch.randn(
+            batch_size,
+            sampler.channels,
+            sampler.image_size,
+            sampler.image_size,
+            device=sampler.device,
+        )
         current_label = torch.full((batch_size,), class_label, device=sampler.device)
 
         for step, t in enumerate(sampler.timesteps[:-1]):
@@ -204,15 +228,15 @@ def run_diversity_experiment(args):
             "methods": {},
         }
 
-        # Test ODE baseline (should produce identical samples)
-        ode_samples = batch_sample_ode_identical_start(
-            sampler, class_label, single_noise, args.batch_size
+        # Test ODE baseline with random different starting noises (maximum diversity baseline)
+        ode_samples = batch_sample_ode_random_start(
+            sampler, class_label, args.batch_size
         )
         ode_features = sampler.extract_inception_features(ode_samples)
         ode_diversity = calculate_batch_diversity(ode_features)
-        trial_results["methods"]["ode"] = {"diversity": ode_diversity}
+        trial_results["methods"]["ode_random"] = {"diversity": ode_diversity}
 
-        # Test SDE with different noise scales
+        # Test SDE with different noise scales (all starting from same noise)
         for noise_scale in args.noise_scales:
             sde_samples = batch_sample_sde_identical_start(
                 sampler, class_label, single_noise, args.batch_size, noise_scale
@@ -223,7 +247,7 @@ def run_diversity_experiment(args):
                 "diversity": sde_diversity
             }
 
-        # Test ODE-divfree with different lambda values
+        # Test ODE-divfree with different lambda values (all starting from same noise)
         for lambda_div in args.lambda_divs:
             divfree_samples = batch_sample_ode_divfree_identical_start(
                 sampler, class_label, single_noise, args.batch_size, lambda_div
@@ -262,19 +286,19 @@ def run_diversity_experiment(args):
             "all_diversities": [float(d) for d in diversities],
         }
 
-        if method_name == "ode":
+        if method_name == "ode_random":
             print(
-                f"{method_name:15s}: {mean_diversity:.6f} ± {std_diversity:.6f} (should be ~0)"
+                f"{method_name:15s}: {mean_diversity:.4f} ± {std_diversity:.4f} (random baseline - max diversity)"
             )
         else:
             print(f"{method_name:15s}: {mean_diversity:.4f} ± {std_diversity:.4f}")
 
     results["summary"] = summary
 
-    # Save results
+    # Save results with proper serialization
     result_file = os.path.join(results_dir, f"diversity_study_results_{timestamp}.json")
     with open(result_file, "w") as f:
-        json.dump(results, f, indent=2)
+        json.dump(convert_to_serializable(results), f, indent=2)
 
     print(f"\nResults saved to {result_file}")
     return results
