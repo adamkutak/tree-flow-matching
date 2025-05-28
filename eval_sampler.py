@@ -47,7 +47,7 @@ DEFAULT_OUTPUT_DIR = "./results"
 DEFAULT_NOISE_SCALE = 0.1
 DEFAULT_LAMBDA_DIV = 0.2
 
-BATCH_SIZE = 512
+BATCH_SIZE = 256
 
 
 def evaluate_sampler(args):
