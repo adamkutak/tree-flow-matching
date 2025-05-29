@@ -243,6 +243,9 @@ def batch_sample_edm_sde_with_metrics(sampler, class_label, batch_size=16, beta=
 
             drift_corr = -beta * (sigma_t**2) * score
 
+            # Total effective velocity is the sum of flow velocity and drift correction
+            total_velocity = velocity + drift_corr
+
             brownian = (
                 torch.randn_like(current_samples)
                 * torch.sqrt(dt)
@@ -251,14 +254,15 @@ def batch_sample_edm_sde_with_metrics(sampler, class_label, batch_size=16, beta=
             )
 
             dims = tuple(range(1, velocity.ndim))
-            vel_mag = torch.linalg.vector_norm(velocity, dim=dims).mean().item()
+            # Track the magnitude of the total effective velocity, not just the raw velocity
+            vel_mag = torch.linalg.vector_norm(total_velocity, dim=dims).mean().item()
             noise_mag = torch.linalg.vector_norm(brownian, dim=dims).mean().item()
 
             velocity_magnitudes.append(vel_mag)
             noise_magnitudes.append(noise_mag)
             noise_to_velocity_ratios.append(noise_mag / vel_mag if vel_mag > 0 else 0)
 
-            current_samples = current_samples + (velocity + drift_corr) * dt + brownian
+            current_samples = current_samples + total_velocity * dt + brownian
 
         avg_velocity_magnitude = sum(velocity_magnitudes) / len(velocity_magnitudes)
         avg_noise_magnitude = sum(noise_magnitudes) / len(noise_magnitudes)
