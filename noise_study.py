@@ -275,6 +275,97 @@ def batch_sample_edm_sde_with_metrics(sampler, class_label, batch_size=16, beta=
         )
 
 
+def run_sampling_experiment(
+    sampler,
+    device,
+    fid,
+    n_samples,
+    batch_size,
+    sampling_func,
+    sampling_params,
+    experiment_name,
+):
+    """Generic experiment runner that works with any sampling function."""
+    fid.reset()
+
+    generated_samples = []
+    total_metrics = {}
+    all_metrics = {}
+    class_labels_all = []
+
+    num_batches = n_samples // batch_size
+    if n_samples % batch_size != 0:
+        num_batches += 1
+
+    print(f"Generating {n_samples} samples using {experiment_name}...")
+
+    for i in tqdm(range(num_batches)):
+        current_batch_size = min(batch_size, n_samples - i * batch_size)
+
+        class_labels = torch.randint(
+            0, sampler.num_classes, (current_batch_size,), device=device
+        )
+        class_labels_all.append(class_labels.cpu())
+
+        batch_results = sampling_func(
+            sampler, class_labels, current_batch_size, **sampling_params
+        )
+
+        samples = batch_results[0]
+        generated_samples.extend(samples.cpu())
+        fid.update(samples.to(device), real=False)
+
+        for idx, key in enumerate(
+            ["avg_velocity_magnitude", "avg_secondary_magnitude", "avg_ratio"]
+        ):
+            if idx + 1 < len(batch_results) and isinstance(
+                batch_results[idx + 1], (int, float)
+            ):
+                if key not in total_metrics:
+                    total_metrics[key] = 0.0
+                total_metrics[key] += batch_results[idx + 1] * current_batch_size
+
+        for idx, key in enumerate(
+            ["velocity_magnitudes", "secondary_magnitudes", "ratios"]
+        ):
+            list_idx = len(batch_results) - 3 + idx
+            if list_idx < len(batch_results) and isinstance(
+                batch_results[list_idx], list
+            ):
+                if key not in all_metrics:
+                    all_metrics[key] = []
+                all_metrics[key].extend(batch_results[list_idx])
+
+    for key in total_metrics:
+        total_metrics[key] /= n_samples
+
+    fid_score = fid.compute().item()
+
+    generated_tensor = torch.stack(generated_samples).to(device)
+    class_labels_tensor = torch.cat(class_labels_all).to(device)
+
+    inception_score, inception_std = calculate_inception_score(
+        generated_tensor, device=device, batch_size=64, splits=10
+    )
+
+    dino_accuracy = compute_dino_accuracy(
+        sampler, generated_tensor, class_labels_tensor, batch_size=64
+    )
+
+    metrics = {
+        "fid_score": fid_score,
+        "inception_score": inception_score,
+        "inception_std": inception_std,
+        "dino_top1_accuracy": dino_accuracy["top1_accuracy"],
+        "dino_top5_accuracy": dino_accuracy["top5_accuracy"],
+        **total_metrics,
+        **all_metrics,
+        **sampling_params,
+    }
+
+    return metrics
+
+
 def run_experiment(args):
     """
     Run experiments to measure the effect of different noise levels on sampling quality.
@@ -385,20 +476,33 @@ def run_experiment(args):
     }
 
     print("\n\n===== Running baseline ODE experiment =====")
-    ode_metrics = run_ode_experiment(
-        sampler, device, fid, args.num_samples, args.batch_size
+    ode_metrics = run_sampling_experiment(
+        sampler,
+        device,
+        fid,
+        args.num_samples,
+        args.batch_size,
+        batch_sample_ode_with_metrics,
+        {},
+        "regular ODE sampling",
     )
     results["ode_baseline"] = ode_metrics
     print(
         f"Baseline ODE - FID: {ode_metrics['fid_score']:.4f}, IS: {ode_metrics['inception_score']:.4f}±{ode_metrics['inception_std']:.4f}, DINO Top-1: {ode_metrics['dino_top1_accuracy']:.2f}%, Top-5: {ode_metrics['dino_top5_accuracy']:.2f}%"
     )
 
-    # Run SDE experiments
     print("\n\n===== Running SDE experiments =====")
     for noise_scale in args.noise_scales:
         print(f"\nTesting SDE with noise_scale={noise_scale}")
-        sde_metrics = run_sde_experiment(
-            sampler, device, fid, args.num_samples, args.batch_size, noise_scale
+        sde_metrics = run_sampling_experiment(
+            sampler,
+            device,
+            fid,
+            args.num_samples,
+            args.batch_size,
+            batch_sample_sde_with_metrics,
+            {"noise_scale": noise_scale},
+            f"SDE sampling with noise_scale={noise_scale}",
         )
 
         results["experiments"].append(
@@ -408,16 +512,20 @@ def run_experiment(args):
         print(
             f"SDE (noise_scale={noise_scale}) - FID: {sde_metrics['fid_score']:.4f}, IS: {sde_metrics['inception_score']:.4f}±{sde_metrics['inception_std']:.4f}, DINO Top-1: {sde_metrics['dino_top1_accuracy']:.2f}%, Top-5: {sde_metrics['dino_top5_accuracy']:.2f}%"
         )
-        print(
-            f"Average noise/velocity ratio: {sde_metrics['avg_noise_to_velocity_ratio']:.4f}"
-        )
+        print(f"Average noise/velocity ratio: {sde_metrics['avg_ratio']:.4f}")
 
-    # Run ODE-divfree experiments
     print("\n\n===== Running ODE-divfree experiments =====")
     for lambda_div in args.lambda_divs:
         print(f"\nTesting ODE-divfree with lambda_div={lambda_div}")
-        divfree_metrics = run_ode_divfree_experiment(
-            sampler, device, fid, args.num_samples, args.batch_size, lambda_div
+        divfree_metrics = run_sampling_experiment(
+            sampler,
+            device,
+            fid,
+            args.num_samples,
+            args.batch_size,
+            batch_sample_ode_divfree_with_metrics,
+            {"lambda_div": lambda_div},
+            f"ODE-divfree sampling with lambda_div={lambda_div}",
         )
 
         results["experiments"].append(
@@ -431,16 +539,20 @@ def run_experiment(args):
         print(
             f"ODE-divfree (lambda_div={lambda_div}) - FID: {divfree_metrics['fid_score']:.4f}, IS: {divfree_metrics['inception_score']:.4f}±{divfree_metrics['inception_std']:.4f}, DINO Top-1: {divfree_metrics['dino_top1_accuracy']:.2f}%, Top-5: {divfree_metrics['dino_top5_accuracy']:.2f}%"
         )
-        print(
-            f"Average divfree/velocity ratio: {divfree_metrics['avg_divfree_to_velocity_ratio']:.4f}"
-        )
+        print(f"Average divfree/velocity ratio: {divfree_metrics['avg_ratio']:.4f}")
 
-    # Run EDM SDE experiments
     print("\n\n===== Running EDM SDE experiments =====")
     for beta in args.beta_values:
         print(f"\nTesting EDM SDE with beta={beta}")
-        edm_sde_metrics = run_edm_sde_experiment(
-            sampler, device, fid, args.num_samples, args.batch_size, beta
+        edm_sde_metrics = run_sampling_experiment(
+            sampler,
+            device,
+            fid,
+            args.num_samples,
+            args.batch_size,
+            batch_sample_edm_sde_with_metrics,
+            {"beta": beta},
+            f"EDM SDE sampling with beta={beta}",
         )
 
         results["experiments"].append(
@@ -450,9 +562,7 @@ def run_experiment(args):
         print(
             f"EDM SDE (beta={beta}) - FID: {edm_sde_metrics['fid_score']:.4f}, IS: {edm_sde_metrics['inception_score']:.4f}±{edm_sde_metrics['inception_std']:.4f}, DINO Top-1: {edm_sde_metrics['dino_top1_accuracy']:.2f}%, Top-5: {edm_sde_metrics['dino_top5_accuracy']:.2f}%"
         )
-        print(
-            f"Average noise/velocity ratio: {edm_sde_metrics['avg_noise_to_velocity_ratio']:.4f}"
-        )
+        print(f"Average noise/velocity ratio: {edm_sde_metrics['avg_ratio']:.4f}")
 
     # Save results
     result_file = os.path.join(results_dir, f"noise_study_results_{timestamp}.json")
@@ -481,356 +591,6 @@ def convert_to_serializable(obj):
         return obj
 
 
-def run_ode_experiment(sampler, device, fid, n_samples, batch_size):
-    """Run baseline ODE (regular flow matching) experiment."""
-    fid.reset()
-
-    generated_samples = []
-    total_velocity_magnitude = 0.0
-    velocity_magnitudes_all = []
-    class_labels_all = []
-
-    # Calculate number of batches
-    num_batches = n_samples // batch_size
-    if n_samples % batch_size != 0:
-        num_batches += 1
-
-    print(f"Generating {n_samples} samples using regular ODE sampling...")
-
-    for i in tqdm(range(num_batches)):
-        current_batch_size = min(batch_size, n_samples - i * batch_size)
-
-        # Random class labels
-        class_labels = torch.randint(
-            0, sampler.num_classes, (current_batch_size,), device=device
-        )
-        class_labels_all.append(class_labels.cpu())
-
-        # Generate samples
-        samples, avg_velocity, velocity_magnitudes = batch_sample_ode_with_metrics(
-            sampler, class_labels, current_batch_size
-        )
-
-        # Update metrics
-        generated_samples.extend(samples.cpu())
-        total_velocity_magnitude += avg_velocity * current_batch_size
-        velocity_magnitudes_all.extend(velocity_magnitudes)
-
-        # Update FID
-        fid.update(samples.to(device), real=False)
-
-    # Compute average velocity magnitude
-    avg_velocity_magnitude = total_velocity_magnitude / n_samples
-
-    # Compute FID
-    fid_score = fid.compute().item()
-
-    # Stack generated samples and class labels
-    generated_tensor = torch.stack(generated_samples).to(device)
-    class_labels_tensor = torch.cat(class_labels_all).to(device)
-
-    # Compute Inception Score
-    inception_score, inception_std = calculate_inception_score(
-        generated_tensor, device=device, batch_size=64, splits=10
-    )
-
-    # Compute DINO accuracy
-    dino_accuracy = compute_dino_accuracy(
-        sampler, generated_tensor, class_labels_tensor, batch_size=64
-    )
-
-    # Return metrics
-    metrics = {
-        "fid_score": fid_score,
-        "inception_score": inception_score,
-        "inception_std": inception_std,
-        "avg_velocity_magnitude": avg_velocity_magnitude,
-        "velocity_magnitudes": velocity_magnitudes_all,
-        "dino_top1_accuracy": dino_accuracy["top1_accuracy"],
-        "dino_top5_accuracy": dino_accuracy["top5_accuracy"],
-    }
-
-    return metrics
-
-
-def run_sde_experiment(sampler, device, fid, n_samples, batch_size, noise_scale):
-    """Run SDE experiment with the given noise scale."""
-    fid.reset()
-
-    generated_samples = []
-    total_velocity_magnitude = 0.0
-    total_noise_magnitude = 0.0
-    total_noise_to_velocity_ratio = 0.0
-    velocity_magnitudes_all = []
-    noise_magnitudes_all = []
-    noise_to_velocity_ratios_all = []
-    class_labels_all = []
-
-    # Calculate number of batches
-    num_batches = n_samples // batch_size
-    if n_samples % batch_size != 0:
-        num_batches += 1
-
-    print(
-        f"Generating {n_samples} samples using SDE sampling with noise_scale={noise_scale}..."
-    )
-
-    for i in tqdm(range(num_batches)):
-        current_batch_size = min(batch_size, n_samples - i * batch_size)
-
-        # Random class labels
-        class_labels = torch.randint(
-            0, sampler.num_classes, (current_batch_size,), device=device
-        )
-        class_labels_all.append(class_labels.cpu())
-
-        # Generate samples
-        (
-            samples,
-            avg_velocity,
-            avg_noise,
-            avg_ratio,
-            velocity_magnitudes,
-            noise_magnitudes,
-            noise_to_velocity_ratios,
-        ) = batch_sample_sde_with_metrics(
-            sampler, class_labels, current_batch_size, noise_scale
-        )
-
-        # Update metrics
-        generated_samples.extend(samples.cpu())
-        total_velocity_magnitude += avg_velocity * current_batch_size
-        total_noise_magnitude += avg_noise * current_batch_size
-        total_noise_to_velocity_ratio += avg_ratio * current_batch_size
-        velocity_magnitudes_all.extend(velocity_magnitudes)
-        noise_magnitudes_all.extend(noise_magnitudes)
-        noise_to_velocity_ratios_all.extend(noise_to_velocity_ratios)
-
-        # Update FID
-        fid.update(samples.to(device), real=False)
-
-    # Compute averages
-    avg_velocity_magnitude = total_velocity_magnitude / n_samples
-    avg_noise_magnitude = total_noise_magnitude / n_samples
-    avg_noise_to_velocity_ratio = total_noise_to_velocity_ratio / n_samples
-
-    # Compute FID
-    fid_score = fid.compute().item()
-
-    # Stack generated samples and class labels
-    generated_tensor = torch.stack(generated_samples).to(device)
-    class_labels_tensor = torch.cat(class_labels_all).to(device)
-
-    # Compute Inception Score
-    inception_score, inception_std = calculate_inception_score(
-        generated_tensor, device=device, batch_size=64, splits=10
-    )
-
-    # Compute DINO accuracy
-    dino_accuracy = compute_dino_accuracy(
-        sampler, generated_tensor, class_labels_tensor, batch_size=64
-    )
-
-    # Return metrics
-    metrics = {
-        "fid_score": fid_score,
-        "inception_score": inception_score,
-        "inception_std": inception_std,
-        "noise_scale": noise_scale,
-        "avg_velocity_magnitude": avg_velocity_magnitude,
-        "avg_noise_magnitude": avg_noise_magnitude,
-        "avg_noise_to_velocity_ratio": avg_noise_to_velocity_ratio,
-        "velocity_magnitudes": velocity_magnitudes_all,
-        "noise_magnitudes": noise_magnitudes_all,
-        "noise_to_velocity_ratios": noise_to_velocity_ratios_all,
-        "dino_top1_accuracy": dino_accuracy["top1_accuracy"],
-        "dino_top5_accuracy": dino_accuracy["top5_accuracy"],
-    }
-
-    return metrics
-
-
-def run_ode_divfree_experiment(sampler, device, fid, n_samples, batch_size, lambda_div):
-    """Run ODE-divfree experiment with the given lambda_div value."""
-    fid.reset()
-
-    generated_samples = []
-    total_velocity_magnitude = 0.0
-    total_divfree_magnitude = 0.0
-    total_divfree_to_velocity_ratio = 0.0
-    velocity_magnitudes_all = []
-    divfree_magnitudes_all = []
-    divfree_to_velocity_ratios_all = []
-    class_labels_all = []
-
-    # Calculate number of batches
-    num_batches = n_samples // batch_size
-    if n_samples % batch_size != 0:
-        num_batches += 1
-
-    print(
-        f"Generating {n_samples} samples using ODE-divfree sampling with lambda_div={lambda_div}..."
-    )
-
-    for i in tqdm(range(num_batches)):
-        current_batch_size = min(batch_size, n_samples - i * batch_size)
-
-        # Random class labels
-        class_labels = torch.randint(
-            0, sampler.num_classes, (current_batch_size,), device=device
-        )
-        class_labels_all.append(class_labels.cpu())
-
-        # Generate samples
-        (
-            samples,
-            avg_velocity,
-            avg_divfree,
-            avg_ratio,
-            velocity_magnitudes,
-            divfree_magnitudes,
-            divfree_to_velocity_ratios,
-        ) = batch_sample_ode_divfree_with_metrics(
-            sampler, class_labels, current_batch_size, lambda_div
-        )
-
-        # Update metrics
-        generated_samples.extend(samples.cpu())
-        total_velocity_magnitude += avg_velocity * current_batch_size
-        total_divfree_magnitude += avg_divfree * current_batch_size
-        total_divfree_to_velocity_ratio += avg_ratio * current_batch_size
-        velocity_magnitudes_all.extend(velocity_magnitudes)
-        divfree_magnitudes_all.extend(divfree_magnitudes)
-        divfree_to_velocity_ratios_all.extend(divfree_to_velocity_ratios)
-
-        # Update FID
-        fid.update(samples.to(device), real=False)
-
-    # Compute averages
-    avg_velocity_magnitude = total_velocity_magnitude / n_samples
-    avg_divfree_magnitude = total_divfree_magnitude / n_samples
-    avg_divfree_to_velocity_ratio = total_divfree_to_velocity_ratio / n_samples
-
-    # Compute FID
-    fid_score = fid.compute().item()
-
-    # Stack generated samples and class labels
-    generated_tensor = torch.stack(generated_samples).to(device)
-    class_labels_tensor = torch.cat(class_labels_all).to(device)
-
-    # Compute Inception Score
-    inception_score, inception_std = calculate_inception_score(
-        generated_tensor, device=device, batch_size=64, splits=10
-    )
-
-    # Compute DINO accuracy
-    dino_accuracy = compute_dino_accuracy(
-        sampler, generated_tensor, class_labels_tensor, batch_size=64
-    )
-
-    # Return metrics
-    metrics = {
-        "fid_score": fid_score,
-        "inception_score": inception_score,
-        "inception_std": inception_std,
-        "lambda_div": lambda_div,
-        "avg_velocity_magnitude": avg_velocity_magnitude,
-        "avg_divfree_magnitude": avg_divfree_magnitude,
-        "avg_divfree_to_velocity_ratio": avg_divfree_to_velocity_ratio,
-        "velocity_magnitudes": velocity_magnitudes_all,
-        "divfree_magnitudes": divfree_magnitudes_all,
-        "divfree_to_velocity_ratios": divfree_to_velocity_ratios_all,
-        "dino_top1_accuracy": dino_accuracy["top1_accuracy"],
-        "dino_top5_accuracy": dino_accuracy["top5_accuracy"],
-    }
-
-    return metrics
-
-
-def run_edm_sde_experiment(sampler, device, fid, n_samples, batch_size, beta):
-    """Run EDM SDE experiment with the given beta value."""
-    fid.reset()
-
-    generated_samples = []
-    total_velocity_magnitude = 0.0
-    total_noise_magnitude = 0.0
-    total_noise_to_velocity_ratio = 0.0
-    velocity_magnitudes_all = []
-    noise_magnitudes_all = []
-    noise_to_velocity_ratios_all = []
-    class_labels_all = []
-
-    num_batches = n_samples // batch_size
-    if n_samples % batch_size != 0:
-        num_batches += 1
-
-    print(f"Generating {n_samples} samples using EDM SDE sampling with beta={beta}...")
-
-    for i in tqdm(range(num_batches)):
-        current_batch_size = min(batch_size, n_samples - i * batch_size)
-
-        class_labels = torch.randint(
-            0, sampler.num_classes, (current_batch_size,), device=device
-        )
-        class_labels_all.append(class_labels.cpu())
-
-        (
-            samples,
-            avg_velocity,
-            avg_noise,
-            avg_ratio,
-            velocity_magnitudes,
-            noise_magnitudes,
-            noise_to_velocity_ratios,
-        ) = batch_sample_edm_sde_with_metrics(
-            sampler, class_labels, current_batch_size, beta
-        )
-
-        generated_samples.extend(samples.cpu())
-        total_velocity_magnitude += avg_velocity * current_batch_size
-        total_noise_magnitude += avg_noise * current_batch_size
-        total_noise_to_velocity_ratio += avg_ratio * current_batch_size
-        velocity_magnitudes_all.extend(velocity_magnitudes)
-        noise_magnitudes_all.extend(noise_magnitudes)
-        noise_to_velocity_ratios_all.extend(noise_to_velocity_ratios)
-
-        fid.update(samples.to(device), real=False)
-
-    avg_velocity_magnitude = total_velocity_magnitude / n_samples
-    avg_noise_magnitude = total_noise_magnitude / n_samples
-    avg_noise_to_velocity_ratio = total_noise_to_velocity_ratio / n_samples
-
-    fid_score = fid.compute().item()
-
-    generated_tensor = torch.stack(generated_samples).to(device)
-    class_labels_tensor = torch.cat(class_labels_all).to(device)
-
-    inception_score, inception_std = calculate_inception_score(
-        generated_tensor, device=device, batch_size=64, splits=10
-    )
-
-    dino_accuracy = compute_dino_accuracy(
-        sampler, generated_tensor, class_labels_tensor, batch_size=64
-    )
-
-    metrics = {
-        "fid_score": fid_score,
-        "inception_score": inception_score,
-        "inception_std": inception_std,
-        "beta": beta,
-        "avg_velocity_magnitude": avg_velocity_magnitude,
-        "avg_noise_magnitude": avg_noise_magnitude,
-        "avg_noise_to_velocity_ratio": avg_noise_to_velocity_ratio,
-        "velocity_magnitudes": velocity_magnitudes_all,
-        "noise_magnitudes": noise_magnitudes_all,
-        "noise_to_velocity_ratios": noise_to_velocity_ratios_all,
-        "dino_top1_accuracy": dino_accuracy["top1_accuracy"],
-        "dino_top5_accuracy": dino_accuracy["top5_accuracy"],
-    }
-
-    return metrics
-
-
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Flow matching noise study")
 
@@ -853,19 +613,19 @@ if __name__ == "__main__":
     parser.add_argument(
         "--num_samples",
         type=int,
-        default=5000,
+        default=256,
         help="Number of samples to generate for each experiment",
     )
     parser.add_argument(
         "--batch_size",
         type=int,
-        default=256,
+        default=128,
         help="Batch size for sample generation",
     )
     parser.add_argument(
         "--real_samples",
         type=int,
-        default=20000,
+        default=1000,
         help="Number of real samples to use for FID calculation",
     )
 
