@@ -12,7 +12,7 @@ import itertools
 
 from mcts_single_flow import MCTSFlowSampler
 from imagenet_dataset import ImageNet32Dataset
-from utils import divfree_swirl_si
+from utils import divfree_swirl_si, score_si_linear
 
 
 def convert_to_serializable(obj):
@@ -115,6 +115,46 @@ def batch_sample_ode_divfree_identical_start(
             x = x + (u_t + w) * dt
 
         return sampler.unnormalize_images(x)
+
+
+def batch_sample_edm_sde_identical_start(
+    sampler, class_label, single_noise, batch_size, beta=0.05
+):
+    """
+    EDM SDE sampling where all samples start from identical noise.
+    Should produce different outputs due to stochastic noise with score-based drift correction.
+    """
+    sampler.flow_model.eval()
+
+    with torch.no_grad():
+        # All samples start identical
+        current_samples = single_noise.unsqueeze(0).repeat(batch_size, 1, 1, 1)
+        current_label = torch.full((batch_size,), class_label, device=sampler.device)
+
+        for step, t in enumerate(sampler.timesteps[:-1]):
+            dt = sampler.timesteps[step + 1] - t
+            t_batch = torch.full((batch_size,), t.item(), device=sampler.device)
+
+            velocity = sampler.flow_model(t_batch, current_samples, current_label)
+
+            score = score_si_linear(current_samples, t_batch, velocity)
+
+            sigma_t = t_batch.view(-1, *([1] * (current_samples.ndim - 1)))
+
+            drift_corr = -beta * (sigma_t**2) * score
+
+            total_velocity = velocity + drift_corr
+
+            brownian = (
+                torch.randn_like(current_samples)
+                * torch.sqrt(dt)
+                * torch.sqrt(torch.tensor(2.0 * beta, device=sampler.device))
+                * sigma_t
+            )
+
+            current_samples = current_samples + total_velocity * dt + brownian
+
+        return sampler.unnormalize_images(current_samples)
 
 
 def calculate_batch_diversity(features):
@@ -247,6 +287,17 @@ def run_diversity_experiment(args):
                 "diversity": sde_diversity
             }
 
+        # Test EDM SDE with different beta values (all starting from same noise)
+        for beta in args.beta_values:
+            edm_sde_samples = batch_sample_edm_sde_identical_start(
+                sampler, class_label, single_noise, args.batch_size, beta
+            )
+            edm_sde_features = sampler.extract_inception_features(edm_sde_samples)
+            edm_sde_diversity = calculate_batch_diversity(edm_sde_features)
+            trial_results["methods"][f"edm_sde_{beta}"] = {
+                "diversity": edm_sde_diversity
+            }
+
         # Test ODE-divfree with different lambda values (all starting from same noise)
         for lambda_div in args.lambda_divs:
             divfree_samples = batch_sample_ode_divfree_identical_start(
@@ -352,6 +403,13 @@ if __name__ == "__main__":
         nargs="+",
         default=[0.1, 0.2, 0.3, 0.6, 1.0, 2.0],
         help="Lambda values for divergence-free flow to test",
+    )
+    parser.add_argument(
+        "--beta_values",
+        type=float,
+        nargs="+",
+        default=[0.05, 0.1, 0.2, 0.4],
+        help="Beta values for EDM SDE sampling",
     )
 
     # Output parameters
