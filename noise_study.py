@@ -13,7 +13,7 @@ from tqdm import tqdm
 from mcts_single_flow import MCTSFlowSampler
 from imagenet_dataset import ImageNet32Dataset
 from run_mcts_flow import calculate_inception_score, compute_dino_accuracy
-from utils import divfree_swirl_si
+from utils import divfree_swirl_si, score_si_linear
 
 
 def batch_sample_ode_with_metrics(sampler, class_label, batch_size=16):
@@ -205,6 +205,76 @@ def batch_sample_ode_divfree_with_metrics(
         )
 
 
+def batch_sample_edm_sde_with_metrics(sampler, class_label, batch_size=16, beta=0.05):
+    """
+    EDM Section-4 SDE sampler:
+        dX = [u_t  − beta * sigma(t)^2 * s_t] dt
+             + sqrt(2 * beta) * sigma(t) * dW.
+    Tracks velocity and Brownian-noise magnitudes per step.
+    """
+    is_tensor = torch.is_tensor(class_label)
+    sampler.flow_model.eval()
+
+    velocity_magnitudes, noise_magnitudes, noise_to_velocity_ratios = [], [], []
+
+    with torch.no_grad():
+        current_samples = torch.randn(
+            batch_size,
+            sampler.channels,
+            sampler.image_size,
+            sampler.image_size,
+            device=sampler.device,
+        )
+        current_label = (
+            class_label.to(sampler.device)
+            if is_tensor
+            else torch.full((batch_size,), class_label, device=sampler.device)
+        )
+
+        for step, t in enumerate(sampler.timesteps[:-1]):
+            dt = sampler.timesteps[step + 1] - t
+            t_batch = torch.full((batch_size,), t.item(), device=sampler.device)
+
+            velocity = sampler.flow_model(t_batch, current_samples, current_label)
+
+            score = score_si_linear(current_samples, t_batch, velocity)
+
+            sigma_t = t_batch.view(-1, *([1] * (current_samples.ndim - 1)))
+
+            drift_corr = -beta * (sigma_t**2) * score
+
+            brownian = (
+                torch.randn_like(current_samples)
+                * torch.sqrt(dt)
+                * torch.sqrt(torch.tensor(2.0 * beta, device=sampler.device))
+                * sigma_t
+            )
+
+            dims = tuple(range(1, velocity.ndim))
+            vel_mag = torch.linalg.vector_norm(velocity, dim=dims).mean().item()
+            noise_mag = torch.linalg.vector_norm(brownian, dim=dims).mean().item()
+
+            velocity_magnitudes.append(vel_mag)
+            noise_magnitudes.append(noise_mag)
+            noise_to_velocity_ratios.append(noise_mag / vel_mag if vel_mag > 0 else 0)
+
+            current_samples = current_samples + (velocity + drift_corr) * dt + brownian
+
+        avg_velocity_magnitude = sum(velocity_magnitudes) / len(velocity_magnitudes)
+        avg_noise_magnitude = sum(noise_magnitudes) / len(noise_magnitudes)
+        avg_ratio = sum(noise_to_velocity_ratios) / len(noise_to_velocity_ratios)
+
+        return (
+            sampler.unnormalize_images(current_samples),
+            avg_velocity_magnitude,
+            avg_noise_magnitude,
+            avg_ratio,
+            velocity_magnitudes,
+            noise_magnitudes,
+            noise_to_velocity_ratios,
+        )
+
+
 def run_experiment(args):
     """
     Run experiments to measure the effect of different noise levels on sampling quality.
@@ -363,6 +433,25 @@ def run_experiment(args):
         )
         print(
             f"Average divfree/velocity ratio: {divfree_metrics['avg_divfree_to_velocity_ratio']:.4f}"
+        )
+
+    # Run EDM SDE experiments
+    print("\n\n===== Running EDM SDE experiments =====")
+    for beta in args.beta_values:
+        print(f"\nTesting EDM SDE with beta={beta}")
+        edm_sde_metrics = run_edm_sde_experiment(
+            sampler, device, fid, args.num_samples, args.batch_size, beta
+        )
+
+        results["experiments"].append(
+            {"type": "edm_sde", "beta": beta, "metrics": edm_sde_metrics}
+        )
+
+        print(
+            f"EDM SDE (beta={beta}) - FID: {edm_sde_metrics['fid_score']:.4f}, IS: {edm_sde_metrics['inception_score']:.4f}±{edm_sde_metrics['inception_std']:.4f}, DINO Top-1: {edm_sde_metrics['dino_top1_accuracy']:.2f}%, Top-5: {edm_sde_metrics['dino_top5_accuracy']:.2f}%"
+        )
+        print(
+            f"Average noise/velocity ratio: {edm_sde_metrics['avg_noise_to_velocity_ratio']:.4f}"
         )
 
     # Save results
@@ -658,6 +747,90 @@ def run_ode_divfree_experiment(sampler, device, fid, n_samples, batch_size, lamb
     return metrics
 
 
+def run_edm_sde_experiment(sampler, device, fid, n_samples, batch_size, beta):
+    """Run EDM SDE experiment with the given beta value."""
+    fid.reset()
+
+    generated_samples = []
+    total_velocity_magnitude = 0.0
+    total_noise_magnitude = 0.0
+    total_noise_to_velocity_ratio = 0.0
+    velocity_magnitudes_all = []
+    noise_magnitudes_all = []
+    noise_to_velocity_ratios_all = []
+    class_labels_all = []
+
+    num_batches = n_samples // batch_size
+    if n_samples % batch_size != 0:
+        num_batches += 1
+
+    print(f"Generating {n_samples} samples using EDM SDE sampling with beta={beta}...")
+
+    for i in tqdm(range(num_batches)):
+        current_batch_size = min(batch_size, n_samples - i * batch_size)
+
+        class_labels = torch.randint(
+            0, sampler.num_classes, (current_batch_size,), device=device
+        )
+        class_labels_all.append(class_labels.cpu())
+
+        (
+            samples,
+            avg_velocity,
+            avg_noise,
+            avg_ratio,
+            velocity_magnitudes,
+            noise_magnitudes,
+            noise_to_velocity_ratios,
+        ) = batch_sample_edm_sde_with_metrics(
+            sampler, class_labels, current_batch_size, beta
+        )
+
+        generated_samples.extend(samples.cpu())
+        total_velocity_magnitude += avg_velocity * current_batch_size
+        total_noise_magnitude += avg_noise * current_batch_size
+        total_noise_to_velocity_ratio += avg_ratio * current_batch_size
+        velocity_magnitudes_all.extend(velocity_magnitudes)
+        noise_magnitudes_all.extend(noise_magnitudes)
+        noise_to_velocity_ratios_all.extend(noise_to_velocity_ratios)
+
+        fid.update(samples.to(device), real=False)
+
+    avg_velocity_magnitude = total_velocity_magnitude / n_samples
+    avg_noise_magnitude = total_noise_magnitude / n_samples
+    avg_noise_to_velocity_ratio = total_noise_to_velocity_ratio / n_samples
+
+    fid_score = fid.compute().item()
+
+    generated_tensor = torch.stack(generated_samples).to(device)
+    class_labels_tensor = torch.cat(class_labels_all).to(device)
+
+    inception_score, inception_std = calculate_inception_score(
+        generated_tensor, device=device, batch_size=64, splits=10
+    )
+
+    dino_accuracy = compute_dino_accuracy(
+        sampler, generated_tensor, class_labels_tensor, batch_size=64
+    )
+
+    metrics = {
+        "fid_score": fid_score,
+        "inception_score": inception_score,
+        "inception_std": inception_std,
+        "beta": beta,
+        "avg_velocity_magnitude": avg_velocity_magnitude,
+        "avg_noise_magnitude": avg_noise_magnitude,
+        "avg_noise_to_velocity_ratio": avg_noise_to_velocity_ratio,
+        "velocity_magnitudes": velocity_magnitudes_all,
+        "noise_magnitudes": noise_magnitudes_all,
+        "noise_to_velocity_ratios": noise_to_velocity_ratios_all,
+        "dino_top1_accuracy": dino_accuracy["top1_accuracy"],
+        "dino_top5_accuracy": dino_accuracy["top5_accuracy"],
+    }
+
+    return metrics
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Flow matching noise study")
 
@@ -718,6 +891,14 @@ if __name__ == "__main__":
         type=str,
         default="./results",
         help="Directory to save results",
+    )
+
+    parser.add_argument(
+        "--beta_values",
+        type=float,
+        nargs="+",
+        default=[0.05, 0.1, 0.2, 0.4, 0.6],
+        help="Beta values for EDM SDE sampling",
     )
 
     args = parser.parse_args()
