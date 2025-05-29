@@ -491,6 +491,29 @@ def run_experiment(args):
         f"Baseline ODE - FID: {ode_metrics['fid_score']:.4f}, IS: {ode_metrics['inception_score']:.4f}±{ode_metrics['inception_std']:.4f}, DINO Top-1: {ode_metrics['dino_top1_accuracy']:.2f}%, Top-5: {ode_metrics['dino_top5_accuracy']:.2f}%"
     )
 
+    print("\n\n===== Running EDM SDE experiments =====")
+    for beta in args.beta_values:
+        print(f"\nTesting EDM SDE with beta={beta}")
+        edm_sde_metrics = run_sampling_experiment(
+            sampler,
+            device,
+            fid,
+            args.num_samples,
+            args.batch_size,
+            batch_sample_edm_sde_with_metrics,
+            {"beta": beta},
+            f"EDM SDE sampling with beta={beta}",
+        )
+
+        results["experiments"].append(
+            {"type": "edm_sde", "beta": beta, "metrics": edm_sde_metrics}
+        )
+
+        print(
+            f"EDM SDE (beta={beta}) - FID: {edm_sde_metrics['fid_score']:.4f}, IS: {edm_sde_metrics['inception_score']:.4f}±{edm_sde_metrics['inception_std']:.4f}, DINO Top-1: {edm_sde_metrics['dino_top1_accuracy']:.2f}%, Top-5: {edm_sde_metrics['dino_top5_accuracy']:.2f}%"
+        )
+        print(f"Average noise/velocity ratio: {edm_sde_metrics['avg_ratio']:.4f}")
+
     print("\n\n===== Running SDE experiments =====")
     for noise_scale in args.noise_scales:
         print(f"\nTesting SDE with noise_scale={noise_scale}")
@@ -540,29 +563,6 @@ def run_experiment(args):
             f"ODE-divfree (lambda_div={lambda_div}) - FID: {divfree_metrics['fid_score']:.4f}, IS: {divfree_metrics['inception_score']:.4f}±{divfree_metrics['inception_std']:.4f}, DINO Top-1: {divfree_metrics['dino_top1_accuracy']:.2f}%, Top-5: {divfree_metrics['dino_top5_accuracy']:.2f}%"
         )
         print(f"Average divfree/velocity ratio: {divfree_metrics['avg_ratio']:.4f}")
-
-    print("\n\n===== Running EDM SDE experiments =====")
-    for beta in args.beta_values:
-        print(f"\nTesting EDM SDE with beta={beta}")
-        edm_sde_metrics = run_sampling_experiment(
-            sampler,
-            device,
-            fid,
-            args.num_samples,
-            args.batch_size,
-            batch_sample_edm_sde_with_metrics,
-            {"beta": beta},
-            f"EDM SDE sampling with beta={beta}",
-        )
-
-        results["experiments"].append(
-            {"type": "edm_sde", "beta": beta, "metrics": edm_sde_metrics}
-        )
-
-        print(
-            f"EDM SDE (beta={beta}) - FID: {edm_sde_metrics['fid_score']:.4f}, IS: {edm_sde_metrics['inception_score']:.4f}±{edm_sde_metrics['inception_std']:.4f}, DINO Top-1: {edm_sde_metrics['dino_top1_accuracy']:.2f}%, Top-5: {edm_sde_metrics['dino_top5_accuracy']:.2f}%"
-        )
-        print(f"Average noise/velocity ratio: {edm_sde_metrics['avg_ratio']:.4f}")
 
     # Save results
     result_file = os.path.join(results_dir, f"noise_study_results_{timestamp}.json")
