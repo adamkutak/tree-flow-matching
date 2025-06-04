@@ -279,6 +279,88 @@ def batch_sample_edm_sde_with_metrics(sampler, class_label, batch_size=16, beta=
         )
 
 
+def batch_sample_inference_time_sde_with_metrics(
+    sampler, class_label, batch_size=16, noise_scale_factor=1.0
+):
+    """
+    Inference-time SDE conversion from Section 4.2:
+        dx_t = f_t(x_t)dt + g_t dw
+    where f_t(x_t) = u_t(x_t) - (g_t^2/2) * ∇ log p_t(x_t)
+    and g_t = t^2 scaled by noise_scale_factor (default 3 as mentioned in paper).
+    """
+    is_tensor = torch.is_tensor(class_label)
+    sampler.flow_model.eval()
+
+    velocity_magnitudes = []
+    noise_magnitudes = []
+    noise_to_velocity_ratios = []
+
+    with torch.no_grad():
+        current_samples = torch.randn(
+            batch_size,
+            sampler.channels,
+            sampler.image_size,
+            sampler.image_size,
+            device=sampler.device,
+        )
+
+        if is_tensor:
+            current_label = class_label
+        else:
+            current_label = torch.full(
+                (batch_size,), class_label, device=sampler.device
+            )
+
+        for step, t in enumerate(sampler.timesteps[:-1]):
+            dt = sampler.timesteps[step + 1] - t
+            t_batch = torch.full((batch_size,), t.item(), device=sampler.device)
+
+            # Get velocity from flow model
+            velocity = sampler.flow_model(t_batch, current_samples, current_label)
+
+            # Compute score using existing score_si_linear function
+            score = score_si_linear(current_samples, t_batch, velocity)
+
+            # Compute noise schedule g_t = t^2 scaled by factor
+            g_t = (t_batch**2) * noise_scale_factor
+            g_t = g_t.view(-1, *([1] * (current_samples.ndim - 1)))
+
+            # Compute drift coefficient: f_t(x_t) = u_t(x_t) - (g_t^2/2) * score
+            drift_correction = -(g_t**2) / 2.0 * score
+            drift = velocity + drift_correction
+
+            # Generate noise term: g_t * dW
+            noise = torch.randn_like(current_samples) * g_t * torch.sqrt(dt)
+
+            # Track magnitudes
+            dims = tuple(range(1, velocity.ndim))
+            vel_mag = torch.linalg.vector_norm(drift, dim=dims).mean().item()
+            noise_mag = torch.linalg.vector_norm(noise, dim=dims).mean().item()
+
+            velocity_magnitudes.append(vel_mag)
+            noise_magnitudes.append(noise_mag)
+            noise_to_velocity_ratios.append(noise_mag / vel_mag if vel_mag > 0 else 0)
+
+            # Euler-Maruyama update
+            current_samples = current_samples + drift * dt + noise
+
+        avg_velocity_magnitude = sum(velocity_magnitudes) / len(velocity_magnitudes)
+        avg_noise_magnitude = sum(noise_magnitudes) / len(noise_magnitudes)
+        avg_noise_to_velocity_ratio = sum(noise_to_velocity_ratios) / len(
+            noise_to_velocity_ratios
+        )
+
+        return (
+            sampler.unnormalize_images(current_samples),
+            avg_velocity_magnitude,
+            avg_noise_magnitude,
+            avg_noise_to_velocity_ratio,
+            velocity_magnitudes,
+            noise_magnitudes,
+            noise_to_velocity_ratios,
+        )
+
+
 def run_sampling_experiment(
     sampler,
     device,
@@ -518,6 +600,35 @@ def run_experiment(args):
         )
         print(f"Average noise/velocity ratio: {edm_sde_metrics['avg_ratio']:.4f}")
 
+    print("\n\n===== Running Inference-Time SDE experiments =====")
+    for noise_scale_factor in args.inference_sde_factors:
+        print(
+            f"\nTesting Inference-Time SDE with noise_scale_factor={noise_scale_factor}"
+        )
+        inference_sde_metrics = run_sampling_experiment(
+            sampler,
+            device,
+            fid,
+            args.num_samples,
+            args.batch_size,
+            batch_sample_inference_time_sde_with_metrics,
+            {"noise_scale_factor": noise_scale_factor},
+            f"Inference-Time SDE sampling with noise_scale_factor={noise_scale_factor}",
+        )
+
+        results["experiments"].append(
+            {
+                "type": "inference_time_sde",
+                "noise_scale_factor": noise_scale_factor,
+                "metrics": inference_sde_metrics,
+            }
+        )
+
+        print(
+            f"Inference-Time SDE (factor={noise_scale_factor}) - FID: {inference_sde_metrics['fid_score']:.4f}, IS: {inference_sde_metrics['inception_score']:.4f}±{inference_sde_metrics['inception_std']:.4f}, DINO Top-1: {inference_sde_metrics['dino_top1_accuracy']:.2f}%, Top-5: {inference_sde_metrics['dino_top5_accuracy']:.2f}%"
+        )
+        print(f"Average noise/velocity ratio: {inference_sde_metrics['avg_ratio']:.4f}")
+
     print("\n\n===== Running SDE experiments =====")
     for noise_scale in args.noise_scales:
         print(f"\nTesting SDE with noise_scale={noise_scale}")
@@ -663,6 +774,14 @@ if __name__ == "__main__":
         nargs="+",
         default=[0.05, 0.1, 0.2, 0.4, 0.6],
         help="Beta values for EDM SDE sampling",
+    )
+
+    parser.add_argument(
+        "--inference_sde_factors",
+        type=float,
+        nargs="+",
+        default=[0.1, 0.2, 0.3, 0.6, 1.0],
+        help="Noise scale factors for inference-time SDE sampling",
     )
 
     args = parser.parse_args()
