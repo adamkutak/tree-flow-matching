@@ -724,7 +724,7 @@ def run_experiment(args):
         )
         print(f"Average noise/velocity ratio: {edm_sde_metrics['avg_ratio']:.4f}")
 
-    print("\n\n===== Running Inference-Time SDE experiments =====")
+    print("\n\n===== Running score SDE experiments =====")
     for noise_scale_factor in args.inference_sde_factors:
         print(
             f"\nTesting Inference-Time SDE with noise_scale_factor={noise_scale_factor}"
