@@ -13,7 +13,7 @@ from tqdm import tqdm
 from mcts_single_flow import MCTSFlowSampler
 from imagenet_dataset import ImageNet32Dataset
 from run_mcts_flow import calculate_inception_score, compute_dino_accuracy
-from utils import divfree_swirl_si, score_si_linear
+from utils import divfree_swirl_si, score_si_linear, score_vp_converted
 
 
 def batch_sample_ode_with_metrics(sampler, class_label, batch_size=16):
@@ -362,12 +362,11 @@ def batch_sample_score_sde_with_metrics(
 
 
 def batch_sample_vp_sde_with_metrics(
-    sampler, class_label, batch_size=16, beta_schedule=0.16
+    sampler, class_label, batch_size=16, beta_min=0.1, beta_max=20.0
 ):
     """
-    VP-SDE conversion from Section 4.3: Inference-Time Interpolant Conversion
-    Converts from linear interpolant to Variance Preserving (VP) interpolant at inference time.
-    Uses scale-time transformation and follows VP-SDE dynamics.
+    VP-SDE conversion matching the repository's approach.
+    Assumes timesteps are in [0,1] range.
     """
     is_tensor = torch.is_tensor(class_label)
     sampler.flow_model.eval()
@@ -392,72 +391,38 @@ def batch_sample_vp_sde_with_metrics(
                 (batch_size,), class_label, device=sampler.device
             )
 
-        for step, s in enumerate(sampler.timesteps[:-1]):
-            ds = sampler.timesteps[step + 1] - s
-            s_batch = torch.full((batch_size,), s.item(), device=sampler.device)
+        for step, t_curr in enumerate(sampler.timesteps[:-1]):
+            dt = sampler.timesteps[step + 1] - t_curr
+            t_batch = torch.full((batch_size,), t_curr.item(), device=sampler.device)
 
-            # VP interpolant parameters for the new (s) time
-            # α_s = exp(-0.5 * ∫_0^s β_s ds), σ_s = sqrt(1 - α_s^2)
-            integral_beta_s = beta_schedule * s_batch
-            alpha_s = torch.exp(-0.5 * integral_beta_s)
-            sigma_s = torch.sqrt(1 - alpha_s**2)
+            # Get velocity from flow model (NO transformations)
+            velocity = sampler.flow_model(t_batch, current_samples, current_label)
 
-            # Compute signal-to-noise ratio for VP: ρ̄(s) = ᾱ_s/σ̄_s
-            rho_s = alpha_s / sigma_s
-
-            # For linear interpolant: ρ(t) = α_t/σ_t = t/(1-t)
-            # Inverse transformation: t_s = ρ^(-1)(ρ̄(s))
-            # If ρ(t) = t/(1-t), then ρ^(-1)(ρ) = ρ/(1+ρ)
-            t_s = rho_s / (1 + rho_s)
-            t_s = torch.clamp(t_s, 0.0, 1.0)  # Ensure valid time range
-
-            # Linear interpolant parameters at t_s
-            alpha_t = t_s
-            sigma_t = 1 - t_s
-
-            # Scale factor: c_s = σ̄_s/σ_t_s
-            c_s = sigma_s / sigma_t
-            c_s = c_s.view(-1, *([1] * (current_samples.ndim - 1)))
-
-            # Transform samples: x̄_s = c_s * x_t_s
-            scaled_samples = c_s * current_samples
-
-            # Get velocity from flow model at transformed time and samples
-            t_s_batch = torch.full(
-                (batch_size,), t_s.mean().item(), device=sampler.device
-            )
-            velocity_linear = sampler.flow_model(
-                t_s_batch, scaled_samples, current_label
+            # Convert velocity to score using VP coefficients
+            score = score_vp_converted(
+                current_samples,
+                t_batch,
+                velocity,
+                use_vp=True,
+                beta_min=beta_min,
+                beta_max=beta_max,
             )
 
-            # Compute transformed velocity using Equation 11
-            # This is a simplified version - the full equation is quite complex
-            # ũ_s(x̄_s) = (ė_s/c_s) * x̄_s + c_s * ṫ_s * u_t_s(x̄_s/c_s)
+            t_normalized = t_curr
+            b = beta_min
+            B = beta_max
+            T = 0.5 * t_normalized**2 * (B - b) + t_normalized * b
+            diffuse = torch.sqrt(1 - torch.exp(-T))
 
-            # For simplicity, we'll use an approximation that preserves the key dynamics
-            alpha_s_expanded = alpha_s.view(-1, *([1] * (current_samples.ndim - 1)))
-            sigma_s_expanded = sigma_s.view(-1, *([1] * (current_samples.ndim - 1)))
-
-            # Transformed velocity (simplified)
-            velocity_vp = velocity_linear * c_s
-
-            # Compute score for VP interpolant
-            score_vp = score_si_linear(scaled_samples, t_s_batch, velocity_linear)
-
-            # VP-SDE dynamics: dx = [ũ_s(x̄_s) - (g_s^2/2) * ∇log p_s(x̄_s)] ds + g_s * dW
-            # where g_s^2 = β_s for VP schedule
-            g_s_squared = beta_schedule
-            g_s = torch.sqrt(torch.tensor(g_s_squared, device=sampler.device))
-
-            # Drift coefficient
-            drift_correction = -(g_s_squared / 2.0) * score_vp
-            drift = velocity_vp + drift_correction
+            drift = -velocity + (0.5 * diffuse**2) * score
 
             # Noise term
-            noise = torch.randn_like(current_samples) * g_s * torch.sqrt(ds)
+            noise = (
+                torch.randn_like(current_samples) * diffuse * torch.sqrt(torch.abs(dt))
+            )
 
             # Track magnitudes
-            dims = tuple(range(1, velocity_linear.ndim))
+            dims = tuple(range(1, velocity.ndim))
             vel_mag = torch.linalg.vector_norm(drift, dim=dims).mean().item()
             noise_mag = torch.linalg.vector_norm(noise, dim=dims).mean().item()
 
@@ -466,7 +431,7 @@ def batch_sample_vp_sde_with_metrics(
             noise_to_velocity_ratios.append(noise_mag / vel_mag if vel_mag > 0 else 0)
 
             # Update samples
-            current_samples = current_samples + drift * ds + noise
+            current_samples = current_samples + drift * dt + noise
 
         avg_velocity_magnitude = sum(velocity_magnitudes) / len(velocity_magnitudes)
         avg_noise_magnitude = sum(noise_magnitudes) / len(noise_magnitudes)
@@ -813,20 +778,21 @@ def run_experiment(args):
             args.num_samples,
             args.batch_size,
             batch_sample_vp_sde_with_metrics,
-            {"beta_schedule": beta_schedule},
+            {"beta_min": beta_schedule, "beta_max": beta_schedule},
             f"VP-SDE sampling with beta_schedule={beta_schedule}",
         )
 
         results["experiments"].append(
             {
                 "type": "vp_sde",
-                "beta_schedule": beta_schedule,
+                "beta_min": beta_schedule,
+                "beta_max": beta_schedule,
                 "metrics": vp_sde_metrics,
             }
         )
 
         print(
-            f"VP-SDE (beta_schedule={beta_schedule}) - FID: {vp_sde_metrics['fid_score']:.4f}, IS: {vp_sde_metrics['inception_score']:.4f}±{vp_sde_metrics['inception_std']:.4f}, DINO Top-1: {vp_sde_metrics['dino_top1_accuracy']:.2f}%, Top-5: {vp_sde_metrics['dino_top5_accuracy']:.2f}%"
+            f"VP-SDE (beta_min={beta_schedule}, beta_max={beta_schedule}) - FID: {vp_sde_metrics['fid_score']:.4f}, IS: {vp_sde_metrics['inception_score']:.4f}±{vp_sde_metrics['inception_std']:.4f}, DINO Top-1: {vp_sde_metrics['dino_top1_accuracy']:.2f}%, Top-5: {vp_sde_metrics['dino_top5_accuracy']:.2f}%"
         )
         print(f"Average noise/velocity ratio: {vp_sde_metrics['avg_ratio']:.4f}")
 
@@ -939,7 +905,7 @@ if __name__ == "__main__":
         "--vp_sde_factors",
         type=float,
         nargs="+",
-        default=[0.01, 0.04, 0.16, 0.36, 1.0],
+        default=[0.01, 0.05, 0.1, 0.2, 0.5],
         help="Beta schedule values for VP-SDE sampling",
     )
 
