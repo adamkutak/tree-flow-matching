@@ -942,7 +942,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--real_samples",
         type=int,
-        default=100,
+        default=10000,
         help="Number of real samples to use for FID calculation",
     )
 
