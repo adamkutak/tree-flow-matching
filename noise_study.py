@@ -666,6 +666,34 @@ def run_experiment(args):
         f"Baseline ODE - FID: {ode_metrics['fid_score']:.4f}, IS: {ode_metrics['inception_score']:.4f}±{ode_metrics['inception_std']:.4f}, DINO Top-1: {ode_metrics['dino_top1_accuracy']:.2f}%, Top-5: {ode_metrics['dino_top5_accuracy']:.2f}%"
     )
 
+    print("\n\n===== Running VP-SDE experiments =====")
+    for beta_schedule in args.vp_sde_factors:
+        print(f"\nTesting VP-SDE with beta_schedule={beta_schedule}")
+        vp_sde_metrics = run_sampling_experiment(
+            sampler,
+            device,
+            fid,
+            args.num_samples,
+            args.batch_size,
+            batch_sample_vp_sde_with_metrics,
+            {"beta_min": beta_schedule, "beta_max": beta_schedule},
+            f"VP-SDE sampling with beta_schedule={beta_schedule}",
+        )
+
+        results["experiments"].append(
+            {
+                "type": "vp_sde",
+                "beta_min": beta_schedule,
+                "beta_max": beta_schedule,
+                "metrics": vp_sde_metrics,
+            }
+        )
+
+        print(
+            f"VP-SDE (beta_min={beta_schedule}, beta_max={beta_schedule}) - FID: {vp_sde_metrics['fid_score']:.4f}, IS: {vp_sde_metrics['inception_score']:.4f}±{vp_sde_metrics['inception_std']:.4f}, DINO Top-1: {vp_sde_metrics['dino_top1_accuracy']:.2f}%, Top-5: {vp_sde_metrics['dino_top5_accuracy']:.2f}%"
+        )
+        print(f"Average noise/velocity ratio: {vp_sde_metrics['avg_ratio']:.4f}")
+
     print("\n\n===== Running EDM SDE experiments =====")
     for beta in args.beta_values:
         print(f"\nTesting EDM SDE with beta={beta}")
@@ -768,34 +796,6 @@ def run_experiment(args):
         )
         print(f"Average divfree/velocity ratio: {divfree_metrics['avg_ratio']:.4f}")
 
-    print("\n\n===== Running VP-SDE experiments =====")
-    for beta_schedule in args.vp_sde_factors:
-        print(f"\nTesting VP-SDE with beta_schedule={beta_schedule}")
-        vp_sde_metrics = run_sampling_experiment(
-            sampler,
-            device,
-            fid,
-            args.num_samples,
-            args.batch_size,
-            batch_sample_vp_sde_with_metrics,
-            {"beta_min": beta_schedule, "beta_max": beta_schedule},
-            f"VP-SDE sampling with beta_schedule={beta_schedule}",
-        )
-
-        results["experiments"].append(
-            {
-                "type": "vp_sde",
-                "beta_min": beta_schedule,
-                "beta_max": beta_schedule,
-                "metrics": vp_sde_metrics,
-            }
-        )
-
-        print(
-            f"VP-SDE (beta_min={beta_schedule}, beta_max={beta_schedule}) - FID: {vp_sde_metrics['fid_score']:.4f}, IS: {vp_sde_metrics['inception_score']:.4f}±{vp_sde_metrics['inception_std']:.4f}, DINO Top-1: {vp_sde_metrics['dino_top1_accuracy']:.2f}%, Top-5: {vp_sde_metrics['dino_top5_accuracy']:.2f}%"
-        )
-        print(f"Average noise/velocity ratio: {vp_sde_metrics['avg_ratio']:.4f}")
-
     # Save results
     result_file = os.path.join(results_dir, f"noise_study_results_{timestamp}.json")
     with open(result_file, "w") as f:
@@ -845,13 +845,13 @@ if __name__ == "__main__":
     parser.add_argument(
         "--num_samples",
         type=int,
-        default=64,
+        default=1024,
         help="Number of samples to generate for each experiment",
     )
     parser.add_argument(
         "--batch_size",
         type=int,
-        default=64,
+        default=512,
         help="Batch size for sample generation",
     )
     parser.add_argument(
