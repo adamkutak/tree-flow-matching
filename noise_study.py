@@ -279,14 +279,14 @@ def batch_sample_edm_sde_with_metrics(sampler, class_label, batch_size=16, beta=
         )
 
 
-def batch_sample_score_sde_with_metrics(
+def batch_sample_inference_time_sde_with_metrics(
     sampler, class_label, batch_size=16, noise_scale_factor=1.0
 ):
     """
     Inference-time SDE conversion from Section 4.2:
         dx_t = f_t(x_t)dt + g_t dw
     where f_t(x_t) = u_t(x_t) - (g_t^2/2) * ∇ log p_t(x_t)
-    and g_t = t^2 scaled by noise_scale_factor (default 3 as mentioned in paper).
+    and g_t = t^2 scaled by noise_scale_factor.
     """
     is_tensor = torch.is_tensor(class_label)
     sampler.flow_model.eval()
@@ -361,12 +361,77 @@ def batch_sample_score_sde_with_metrics(
         )
 
 
+def score_vp_converted(x, t_batch, u_t, use_vp=True, beta_min=0.1, beta_max=20.0):
+    """
+    Convert velocity to score using either linear or VP scheduler coefficients
+    Assumes t_batch is already in [0,1] range
+    """
+    t_normalized = t_batch  # Already in [0,1] - no normalization needed
+
+    if use_vp:
+        # VP scheduler coefficients (like repository)
+        b = beta_min
+        B = beta_max
+        T = 0.5 * t_normalized**2 * (B - b) + t_normalized * b
+        dT = t_normalized * (B - b) + b
+
+        alpha_t = torch.exp(-0.5 * T)
+        sigma_t = torch.sqrt(1 - torch.exp(-T))
+        d_alpha_t = -0.5 * dT * torch.exp(-0.5 * T)
+        d_sigma_t = 0.5 * dT * torch.exp(-T) / torch.sqrt(1 - torch.exp(-T))
+    else:
+        # Linear interpolant coefficients
+        alpha_t = 1 - t_normalized
+        sigma_t = t_normalized
+        d_alpha_t = -torch.ones_like(t_normalized)
+        d_sigma_t = torch.ones_like(t_normalized)
+
+    # Repository's general formula
+    alpha_t = alpha_t.view(-1, *([1] * (x.ndim - 1)))
+    sigma_t = sigma_t.view(-1, *([1] * (x.ndim - 1)))
+    d_alpha_t = d_alpha_t.view(-1, *([1] * (x.ndim - 1)))
+    d_sigma_t = d_sigma_t.view(-1, *([1] * (x.ndim - 1)))
+
+    reverse_alpha_ratio = alpha_t / d_alpha_t
+    var = sigma_t**2 - reverse_alpha_ratio * d_sigma_t * sigma_t
+    score = (reverse_alpha_ratio * u_t - x) / var
+
+    return score
+
+
+def score_vp_converted_corrected(x, alpha_t, sigma_t, d_alpha_t, d_sigma_t, u_t):
+    """
+    Convert velocity to score using repository's exact formula.
+    Added numerical stability checks.
+    """
+    # Expand dimensions to match x
+    alpha_t = alpha_t.view(-1, *([1] * (x.ndim - 1)))
+    sigma_t = sigma_t.view(-1, *([1] * (x.ndim - 1)))
+    d_alpha_t = d_alpha_t.view(-1, *([1] * (x.ndim - 1)))
+    d_sigma_t = d_sigma_t.view(-1, *([1] * (x.ndim - 1)))
+
+    # Repository's exact formula with numerical stability
+    reverse_alpha_ratio = alpha_t / d_alpha_t
+    var = sigma_t**2 - reverse_alpha_ratio * d_sigma_t * sigma_t
+
+    # Add small epsilon for numerical stability
+    var = var + 1e-8
+
+    score = (reverse_alpha_ratio * u_t - x) / var
+
+    return score
+
+
 def batch_sample_vp_sde_with_metrics(
     sampler, class_label, batch_size=16, beta_min=0.1, beta_max=20.0
 ):
     """
-    VP-SDE conversion matching the repository's approach.
-    Assumes timesteps are in [0,1] range.
+    VP-SDE conversion for flow matching models (0=noise, 1=clean).
+    Key fix: Convert between flow matching and diffusion time notations!
+
+    Flow matching: t=0 (noise) → t=1 (clean)
+    Diffusion: t=1 (noise) → t=0 (clean)
+    Conversion: t_diffusion = 1 - t_flow_matching
     """
     is_tensor = torch.is_tensor(class_label)
     sampler.flow_model.eval()
@@ -391,34 +456,54 @@ def batch_sample_vp_sde_with_metrics(
                 (batch_size,), class_label, device=sampler.device
             )
 
-        for step, t_curr in enumerate(sampler.timesteps[:-1]):
-            dt = sampler.timesteps[step + 1] - t_curr
-            t_batch = torch.full((batch_size,), t_curr.item(), device=sampler.device)
+        # Your timesteps go 0→1 (noise→clean in flow matching notation)
+        timesteps_fm = sampler.timesteps  # Flow matching notation
 
-            # Get velocity from flow model (NO transformations)
-            velocity = sampler.flow_model(t_batch, current_samples, current_label)
+        for step, t_curr_fm in enumerate(timesteps_fm[:-1]):
+            t_next_fm = timesteps_fm[step + 1]
 
-            # Convert velocity to score using VP coefficients
-            score = score_vp_converted(
-                current_samples,
-                t_batch,
-                velocity,
-                use_vp=True,
-                beta_min=beta_min,
-                beta_max=beta_max,
+            # dt in flow matching notation (positive, going 0→1)
+            dt_fm = t_next_fm - t_curr_fm
+
+            t_batch_fm = torch.full(
+                (batch_size,), t_curr_fm.item(), device=sampler.device
             )
 
-            t_normalized = t_curr
+            # Get velocity from flow model (expects flow matching timesteps 0→1)
+            velocity = sampler.flow_model(t_batch_fm, current_samples, current_label)
+
+            # CRITICAL: Convert to diffusion notation for VP scheduler
+            # Flow matching t=0 (noise) corresponds to diffusion t=1 (noise)
+            # Flow matching t=1 (clean) corresponds to diffusion t=0 (clean)
+            t_diffusion = 1.0 - t_curr_fm
+
+            # Create VP scheduler coefficients using diffusion notation
             b = beta_min
             B = beta_max
-            T = 0.5 * t_normalized**2 * (B - b) + t_normalized * b
-            diffuse = torch.sqrt(1 - torch.exp(-T))
+            T = 0.5 * t_diffusion**2 * (B - b) + t_diffusion * b
+            dT = t_diffusion * (B - b) + b
 
+            alpha_t = torch.exp(-0.5 * T)
+            sigma_t = torch.sqrt(1 - torch.exp(-T))
+            d_alpha_t = -0.5 * dT * torch.exp(-0.5 * T)
+            d_sigma_t = 0.5 * dT * torch.exp(-T) / torch.sqrt(1 - torch.exp(-T))
+
+            # Convert velocity to score using repository's formula
+            score = score_vp_converted_corrected(
+                current_samples, alpha_t, sigma_t, d_alpha_t, d_sigma_t, velocity
+            )
+
+            # Use sigma_t as diffusion coefficient
+            diffuse = sigma_t
+
+            # Calculate drift (repository formula)
             drift = -velocity + (0.5 * diffuse**2) * score
 
-            # Noise term
+            # Noise term - use dt in flow matching notation
             noise = (
-                torch.randn_like(current_samples) * diffuse * torch.sqrt(torch.abs(dt))
+                torch.randn_like(current_samples)
+                * diffuse
+                * torch.sqrt(torch.abs(dt_fm))
             )
 
             # Track magnitudes
@@ -430,8 +515,8 @@ def batch_sample_vp_sde_with_metrics(
             noise_magnitudes.append(noise_mag)
             noise_to_velocity_ratios.append(noise_mag / vel_mag if vel_mag > 0 else 0)
 
-            # Update samples
-            current_samples = current_samples + drift * dt + noise
+            # Update samples - use dt in flow matching notation
+            current_samples = current_samples + drift * dt_fm + noise
 
         avg_velocity_magnitude = sum(velocity_magnitudes) / len(velocity_magnitudes)
         avg_noise_magnitude = sum(noise_magnitudes) / len(noise_magnitudes)
@@ -728,7 +813,7 @@ def run_experiment(args):
             fid,
             args.num_samples,
             args.batch_size,
-            batch_sample_score_sde_with_metrics,
+            batch_sample_inference_time_sde_with_metrics,
             {"noise_scale_factor": noise_scale_factor},
             f"Inference-Time SDE sampling with noise_scale_factor={noise_scale_factor}",
         )
