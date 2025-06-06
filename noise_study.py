@@ -481,6 +481,37 @@ def batch_sample_vp_sde_with_metrics(
             print(f"CondOT coeffs - alpha_t: {alpha_t:.6f}, sigma_t: {sigma_t:.6f}")
             print(f"SNR: {snr:.6f}")
             print(
+                f"VP derivatives - d_alpha_r: {d_alpha_r:.6f}, d_sigma_r: {d_sigma_r:.6f}"
+            )
+            print(
+                f"CondOT derivatives - d_alpha_t: {d_alpha_t:.6f}, d_sigma_t: {d_sigma_t:.6f}"
+            )
+
+            # Debug dt_r calculation step by step
+            numerator_dt = (
+                sigma_t * sigma_t * (sigma_r * d_alpha_r - alpha_r * d_sigma_r)
+            )
+            denominator_dt = (
+                sigma_r * sigma_r * (sigma_t * d_alpha_t - alpha_t * d_sigma_t)
+            )
+            print(
+                f"dt_r numerator: {numerator_dt:.6f} = {sigma_t:.6f}^2 * ({sigma_r:.6f} * {d_alpha_r:.6f} - {alpha_r:.6f} * {d_sigma_r:.6f})"
+            )
+            print(
+                f"dt_r denominator: {denominator_dt:.6f} = {sigma_r:.6f}^2 * ({sigma_t:.6f} * {d_alpha_t:.6f} - {alpha_t:.6f} * {d_sigma_t:.6f})"
+            )
+            print(f"dt_r = {numerator_dt:.6f} / {denominator_dt:.6f} = {dt_r:.6f}")
+
+            # Debug ds_r calculation step by step
+            numerator_ds = sigma_t * d_sigma_r - sigma_r * d_sigma_t * dt_r
+            denominator_ds = sigma_t * sigma_t
+            print(
+                f"ds_r numerator: {numerator_ds:.6f} = {sigma_t:.6f} * {d_sigma_r:.6f} - {sigma_r:.6f} * {d_sigma_t:.6f} * {dt_r:.6f}"
+            )
+            print(f"ds_r denominator: {denominator_ds:.6f} = {sigma_t:.6f}^2")
+            print(f"ds_r = {numerator_ds:.6f} / {denominator_ds:.6f} = {ds_r:.6f}")
+
+            print(
                 f"Scaling factors - s_r: {s_r:.6f}, dt_r: {dt_r:.6f}, ds_r: {ds_r:.6f}"
             )
 
