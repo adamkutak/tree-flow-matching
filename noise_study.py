@@ -629,26 +629,29 @@ def batch_sample_vp_ode_with_metrics(
     sampler, class_label, batch_size=16, beta_min=0.1, beta_max=20.0
 ):
     """
-    Deterministic VP-ODE sampler: Uses VP velocity transformation but NO random noise during sampling.
-    Only the initial sample is random - everything after that is deterministic.
-
-    This is essentially the VP-SDE sampler with diffusion coefficient set to zero.
+    Deterministic VP-ODE sampler using proper time conventions:
+    - VP-SDE timesteps go 1→0 (diffusion convention)
+    - Flow model called with 1-t_vp (converts to flow matching 0→1)
+    - No confusing time conversions or backwards mappings
     """
     is_tensor = torch.is_tensor(class_label)
     sampler.flow_model.eval()
 
-    # Scheduler implementations (same as VP-SDE)
+    # CondOT scheduler now uses diffusion convention (1→0) to match VP
     class CondOTScheduler:
         def __call__(self, t):
+            # t goes from 1 (noise) to 0 (clean) in diffusion convention
             return {
-                "alpha_t": 1 - t,
-                "sigma_t": t,
-                "d_alpha_t": -torch.ones_like(t),
-                "d_sigma_t": torch.ones_like(t),
+                "alpha_t": t,  # t=1: alpha=1 (noise), t=0: alpha=0 (clean)
+                "sigma_t": 1 - t,  # t=1: sigma=0 (noise), t=0: sigma=1 (clean)
+                "d_alpha_t": torch.ones_like(t),
+                "d_sigma_t": -torch.ones_like(t),
             }
 
         def snr_inverse(self, snr):
-            return 1.0 / (1.0 + snr)
+            # For diffusion CondOT: snr = alpha/sigma = t/(1-t)
+            # Solving: snr = t/(1-t) => t = snr/(1+snr)
+            return snr / (1.0 + snr)
 
     class VPScheduler:
         def __init__(self, beta_min=0.1, beta_max=20.0):
@@ -656,6 +659,7 @@ def batch_sample_vp_ode_with_metrics(
             self.beta_max = beta_max
 
         def __call__(self, t):
+            # t goes from 1 (noise) to 0 (clean) - standard diffusion convention
             b = self.beta_min
             B = self.beta_max
             T = 0.5 * t**2 * (B - b) + t * b
@@ -676,14 +680,15 @@ def batch_sample_vp_ode_with_metrics(
     original_scheduler = CondOTScheduler()
     vp_scheduler = VPScheduler(beta_min, beta_max)
 
-    def compute_velocity_transform(x, t_fm, label):
-        t_vp = 1.0 - t_fm
+    def compute_velocity_transform(x, t_vp, label):
+        # t_vp is in diffusion convention (1→0)
         vp_coeffs = vp_scheduler(t_vp)
         alpha_r = vp_coeffs["alpha_t"]
         sigma_r = vp_coeffs["sigma_t"]
         d_alpha_r = vp_coeffs["d_alpha_t"]
         d_sigma_r = vp_coeffs["d_sigma_t"]
 
+        # Find equivalent CondOT time using SNR matching
         snr = alpha_r / sigma_r
         t_equiv = original_scheduler.snr_inverse(snr)
 
@@ -708,18 +713,22 @@ def batch_sample_vp_ode_with_metrics(
 
         step = compute_velocity_transform.debug_count
         print(f"\n=== VP-ODE Transform Debug Step {step} ===")
-        print(f"t_fm: {t_fm:.6f} -> t_vp: {t_vp:.6f} -> t_equiv: {t_equiv:.6f}")
+        print(f"t_vp (diffusion): {t_vp:.6f} -> t_equiv (diffusion): {t_equiv:.6f}")
         print(f"VP coeffs: alpha_r={alpha_r:.6f}, sigma_r={sigma_r:.6f}, SNR={snr:.6f}")
         print(f"CondOT coeffs: alpha_t={alpha_t:.6f}, sigma_t={sigma_t:.6f}")
         print(f"Scaling: s_r={s_r:.6f}, dt_r={dt_r:.6f}, ds_r={ds_r:.6f}")
 
-        t_batch = torch.full((x.shape[0],), t_equiv.item(), device=x.device)
+        # Convert to flow matching convention ONLY when calling the model
+        t_flow_matching = 1.0 - t_equiv  # Convert diffusion→flow matching
+        t_batch = torch.full((x.shape[0],), t_flow_matching, device=x.device)
 
         # Debug input to model
         x_scaled = x / s_r
         print(f"Input range: [{x.min():.4f}, {x.max():.4f}]")
         print(f"Scaled input range: [{x_scaled.min():.4f}, {x_scaled.max():.4f}]")
-        print(f"Using model time: {t_equiv:.6f}")
+        print(
+            f"Using flow model time: {t_flow_matching:.6f} (converted from diffusion {t_equiv:.6f})"
+        )
 
         u_t = sampler.flow_model(t_batch, x_scaled, label)
         u_r = ds_r * x / s_r + dt_r * s_r * u_t
@@ -744,7 +753,7 @@ def batch_sample_vp_ode_with_metrics(
     velocity_magnitudes = []
 
     with torch.no_grad():
-        # Initialize samples with pure noise (ONLY random part)
+        # Initialize samples with pure noise
         current_samples = torch.randn(
             batch_size,
             sampler.channels,
@@ -761,25 +770,28 @@ def batch_sample_vp_ode_with_metrics(
                 (batch_size,), class_label, device=sampler.device
             )
 
-        timesteps_fm = sampler.timesteps
+        # Create diffusion timesteps: 1→0 (1=noise, 0=clean)
+        timesteps_diffusion = torch.linspace(
+            1.0, 0.0, len(sampler.timesteps), device=sampler.device
+        )
 
-        # Deterministic VP-ODE sampling loop (NO NOISE!)
-        for step, t_curr_fm in enumerate(timesteps_fm[:-1]):
-            t_next_fm = timesteps_fm[step + 1]
-            dt_fm = t_next_fm - t_curr_fm
+        # VP-ODE sampling loop using diffusion convention
+        for step, t_curr_vp in enumerate(timesteps_diffusion[:-1]):
+            t_next_vp = timesteps_diffusion[step + 1]
+            dt_vp = t_next_vp - t_curr_vp  # Negative dt (going 1→0)
 
             # Debug sample evolution
             sample_norm_before = (
                 torch.linalg.vector_norm(current_samples, dim=(1, 2, 3)).mean().item()
             )
             print(
-                f"\n--- VP-ODE Step {step}: t={t_curr_fm:.4f} -> {t_next_fm:.4f} (dt={dt_fm:.4f}) ---"
+                f"\n--- VP-ODE Step {step}: t={t_curr_vp:.4f} -> {t_next_vp:.4f} (dt={dt_vp:.4f}) ---"
             )
             print(f"Sample norm before: {sample_norm_before:.4f}")
 
-            # Transform velocity from CondOT to VP
+            # Transform velocity using diffusion time
             transformed_velocity = compute_velocity_transform(
-                current_samples, t_curr_fm, current_label
+                current_samples, t_curr_vp, current_label
             )
 
             # VP-ODE drift: just negative velocity
@@ -794,7 +806,7 @@ def batch_sample_vp_ode_with_metrics(
             print(f"Drift range: [{drift.min():.4f}, {drift.max():.4f}]")
 
             # DETERMINISTIC UPDATE: Only drift term, NO noise!
-            current_samples = current_samples + drift * dt_fm
+            current_samples = current_samples + drift * dt_vp
 
             # Debug sample evolution after update
             sample_norm_after = (
