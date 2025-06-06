@@ -361,76 +361,129 @@ def batch_sample_inference_time_sde_with_metrics(
         )
 
 
-def score_vp_converted_corrected(x, alpha_t, sigma_t, d_alpha_t, d_sigma_t, u_t):
-    """
-    Convert velocity to score using repository's exact formula.
-    Added numerical stability checks.
-    """
-    # Debug info (only for first call to avoid spam)
-    if not hasattr(score_vp_converted_corrected, "debug_called"):
-        print(f"\n=== Score Conversion Debug ===")
-        print(f"Input shapes - x: {x.shape}, u_t: {u_t.shape}")
-        print(f"VP coeffs before expansion - alpha_t: {alpha_t}, sigma_t: {sigma_t}")
-        print(
-            f"VP derivs before expansion - d_alpha_t: {d_alpha_t}, d_sigma_t: {d_sigma_t}"
-        )
-        score_vp_converted_corrected.debug_called = True
-
-    # Expand dimensions to match x
-    alpha_t = alpha_t.view(-1, *([1] * (x.ndim - 1)))
-    sigma_t = sigma_t.view(-1, *([1] * (x.ndim - 1)))
-    d_alpha_t = d_alpha_t.view(-1, *([1] * (x.ndim - 1)))
-    d_sigma_t = d_sigma_t.view(-1, *([1] * (x.ndim - 1)))
-
-    # Repository's exact formula with numerical stability
-    reverse_alpha_ratio = alpha_t / d_alpha_t
-    var = sigma_t**2 - reverse_alpha_ratio * d_sigma_t * sigma_t
-
-    # Debug the intermediate calculations
-    if not hasattr(score_vp_converted_corrected, "debug_intermediate"):
-        print(f"After expansion - alpha_t shape: {alpha_t.shape}")
-        print(
-            f"reverse_alpha_ratio range: [{reverse_alpha_ratio.min():.4f}, {reverse_alpha_ratio.max():.4f}]"
-        )
-        print(f"var range before epsilon: [{var.min():.6f}, {var.max():.6f}]")
-
-        # Check for problematic values in intermediate calculations
-        if torch.isnan(reverse_alpha_ratio).any():
-            print("WARNING: reverse_alpha_ratio has NaN!")
-        if torch.isinf(reverse_alpha_ratio).any():
-            print("WARNING: reverse_alpha_ratio has Inf!")
-        if (var <= 0).any():
-            print(f"WARNING: var has non-positive values! Min: {var.min():.6f}")
-
-        score_vp_converted_corrected.debug_intermediate = True
-
-    # Add small epsilon for numerical stability
-    var = var + 1e-8
-
-    score = (reverse_alpha_ratio * u_t - x) / var
-
-    return score
-
-
 def batch_sample_vp_sde_with_metrics(
     sampler, class_label, batch_size=16, beta_min=0.1, beta_max=20.0
 ):
     """
-    VP-SDE conversion for flow matching models (0=noise, 1=clean).
-    Key fix: Convert between flow matching and diffusion time notations!
+    Complete VP-SDE sampler using proper velocity transformation.
 
-    Flow matching: t=0 (noise) → t=1 (clean)
-    Diffusion: t=1 (noise) → t=0 (clean)
-    Conversion: t_diffusion = 1 - t_flow_matching
+    This implements the repository's approach:
+    1. SNR matching between CondOT (flow matching) and VP schedulers
+    2. Proper velocity field transformation
+    3. VP-SDE sampling with transformed velocities
+
+    Args:
+        sampler: Your flow matching sampler with timesteps in [0,1] (0=noise, 1=clean)
+        class_label: Class label for conditional sampling
+        batch_size: Number of samples to generate
+        beta_min, beta_max: VP scheduler parameters
     """
     is_tensor = torch.is_tensor(class_label)
     sampler.flow_model.eval()
 
+    # Scheduler implementations matching the repository
+    class CondOTScheduler:
+        """Flow matching scheduler: linear interpolation between noise and data"""
+
+        def __call__(self, t):
+            return {
+                "alpha_t": 1 - t,
+                "sigma_t": t,
+                "d_alpha_t": -torch.ones_like(t),
+                "d_sigma_t": torch.ones_like(t),
+            }
+
+        def snr_inverse(self, snr):
+            # For CondOT: snr = alpha/sigma = (1-t)/t
+            # Solving: snr = (1-t)/t  =>  t = 1/(1+snr)
+            return 1.0 / (1.0 + snr)
+
+    class VPScheduler:
+        """Variance Preserving scheduler"""
+
+        def __init__(self, beta_min=0.1, beta_max=20.0):
+            self.beta_min = beta_min
+            self.beta_max = beta_max
+
+        def __call__(self, t):
+            b = self.beta_min
+            B = self.beta_max
+            T = 0.5 * t**2 * (B - b) + t * b
+            dT = t * (B - b) + b
+
+            alpha_t = torch.exp(-0.5 * T)
+            sigma_t = torch.sqrt(1 - torch.exp(-T))
+            d_alpha_t = -0.5 * dT * torch.exp(-0.5 * T)
+            d_sigma_t = 0.5 * dT * torch.exp(-T) / torch.sqrt(1 - torch.exp(-T))
+
+            return {
+                "alpha_t": alpha_t,
+                "sigma_t": sigma_t,
+                "d_alpha_t": d_alpha_t,
+                "d_sigma_t": d_sigma_t,
+            }
+
+    original_scheduler = CondOTScheduler()
+    vp_scheduler = VPScheduler(beta_min, beta_max)
+
+    def compute_velocity_transform(x, t_fm, label):
+        """
+        Transform velocity from CondOT to VP scheduler.
+        This implements the repository's compute_velocity_transform_scheduler logic.
+        """
+        # Convert flow matching time to VP time
+        # Flow matching: t=0 (noise) → t=1 (clean)
+        # VP diffusion: t=1 (noise) → t=0 (clean)
+        t_vp = 1.0 - t_fm
+
+        # Get VP scheduler coefficients
+        vp_coeffs = vp_scheduler(t_vp)
+        alpha_r = vp_coeffs["alpha_t"]
+        sigma_r = vp_coeffs["sigma_t"]
+        d_alpha_r = vp_coeffs["d_alpha_t"]
+        d_sigma_r = vp_coeffs["d_sigma_t"]
+
+        # Find equivalent CondOT time using SNR matching
+        snr = alpha_r / sigma_r
+        t_equiv = original_scheduler.snr_inverse(snr)
+
+        # Get CondOT coefficients at equivalent time
+        ot_coeffs = original_scheduler(t_equiv)
+        alpha_t = ot_coeffs["alpha_t"]
+        sigma_t = ot_coeffs["sigma_t"]
+        d_alpha_t = ot_coeffs["d_alpha_t"]
+        d_sigma_t = ot_coeffs["d_sigma_t"]
+
+        # Compute scaling factor
+        s_r = sigma_r / sigma_t
+
+        # Compute time derivative transformation
+        dt_r = (
+            sigma_t
+            * sigma_t
+            * (sigma_r * d_alpha_r - alpha_r * d_sigma_r)
+            / (sigma_r * sigma_r * (sigma_t * d_alpha_t - alpha_t * d_sigma_t))
+        )
+
+        # Compute space derivative transformation
+        ds_r = (sigma_t * d_sigma_r - sigma_r * d_sigma_t * dt_r) / (sigma_t * sigma_t)
+
+        # Call original model with scaled input at equivalent time
+        t_batch = torch.full((x.shape[0],), t_equiv.item(), device=x.device)
+        u_t = sampler.flow_model(t_batch, x / s_r, label)
+
+        # Transform velocity to VP space
+        u_r = ds_r * x / s_r + dt_r * s_r * u_t
+
+        return u_r, sigma_r
+
+    # Initialize metrics tracking
     velocity_magnitudes = []
     noise_magnitudes = []
     noise_to_velocity_ratios = []
 
     with torch.no_grad():
+        # Initialize samples with pure noise
         current_samples = torch.randn(
             batch_size,
             sampler.channels,
@@ -439,6 +492,7 @@ def batch_sample_vp_sde_with_metrics(
             device=sampler.device,
         )
 
+        # Prepare class labels
         if is_tensor:
             current_label = class_label
         else:
@@ -446,95 +500,34 @@ def batch_sample_vp_sde_with_metrics(
                 (batch_size,), class_label, device=sampler.device
             )
 
-        # Your timesteps go 0→1 (noise→clean in flow matching notation)
-        timesteps_fm = sampler.timesteps  # Flow matching notation
+        # Get timesteps (flow matching notation: 0→1)
+        timesteps_fm = sampler.timesteps
 
-        print(f"\n=== VP-SDE Debug Info ===")
-        print(f"Beta range: {beta_min} to {beta_max}")
-        print(f"Flow matching timesteps: {timesteps_fm[:5]}...{timesteps_fm[-5:]}")
-        print(f"Sample shape: {current_samples.shape}")
-
+        # VP-SDE sampling loop
         for step, t_curr_fm in enumerate(timesteps_fm[:-1]):
             t_next_fm = timesteps_fm[step + 1]
+            dt_fm = t_next_fm - t_curr_fm  # Time step size
 
-            # dt in flow matching notation (positive, going 0→1)
-            dt_fm = t_next_fm - t_curr_fm
-
-            t_batch_fm = torch.full(
-                (batch_size,), t_curr_fm.item(), device=sampler.device
+            # Transform velocity from CondOT to VP
+            transformed_velocity, diffusion_coeff = compute_velocity_transform(
+                current_samples, t_curr_fm, current_label
             )
 
-            # Get velocity from flow model (expects flow matching timesteps 0→1)
-            velocity = sampler.flow_model(t_batch_fm, current_samples, current_label)
+            # VP-SDE drift: just negative velocity (no additional score conversion needed)
+            drift = -transformed_velocity
 
-            # CRITICAL: Convert to diffusion notation for VP scheduler
-            # Flow matching t=0 (noise) corresponds to diffusion t=1 (noise)
-            # Flow matching t=1 (clean) corresponds to diffusion t=0 (clean)
-            t_diffusion = 1.0 - t_curr_fm
-
-            # Create VP scheduler coefficients using diffusion notation
-            b = beta_min
-            B = beta_max
-            T = 0.5 * t_diffusion**2 * (B - b) + t_diffusion * b
-            dT = t_diffusion * (B - b) + b
-
-            alpha_t = torch.exp(-0.5 * T)
-            sigma_t = torch.sqrt(1 - torch.exp(-T))
-            d_alpha_t = -0.5 * dT * torch.exp(-0.5 * T)
-            d_sigma_t = 0.5 * dT * torch.exp(-T) / torch.sqrt(1 - torch.exp(-T))
-
-            # Debug prints for first few steps
-            print(f"\nStep {step}:")
-            print(f"  t_flow_matching: {t_curr_fm:.4f}")
-            print(f"  t_diffusion: {t_diffusion:.4f}")
-            print(f"  T: {T:.4f}")
-            print(f"  alpha_t: {alpha_t:.4f}")
-            print(f"  sigma_t: {sigma_t:.4f}")
-            print(f"  d_alpha_t: {d_alpha_t:.4f}")
-            print(f"  d_sigma_t: {d_sigma_t:.4f}")
-            print(f"  velocity range: [{velocity.min():.4f}, {velocity.max():.4f}]")
-            # Check for problematic values
-            if torch.isnan(alpha_t) or torch.isinf(alpha_t):
-                print(f"  WARNING: alpha_t has NaN/Inf!")
-            if torch.isnan(sigma_t) or torch.isinf(sigma_t):
-                print(f"  WARNING: sigma_t has NaN/Inf!")
-            if torch.isnan(d_sigma_t) or torch.isinf(d_sigma_t):
-                print(f"  WARNING: d_sigma_t has NaN/Inf!")
-
-            # Convert velocity to score using repository's formula
-            score = score_vp_converted_corrected(
-                current_samples, alpha_t, sigma_t, d_alpha_t, d_sigma_t, velocity
+            # VP-SDE diffusion: use σ(t) from VP scheduler
+            diffusion_coeff_expanded = diffusion_coeff.view(
+                -1, *([1] * (current_samples.ndim - 1))
             )
-
-            # Use sigma_t as diffusion coefficient
-            diffuse = sigma_t
-
-            # Calculate drift (repository formula)
-            drift = -velocity + (0.5 * diffuse**2) * score
-
-            # Noise term - use dt in flow matching notation
             noise = (
                 torch.randn_like(current_samples)
-                * diffuse
+                * diffusion_coeff_expanded
                 * torch.sqrt(torch.abs(dt_fm))
             )
 
-            # More debug info for first few steps
-            if step < 3:
-                print(f"  score range: [{score.min():.4f}, {score.max():.4f}]")
-                print(f"  diffuse: {diffuse:.4f}")
-                print(f"  drift range: [{drift.min():.4f}, {drift.max():.4f}]")
-                print(f"  noise range: [{noise.min():.4f}, {noise.max():.4f}]")
-                print(f"  dt_fm: {dt_fm:.4f}")
-
-                # Check for problematic values
-                if torch.isnan(score).any() or torch.isinf(score).any():
-                    print(f"  WARNING: score has NaN/Inf!")
-                if torch.isnan(drift).any() or torch.isinf(drift).any():
-                    print(f"  WARNING: drift has NaN/Inf!")
-
-            # Track magnitudes
-            dims = tuple(range(1, velocity.ndim))
+            # Track magnitudes for monitoring
+            dims = tuple(range(1, current_samples.ndim))
             vel_mag = torch.linalg.vector_norm(drift, dim=dims).mean().item()
             noise_mag = torch.linalg.vector_norm(noise, dim=dims).mean().item()
 
@@ -542,20 +535,10 @@ def batch_sample_vp_sde_with_metrics(
             noise_magnitudes.append(noise_mag)
             noise_to_velocity_ratios.append(noise_mag / vel_mag if vel_mag > 0 else 0)
 
-            # Update samples - use dt in flow matching notation
+            # Update samples using Euler-Maruyama
             current_samples = current_samples + drift * dt_fm + noise
 
-            # Debug sample evolution for first few steps
-            if step < 3:
-                print(
-                    f"  sample range after update: [{current_samples.min():.4f}, {current_samples.max():.4f}]"
-                )
-
-        print(
-            f"Final sample range: [{current_samples.min():.4f}, {current_samples.max():.4f}]"
-        )
-        print(f"=== VP-SDE Debug End ===\n")
-
+        # Compute average metrics
         avg_velocity_magnitude = sum(velocity_magnitudes) / len(velocity_magnitudes)
         avg_noise_magnitude = sum(noise_magnitudes) / len(noise_magnitudes)
         avg_noise_to_velocity_ratio = sum(noise_to_velocity_ratios) / len(
@@ -1036,51 +1019,3 @@ if __name__ == "__main__":
 
     # Run the experiments
     run_experiment(args)
-
-
-def test_vp_sde_debug():
-    """
-    Simple test function to debug VP-SDE implementation
-    """
-    import torch
-
-    # Create a mock sampler with minimal required attributes
-    class MockSampler:
-        def __init__(self):
-            self.device = torch.device("cpu")
-            self.channels = 3
-            self.image_size = 32
-            self.timesteps = torch.linspace(0, 1, 5)  # Just 5 steps for debugging
-
-        def flow_model(self, t, x, y):
-            # Return a simple velocity field for testing
-            return torch.randn_like(x) * 0.1
-
-        def unnormalize_images(self, x):
-            return x
-
-    print("=== Testing VP-SDE Implementation ===")
-
-    # Test with small batch size and simple parameters
-    sampler = MockSampler()
-    class_label = 0
-    batch_size = 2
-    beta_min = 0.1
-    beta_max = 1.0  # Start with smaller range
-
-    try:
-        result = batch_sample_vp_sde_with_metrics(
-            sampler, class_label, batch_size, beta_min, beta_max
-        )
-        print("VP-SDE test completed successfully!")
-        print(f"Result shapes: {[type(r) for r in result]}")
-
-    except Exception as e:
-        print(f"VP-SDE test failed with error: {e}")
-        import traceback
-
-        traceback.print_exc()
-
-
-# Uncomment the line below to run the test
-# test_vp_sde_debug()
