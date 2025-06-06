@@ -279,11 +279,11 @@ def batch_sample_edm_sde_with_metrics(sampler, class_label, batch_size=16, beta=
         )
 
 
-def batch_sample_inference_time_sde_with_metrics(
+def batch_sample_score_sde_with_metrics(
     sampler, class_label, batch_size=16, noise_scale_factor=1.0
 ):
     """
-    Inference-time SDE conversion from Section 4.2:
+    Score SDE conversion from Section 4.2:
         dx_t = f_t(x_t)dt + g_t dw
     where f_t(x_t) = u_t(x_t) - (g_t^2/2) * ∇ log p_t(x_t)
     and g_t = t^2 scaled by noise_scale_factor.
@@ -825,42 +825,6 @@ def run_experiment(args):
         "experiments": [],
     }
 
-    vp_sde_configs = [
-        (0.1, 20),  # Stable Diffusion standard
-        (0.0001, 0.01),  # More conservative
-        (0.0001, 0.03),  # Slightly more aggressive
-        (0.0005, 0.02),  # Higher start, same end
-        (0.0001, 0.015),  # In between
-    ]
-
-    print("\n\n===== Running VP-SDE experiments =====")
-    for beta_min, beta_max in vp_sde_configs:
-        print(f"\nTesting VP-SDE with beta_min={beta_min}, beta_max={beta_max}")
-        vp_sde_metrics = run_sampling_experiment(
-            sampler,
-            device,
-            fid,
-            args.num_samples,
-            args.batch_size,
-            batch_sample_vp_sde_with_metrics,
-            {"beta_min": beta_min, "beta_max": beta_max},
-            f"VP-SDE sampling with beta_min={beta_min}, beta_max={beta_max}",
-        )
-
-        results["experiments"].append(
-            {
-                "type": "vp_sde",
-                "beta_min": beta_min,
-                "beta_max": beta_max,
-                "metrics": vp_sde_metrics,
-            }
-        )
-
-        print(
-            f"VP-SDE (beta_min={beta_min}, beta_max={beta_max}) - FID: {vp_sde_metrics['fid_score']:.4f}, IS: {vp_sde_metrics['inception_score']:.4f}±{vp_sde_metrics['inception_std']:.4f}, DINO Top-1: {vp_sde_metrics['dino_top1_accuracy']:.2f}%, Top-5: {vp_sde_metrics['dino_top5_accuracy']:.2f}%"
-        )
-        print(f"Average noise/velocity ratio: {vp_sde_metrics['avg_ratio']:.4f}")
-
     print("\n\n===== Running baseline ODE experiment =====")
     ode_metrics = run_sampling_experiment(
         sampler,
@@ -902,30 +866,28 @@ def run_experiment(args):
 
     print("\n\n===== Running score SDE experiments =====")
     for noise_scale_factor in args.inference_sde_factors:
-        print(
-            f"\nTesting Inference-Time SDE with noise_scale_factor={noise_scale_factor}"
-        )
+        print(f"\nTesting Score SDE with noise_scale_factor={noise_scale_factor}")
         inference_sde_metrics = run_sampling_experiment(
             sampler,
             device,
             fid,
             args.num_samples,
             args.batch_size,
-            batch_sample_inference_time_sde_with_metrics,
+            batch_sample_score_sde_with_metrics,
             {"noise_scale_factor": noise_scale_factor},
-            f"Inference-Time SDE sampling with noise_scale_factor={noise_scale_factor}",
+            f"Score SDE sampling with noise_scale_factor={noise_scale_factor}",
         )
 
         results["experiments"].append(
             {
-                "type": "inference_time_sde",
+                "type": "score_sde",
                 "noise_scale_factor": noise_scale_factor,
                 "metrics": inference_sde_metrics,
             }
         )
 
         print(
-            f"Inference-Time SDE (factor={noise_scale_factor}) - FID: {inference_sde_metrics['fid_score']:.4f}, IS: {inference_sde_metrics['inception_score']:.4f}±{inference_sde_metrics['inception_std']:.4f}, DINO Top-1: {inference_sde_metrics['dino_top1_accuracy']:.2f}%, Top-5: {inference_sde_metrics['dino_top5_accuracy']:.2f}%"
+            f"Score SDE (factor={noise_scale_factor}) - FID: {inference_sde_metrics['fid_score']:.4f}, IS: {inference_sde_metrics['inception_score']:.4f}±{inference_sde_metrics['inception_std']:.4f}, DINO Top-1: {inference_sde_metrics['dino_top1_accuracy']:.2f}%, Top-5: {inference_sde_metrics['dino_top5_accuracy']:.2f}%"
         )
         print(f"Average noise/velocity ratio: {inference_sde_metrics['avg_ratio']:.4f}")
 
@@ -1081,7 +1043,7 @@ if __name__ == "__main__":
         type=float,
         nargs="+",
         default=[0.1, 0.2, 0.3, 0.6, 1.0],
-        help="Noise scale factors for inference-time SDE sampling",
+        help="Noise scale factors for Score SDE sampling",
     )
 
     args = parser.parse_args()
