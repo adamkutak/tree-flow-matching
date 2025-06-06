@@ -625,6 +625,146 @@ def batch_sample_vp_sde_with_metrics(
         )
 
 
+def batch_sample_vp_ode_with_metrics(
+    sampler, class_label, batch_size=16, beta_min=0.1, beta_max=20.0
+):
+    """
+    Deterministic VP-ODE sampler: Uses VP velocity transformation but NO random noise during sampling.
+    Only the initial sample is random - everything after that is deterministic.
+
+    This is essentially the VP-SDE sampler with diffusion coefficient set to zero.
+    """
+    is_tensor = torch.is_tensor(class_label)
+    sampler.flow_model.eval()
+
+    # Scheduler implementations (same as VP-SDE)
+    class CondOTScheduler:
+        def __call__(self, t):
+            return {
+                "alpha_t": 1 - t,
+                "sigma_t": t,
+                "d_alpha_t": -torch.ones_like(t),
+                "d_sigma_t": torch.ones_like(t),
+            }
+
+        def snr_inverse(self, snr):
+            return 1.0 / (1.0 + snr)
+
+    class VPScheduler:
+        def __init__(self, beta_min=0.1, beta_max=20.0):
+            self.beta_min = beta_min
+            self.beta_max = beta_max
+
+        def __call__(self, t):
+            b = self.beta_min
+            B = self.beta_max
+            T = 0.5 * t**2 * (B - b) + t * b
+            dT = t * (B - b) + b
+
+            alpha_t = torch.exp(-0.5 * T)
+            sigma_t = torch.sqrt(1 - torch.exp(-T))
+            d_alpha_t = -0.5 * dT * torch.exp(-0.5 * T)
+            d_sigma_t = 0.5 * dT * torch.exp(-T) / torch.sqrt(1 - torch.exp(-T))
+
+            return {
+                "alpha_t": alpha_t,
+                "sigma_t": sigma_t,
+                "d_alpha_t": d_alpha_t,
+                "d_sigma_t": d_sigma_t,
+            }
+
+    original_scheduler = CondOTScheduler()
+    vp_scheduler = VPScheduler(beta_min, beta_max)
+
+    def compute_velocity_transform(x, t_fm, label):
+        t_vp = 1.0 - t_fm
+        vp_coeffs = vp_scheduler(t_vp)
+        alpha_r = vp_coeffs["alpha_t"]
+        sigma_r = vp_coeffs["sigma_t"]
+        d_alpha_r = vp_coeffs["d_alpha_t"]
+        d_sigma_r = vp_coeffs["d_sigma_t"]
+
+        snr = alpha_r / sigma_r
+        t_equiv = original_scheduler.snr_inverse(snr)
+
+        ot_coeffs = original_scheduler(t_equiv)
+        alpha_t = ot_coeffs["alpha_t"]
+        sigma_t = ot_coeffs["sigma_t"]
+        d_alpha_t = ot_coeffs["d_alpha_t"]
+        d_sigma_t = ot_coeffs["d_sigma_t"]
+
+        s_r = sigma_r / sigma_t
+        dt_r = (
+            sigma_t
+            * sigma_t
+            * (sigma_r * d_alpha_r - alpha_r * d_sigma_r)
+            / (sigma_r * sigma_r * (sigma_t * d_alpha_t - alpha_t * d_sigma_t))
+        )
+        ds_r = (sigma_t * d_sigma_r - sigma_r * d_sigma_t * dt_r) / (sigma_t * sigma_t)
+
+        t_batch = torch.full((x.shape[0],), t_equiv.item(), device=x.device)
+        u_t = sampler.flow_model(t_batch, x / s_r, label)
+        u_r = ds_r * x / s_r + dt_r * s_r * u_t
+
+        return u_r  # Note: no diffusion coefficient returned
+
+    # Initialize metrics tracking
+    velocity_magnitudes = []
+
+    with torch.no_grad():
+        # Initialize samples with pure noise (ONLY random part)
+        current_samples = torch.randn(
+            batch_size,
+            sampler.channels,
+            sampler.image_size,
+            sampler.image_size,
+            device=sampler.device,
+        )
+
+        # Prepare class labels
+        if is_tensor:
+            current_label = class_label
+        else:
+            current_label = torch.full(
+                (batch_size,), class_label, device=sampler.device
+            )
+
+        timesteps_fm = sampler.timesteps
+
+        # Deterministic VP-ODE sampling loop (NO NOISE!)
+        for step, t_curr_fm in enumerate(timesteps_fm[:-1]):
+            t_next_fm = timesteps_fm[step + 1]
+            dt_fm = t_next_fm - t_curr_fm
+
+            # Transform velocity from CondOT to VP
+            transformed_velocity = compute_velocity_transform(
+                current_samples, t_curr_fm, current_label
+            )
+
+            # VP-ODE drift: just negative velocity
+            drift = -transformed_velocity
+
+            # Track velocity magnitude
+            dims = tuple(range(1, current_samples.ndim))
+            vel_mag = torch.linalg.vector_norm(drift, dim=dims).mean().item()
+            velocity_magnitudes.append(vel_mag)
+
+            # DETERMINISTIC UPDATE: Only drift term, NO noise!
+            current_samples = current_samples + drift * dt_fm
+
+        avg_velocity_magnitude = sum(velocity_magnitudes) / len(velocity_magnitudes)
+
+        return (
+            sampler.unnormalize_images(current_samples),
+            avg_velocity_magnitude,
+            0.0,  # No noise magnitude
+            0.0,  # No noise-to-velocity ratio
+            velocity_magnitudes,
+            [0.0] * len(velocity_magnitudes),  # No noise magnitudes
+            [0.0] * len(velocity_magnitudes),  # No noise ratios
+        )
+
+
 def run_sampling_experiment(
     sampler,
     device,
@@ -825,7 +965,6 @@ def run_experiment(args):
         "experiments": [],
     }
 
-    print("\n\n===== Running VP-SDE experiments =====")
     vp_sde_configs = [
         (0.0001, 0.02),  # Stable Diffusion standard
         (0.0001, 0.01),  # More conservative
@@ -834,6 +973,37 @@ def run_experiment(args):
         (0.0001, 0.015),  # In between
     ]
 
+    print("\n\n===== Running VP-ODE experiments (deterministic) =====")
+    for beta_min, beta_max in vp_sde_configs:
+        print(
+            f"\nTesting VP-ODE (deterministic) with beta_min={beta_min}, beta_max={beta_max}"
+        )
+        vp_ode_metrics = run_sampling_experiment(
+            sampler,
+            device,
+            fid,
+            args.num_samples,
+            args.batch_size,
+            batch_sample_vp_ode_with_metrics,
+            {"beta_min": beta_min, "beta_max": beta_max},
+            f"VP-ODE sampling with beta_min={beta_min}, beta_max={beta_max}",
+        )
+
+        results["experiments"].append(
+            {
+                "type": "vp_ode",
+                "beta_min": beta_min,
+                "beta_max": beta_max,
+                "metrics": vp_ode_metrics,
+            }
+        )
+
+        print(
+            f"VP-ODE (beta_min={beta_min}, beta_max={beta_max}) - FID: {vp_ode_metrics['fid_score']:.4f}, IS: {vp_ode_metrics['inception_score']:.4f}±{vp_ode_metrics['inception_std']:.4f}, DINO Top-1: {vp_ode_metrics['dino_top1_accuracy']:.2f}%, Top-5: {vp_ode_metrics['dino_top5_accuracy']:.2f}%"
+        )
+        print(f"Velocity magnitude: {vp_ode_metrics['avg_velocity_magnitude']:.4f}")
+
+    print("\n\n===== Running VP-SDE experiments =====")
     for beta_min, beta_max in vp_sde_configs:
         print(f"\nTesting VP-SDE with beta_min={beta_min}, beta_max={beta_max}")
         vp_sde_metrics = run_sampling_experiment(
