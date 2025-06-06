@@ -13,7 +13,7 @@ from tqdm import tqdm
 from mcts_single_flow import MCTSFlowSampler
 from imagenet_dataset import ImageNet32Dataset
 from run_mcts_flow import calculate_inception_score, compute_dino_accuracy
-from utils import divfree_swirl_si, score_si_linear, score_vp_converted
+from utils import divfree_swirl_si, score_si_linear
 
 
 def batch_sample_ode_with_metrics(sampler, class_label, batch_size=16):
@@ -361,49 +361,21 @@ def batch_sample_inference_time_sde_with_metrics(
         )
 
 
-def score_vp_converted(x, t_batch, u_t, use_vp=True, beta_min=0.1, beta_max=20.0):
-    """
-    Convert velocity to score using either linear or VP scheduler coefficients
-    Assumes t_batch is already in [0,1] range
-    """
-    t_normalized = t_batch  # Already in [0,1] - no normalization needed
-
-    if use_vp:
-        # VP scheduler coefficients (like repository)
-        b = beta_min
-        B = beta_max
-        T = 0.5 * t_normalized**2 * (B - b) + t_normalized * b
-        dT = t_normalized * (B - b) + b
-
-        alpha_t = torch.exp(-0.5 * T)
-        sigma_t = torch.sqrt(1 - torch.exp(-T))
-        d_alpha_t = -0.5 * dT * torch.exp(-0.5 * T)
-        d_sigma_t = 0.5 * dT * torch.exp(-T) / torch.sqrt(1 - torch.exp(-T))
-    else:
-        # Linear interpolant coefficients
-        alpha_t = 1 - t_normalized
-        sigma_t = t_normalized
-        d_alpha_t = -torch.ones_like(t_normalized)
-        d_sigma_t = torch.ones_like(t_normalized)
-
-    # Repository's general formula
-    alpha_t = alpha_t.view(-1, *([1] * (x.ndim - 1)))
-    sigma_t = sigma_t.view(-1, *([1] * (x.ndim - 1)))
-    d_alpha_t = d_alpha_t.view(-1, *([1] * (x.ndim - 1)))
-    d_sigma_t = d_sigma_t.view(-1, *([1] * (x.ndim - 1)))
-
-    reverse_alpha_ratio = alpha_t / d_alpha_t
-    var = sigma_t**2 - reverse_alpha_ratio * d_sigma_t * sigma_t
-    score = (reverse_alpha_ratio * u_t - x) / var
-
-    return score
-
-
 def score_vp_converted_corrected(x, alpha_t, sigma_t, d_alpha_t, d_sigma_t, u_t):
     """
     Convert velocity to score using repository's exact formula.
     Added numerical stability checks.
     """
+    # Debug info (only for first call to avoid spam)
+    if not hasattr(score_vp_converted_corrected, "debug_called"):
+        print(f"\n=== Score Conversion Debug ===")
+        print(f"Input shapes - x: {x.shape}, u_t: {u_t.shape}")
+        print(f"VP coeffs before expansion - alpha_t: {alpha_t}, sigma_t: {sigma_t}")
+        print(
+            f"VP derivs before expansion - d_alpha_t: {d_alpha_t}, d_sigma_t: {d_sigma_t}"
+        )
+        score_vp_converted_corrected.debug_called = True
+
     # Expand dimensions to match x
     alpha_t = alpha_t.view(-1, *([1] * (x.ndim - 1)))
     sigma_t = sigma_t.view(-1, *([1] * (x.ndim - 1)))
@@ -413,6 +385,24 @@ def score_vp_converted_corrected(x, alpha_t, sigma_t, d_alpha_t, d_sigma_t, u_t)
     # Repository's exact formula with numerical stability
     reverse_alpha_ratio = alpha_t / d_alpha_t
     var = sigma_t**2 - reverse_alpha_ratio * d_sigma_t * sigma_t
+
+    # Debug the intermediate calculations
+    if not hasattr(score_vp_converted_corrected, "debug_intermediate"):
+        print(f"After expansion - alpha_t shape: {alpha_t.shape}")
+        print(
+            f"reverse_alpha_ratio range: [{reverse_alpha_ratio.min():.4f}, {reverse_alpha_ratio.max():.4f}]"
+        )
+        print(f"var range before epsilon: [{var.min():.6f}, {var.max():.6f}]")
+
+        # Check for problematic values in intermediate calculations
+        if torch.isnan(reverse_alpha_ratio).any():
+            print("WARNING: reverse_alpha_ratio has NaN!")
+        if torch.isinf(reverse_alpha_ratio).any():
+            print("WARNING: reverse_alpha_ratio has Inf!")
+        if (var <= 0).any():
+            print(f"WARNING: var has non-positive values! Min: {var.min():.6f}")
+
+        score_vp_converted_corrected.debug_intermediate = True
 
     # Add small epsilon for numerical stability
     var = var + 1e-8
@@ -459,6 +449,11 @@ def batch_sample_vp_sde_with_metrics(
         # Your timesteps go 0→1 (noise→clean in flow matching notation)
         timesteps_fm = sampler.timesteps  # Flow matching notation
 
+        print(f"\n=== VP-SDE Debug Info ===")
+        print(f"Beta range: {beta_min} to {beta_max}")
+        print(f"Flow matching timesteps: {timesteps_fm[:5]}...{timesteps_fm[-5:]}")
+        print(f"Sample shape: {current_samples.shape}")
+
         for step, t_curr_fm in enumerate(timesteps_fm[:-1]):
             t_next_fm = timesteps_fm[step + 1]
 
@@ -488,6 +483,26 @@ def batch_sample_vp_sde_with_metrics(
             d_alpha_t = -0.5 * dT * torch.exp(-0.5 * T)
             d_sigma_t = 0.5 * dT * torch.exp(-T) / torch.sqrt(1 - torch.exp(-T))
 
+            # Debug prints for first few steps
+            if step < 3:
+                print(f"\nStep {step}:")
+                print(f"  t_flow_matching: {t_curr_fm:.4f}")
+                print(f"  t_diffusion: {t_diffusion:.4f}")
+                print(f"  T: {T:.4f}")
+                print(f"  alpha_t: {alpha_t:.4f}")
+                print(f"  sigma_t: {sigma_t:.4f}")
+                print(f"  d_alpha_t: {d_alpha_t:.4f}")
+                print(f"  d_sigma_t: {d_sigma_t:.4f}")
+                print(f"  velocity range: [{velocity.min():.4f}, {velocity.max():.4f}]")
+
+                # Check for problematic values
+                if torch.isnan(alpha_t) or torch.isinf(alpha_t):
+                    print(f"  WARNING: alpha_t has NaN/Inf!")
+                if torch.isnan(sigma_t) or torch.isinf(sigma_t):
+                    print(f"  WARNING: sigma_t has NaN/Inf!")
+                if torch.isnan(d_sigma_t) or torch.isinf(d_sigma_t):
+                    print(f"  WARNING: d_sigma_t has NaN/Inf!")
+
             # Convert velocity to score using repository's formula
             score = score_vp_converted_corrected(
                 current_samples, alpha_t, sigma_t, d_alpha_t, d_sigma_t, velocity
@@ -506,6 +521,20 @@ def batch_sample_vp_sde_with_metrics(
                 * torch.sqrt(torch.abs(dt_fm))
             )
 
+            # More debug info for first few steps
+            if step < 3:
+                print(f"  score range: [{score.min():.4f}, {score.max():.4f}]")
+                print(f"  diffuse: {diffuse:.4f}")
+                print(f"  drift range: [{drift.min():.4f}, {drift.max():.4f}]")
+                print(f"  noise range: [{noise.min():.4f}, {noise.max():.4f}]")
+                print(f"  dt_fm: {dt_fm:.4f}")
+
+                # Check for problematic values
+                if torch.isnan(score).any() or torch.isinf(score).any():
+                    print(f"  WARNING: score has NaN/Inf!")
+                if torch.isnan(drift).any() or torch.isinf(drift).any():
+                    print(f"  WARNING: drift has NaN/Inf!")
+
             # Track magnitudes
             dims = tuple(range(1, velocity.ndim))
             vel_mag = torch.linalg.vector_norm(drift, dim=dims).mean().item()
@@ -517,6 +546,17 @@ def batch_sample_vp_sde_with_metrics(
 
             # Update samples - use dt in flow matching notation
             current_samples = current_samples + drift * dt_fm + noise
+
+            # Debug sample evolution for first few steps
+            if step < 3:
+                print(
+                    f"  sample range after update: [{current_samples.min():.4f}, {current_samples.max():.4f}]"
+                )
+
+        print(
+            f"Final sample range: [{current_samples.min():.4f}, {current_samples.max():.4f}]"
+        )
+        print(f"=== VP-SDE Debug End ===\n")
 
         avg_velocity_magnitude = sum(velocity_magnitudes) / len(velocity_magnitudes)
         avg_noise_magnitude = sum(noise_magnitudes) / len(noise_magnitudes)
@@ -998,3 +1038,51 @@ if __name__ == "__main__":
 
     # Run the experiments
     run_experiment(args)
+
+
+def test_vp_sde_debug():
+    """
+    Simple test function to debug VP-SDE implementation
+    """
+    import torch
+
+    # Create a mock sampler with minimal required attributes
+    class MockSampler:
+        def __init__(self):
+            self.device = torch.device("cpu")
+            self.channels = 3
+            self.image_size = 32
+            self.timesteps = torch.linspace(0, 1, 5)  # Just 5 steps for debugging
+
+        def flow_model(self, t, x, y):
+            # Return a simple velocity field for testing
+            return torch.randn_like(x) * 0.1
+
+        def unnormalize_images(self, x):
+            return x
+
+    print("=== Testing VP-SDE Implementation ===")
+
+    # Test with small batch size and simple parameters
+    sampler = MockSampler()
+    class_label = 0
+    batch_size = 2
+    beta_min = 0.1
+    beta_max = 1.0  # Start with smaller range
+
+    try:
+        result = batch_sample_vp_sde_with_metrics(
+            sampler, class_label, batch_size, beta_min, beta_max
+        )
+        print("VP-SDE test completed successfully!")
+        print(f"Result shapes: {[type(r) for r in result]}")
+
+    except Exception as e:
+        print(f"VP-SDE test failed with error: {e}")
+        import traceback
+
+        traceback.print_exc()
+
+
+# Uncomment the line below to run the test
+# test_vp_sde_debug()
