@@ -1011,7 +1011,7 @@ if __name__ == "__main__":
         "--vp_sde_factors",
         type=float,
         nargs="+",
-        default=[0.01, 0.05, 0.1, 0.2, 0.5],
+        default=[0.0001, 0.001, 0.01, 0.02, 0.05],
         help="Beta schedule values for VP-SDE sampling",
     )
 
