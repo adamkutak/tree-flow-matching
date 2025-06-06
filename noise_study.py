@@ -968,25 +968,53 @@ def compare_ode_vs_vp_ode(
         # VP transformation (simplified)
         vp_coeffs = vp_scheduler(t_curr_vp)
         alpha_r, sigma_r = vp_coeffs["alpha_t"], vp_coeffs["sigma_t"]
+        d_alpha_r, d_sigma_r = vp_coeffs["d_alpha_t"], vp_coeffs["d_sigma_t"]
         snr = alpha_r / sigma_r
         t_equiv = original_scheduler.snr_inverse(snr)
+
+        # Get CondOT coefficients at equivalent time
+        ot_coeffs = original_scheduler(t_equiv)
+        alpha_t, sigma_t = ot_coeffs["alpha_t"], ot_coeffs["sigma_t"]
+        d_alpha_t, d_sigma_t = ot_coeffs["d_alpha_t"], ot_coeffs["d_sigma_t"]
+
+        # FULL VP TRANSFORMATION with all scaling factors
+        s_r = sigma_r / sigma_t
+        dt_r = (
+            sigma_t
+            * sigma_t
+            * (sigma_r * d_alpha_r - alpha_r * d_sigma_r)
+            / (sigma_r * sigma_r * (sigma_t * d_alpha_t - alpha_t * d_sigma_t))
+        )
+        ds_r = (sigma_t * d_sigma_r - sigma_r * d_sigma_t * dt_r) / (sigma_t * sigma_t)
+
         t_flow_matching = 1.0 - t_equiv
 
         print(
             f"  t_vp={t_curr_vp:.4f} → t_equiv={t_equiv:.4f} → flow_time={t_flow_matching:.4f}"
         )
         print(f"  VP: α={alpha_r:.4f}, σ={sigma_r:.4f}, SNR={snr:.4f}")
+        print(f"  CondOT: α={alpha_t:.4f}, σ={sigma_t:.4f}")
+        print(f"  Scaling: s_r={s_r:.4f}, dt_r={dt_r:.4f}, ds_r={ds_r:.4f}")
 
-        # Get velocity at equivalent time
+        # Get velocity at equivalent time with scaled input
         t_batch = torch.full((batch_size,), t_flow_matching, device=sampler.device)
-        velocity = sampler.flow_model(t_batch, samples_vp, current_label)
+        x_scaled = samples_vp / s_r
+        velocity = sampler.flow_model(t_batch, x_scaled, current_label)
         vel_mag = torch.linalg.vector_norm(velocity, dim=(1, 2, 3)).mean().item()
         print(f"  Raw velocity magnitude: {vel_mag:.4f}")
+        print(f"  Input scaling factor s_r: {s_r:.4f}")
 
-        # Apply transformation (simplified - just negative velocity for now)
-        drift = -velocity
+        # FULL VP velocity transformation
+        u_r = ds_r * samples_vp / s_r + dt_r * s_r * velocity
+        transformed_vel_mag = torch.linalg.vector_norm(u_r, dim=(1, 2, 3)).mean().item()
+        transform_ratio = transformed_vel_mag / vel_mag if vel_mag > 0 else 0
+        print(f"  Transformed velocity magnitude: {transformed_vel_mag:.4f}")
+        print(f"  Transformation ratio: {transform_ratio:.4f}")
+
+        # VP-ODE drift: negative transformed velocity
+        drift = -u_r
         drift_mag = torch.linalg.vector_norm(drift, dim=(1, 2, 3)).mean().item()
-        print(f"  Drift magnitude: {drift_mag:.4f}")
+        print(f"  Final drift magnitude: {drift_mag:.4f}")
 
         samples_vp = samples_vp + drift * dt_vp
 
