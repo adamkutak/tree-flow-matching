@@ -688,10 +688,10 @@ def batch_sample_vp_ode_with_metrics(
         d_alpha_r = vp_coeffs["d_alpha_t"]
         d_sigma_r = vp_coeffs["d_sigma_t"]
 
-        # Find equivalent CondOT time using SNR matching
-        snr = alpha_r / sigma_r
-        t_equiv = original_scheduler.snr_inverse(snr)
+        # FIXED: Use direct time mapping instead of broken SNR matching
+        t_equiv = t_vp
 
+        # Get CondOT coefficients at equivalent time
         ot_coeffs = original_scheduler(t_equiv)
         alpha_t = ot_coeffs["alpha_t"]
         sigma_t = ot_coeffs["sigma_t"]
@@ -713,8 +713,8 @@ def batch_sample_vp_ode_with_metrics(
 
         step = compute_velocity_transform.debug_count
         print(f"\n=== VP-ODE Transform Debug Step {step} ===")
-        print(f"t_vp (diffusion): {t_vp:.6f} -> t_equiv (diffusion): {t_equiv:.6f}")
-        print(f"VP coeffs: alpha_r={alpha_r:.6f}, sigma_r={sigma_r:.6f}, SNR={snr:.6f}")
+        print(f"t_vp (diffusion): {t_vp:.6f} -> t_equiv (direct): {t_equiv:.6f}")
+        print(f"VP coeffs: alpha_r={alpha_r:.6f}, sigma_r={sigma_r:.6f}")
         print(f"CondOT coeffs: alpha_t={alpha_t:.6f}, sigma_t={sigma_t:.6f}")
         print(f"Scaling: s_r={s_r:.6f}, dt_r={dt_r:.6f}, ds_r={ds_r:.6f}")
 
@@ -969,8 +969,9 @@ def compare_ode_vs_vp_ode(
         vp_coeffs = vp_scheduler(t_curr_vp)
         alpha_r, sigma_r = vp_coeffs["alpha_t"], vp_coeffs["sigma_t"]
         d_alpha_r, d_sigma_r = vp_coeffs["d_alpha_t"], vp_coeffs["d_sigma_t"]
-        snr = alpha_r / sigma_r
-        t_equiv = original_scheduler.snr_inverse(snr)
+
+        # FIXED: Use direct time mapping instead of broken SNR matching
+        t_equiv = t_curr_vp
 
         # Get CondOT coefficients at equivalent time
         ot_coeffs = original_scheduler(t_equiv)
@@ -992,7 +993,7 @@ def compare_ode_vs_vp_ode(
         print(
             f"  t_vp={t_curr_vp:.4f} → t_equiv={t_equiv:.4f} → flow_time={t_flow_matching:.4f}"
         )
-        print(f"  VP: α={alpha_r:.4f}, σ={sigma_r:.4f}, SNR={snr:.4f}")
+        print(f"  VP: α={alpha_r:.4f}, σ={sigma_r:.4f}")
         print(f"  CondOT: α={alpha_t:.4f}, σ={sigma_t:.4f}")
         print(f"  Scaling: s_r={s_r:.4f}, dt_r={dt_r:.4f}, ds_r={ds_r:.4f}")
 
