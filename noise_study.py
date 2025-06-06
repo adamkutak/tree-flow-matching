@@ -826,7 +826,13 @@ def run_experiment(args):
     }
 
     print("\n\n===== Running VP-SDE experiments =====")
-    vp_sde_configs = [(0.1, 1.0), (0.1, 2.0), (0.2, 1.0), (0.01, 0.5), (0.05, 0.5)]
+    vp_sde_configs = [
+        (0.0001, 0.02),  # Stable Diffusion standard
+        (0.0001, 0.01),  # More conservative
+        (0.0001, 0.03),  # Slightly more aggressive
+        (0.0005, 0.02),  # Higher start, same end
+        (0.0001, 0.015),  # In between
+    ]
 
     for beta_min, beta_max in vp_sde_configs:
         print(f"\nTesting VP-SDE with beta_min={beta_min}, beta_max={beta_max}")
