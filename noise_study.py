@@ -484,24 +484,22 @@ def batch_sample_vp_sde_with_metrics(
             d_sigma_t = 0.5 * dT * torch.exp(-T) / torch.sqrt(1 - torch.exp(-T))
 
             # Debug prints for first few steps
-            if step < 3:
-                print(f"\nStep {step}:")
-                print(f"  t_flow_matching: {t_curr_fm:.4f}")
-                print(f"  t_diffusion: {t_diffusion:.4f}")
-                print(f"  T: {T:.4f}")
-                print(f"  alpha_t: {alpha_t:.4f}")
-                print(f"  sigma_t: {sigma_t:.4f}")
-                print(f"  d_alpha_t: {d_alpha_t:.4f}")
-                print(f"  d_sigma_t: {d_sigma_t:.4f}")
-                print(f"  velocity range: [{velocity.min():.4f}, {velocity.max():.4f}]")
-
-                # Check for problematic values
-                if torch.isnan(alpha_t) or torch.isinf(alpha_t):
-                    print(f"  WARNING: alpha_t has NaN/Inf!")
-                if torch.isnan(sigma_t) or torch.isinf(sigma_t):
-                    print(f"  WARNING: sigma_t has NaN/Inf!")
-                if torch.isnan(d_sigma_t) or torch.isinf(d_sigma_t):
-                    print(f"  WARNING: d_sigma_t has NaN/Inf!")
+            print(f"\nStep {step}:")
+            print(f"  t_flow_matching: {t_curr_fm:.4f}")
+            print(f"  t_diffusion: {t_diffusion:.4f}")
+            print(f"  T: {T:.4f}")
+            print(f"  alpha_t: {alpha_t:.4f}")
+            print(f"  sigma_t: {sigma_t:.4f}")
+            print(f"  d_alpha_t: {d_alpha_t:.4f}")
+            print(f"  d_sigma_t: {d_sigma_t:.4f}")
+            print(f"  velocity range: [{velocity.min():.4f}, {velocity.max():.4f}]")
+            # Check for problematic values
+            if torch.isnan(alpha_t) or torch.isinf(alpha_t):
+                print(f"  WARNING: alpha_t has NaN/Inf!")
+            if torch.isnan(sigma_t) or torch.isinf(sigma_t):
+                print(f"  WARNING: sigma_t has NaN/Inf!")
+            if torch.isnan(d_sigma_t) or torch.isinf(d_sigma_t):
+                print(f"  WARNING: d_sigma_t has NaN/Inf!")
 
             # Convert velocity to score using repository's formula
             score = score_vp_converted_corrected(
