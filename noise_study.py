@@ -1049,7 +1049,7 @@ def run_experiment(args):
     }
 
     vp_sde_configs = [
-        (0.0001, 0.02),  # Stable Diffusion standard
+        (0.1, 20),  # Stable Diffusion standard
         (0.0001, 0.01),  # More conservative
         (0.0001, 0.03),  # Slightly more aggressive
         (0.0005, 0.02),  # Higher start, same end
