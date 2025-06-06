@@ -778,7 +778,7 @@ def batch_sample_vp_ode_with_metrics(
         # VP-ODE sampling loop using diffusion convention
         for step, t_curr_vp in enumerate(timesteps_diffusion[:-1]):
             t_next_vp = timesteps_diffusion[step + 1]
-            dt_vp = t_next_vp - t_curr_vp  # Negative dt (going 1→0)
+            dt_vp = t_next_vp - t_curr_vp
 
             # Debug sample evolution
             sample_norm_before = (
@@ -846,6 +846,158 @@ def batch_sample_vp_ode_with_metrics(
             [0.0] * len(velocity_magnitudes),  # No noise magnitudes
             [0.0] * len(velocity_magnitudes),  # No noise ratios
         )
+
+
+def compare_ode_vs_vp_ode(
+    sampler, class_label, batch_size=16, beta_min=0.1, beta_max=20.0
+):
+    """
+    Direct comparison between baseline ODE and VP-ODE on the same initial samples.
+    This will help isolate where the VP transformation is going wrong.
+    """
+    is_tensor = torch.is_tensor(class_label)
+    sampler.flow_model.eval()
+
+    # Fixed initial samples for fair comparison
+    torch.manual_seed(42)
+    initial_samples = torch.randn(
+        batch_size,
+        sampler.channels,
+        sampler.image_size,
+        sampler.image_size,
+        device=sampler.device,
+    )
+
+    if is_tensor:
+        current_label = class_label
+    else:
+        current_label = torch.full((batch_size,), class_label, device=sampler.device)
+
+    print("\n" + "=" * 60)
+    print("COMPARISON: Baseline ODE vs VP-ODE")
+    print("=" * 60)
+
+    # ===== BASELINE ODE =====
+    print("\n--- BASELINE FLOW MATCHING ODE ---")
+    samples_ode = initial_samples.clone()
+
+    for step, t in enumerate(sampler.timesteps[:-1]):
+        if step >= 3:  # Only show first few steps
+            break
+
+        dt = sampler.timesteps[step + 1] - t
+        t_batch = torch.full((batch_size,), t.item(), device=sampler.device)
+
+        sample_norm_before = (
+            torch.linalg.vector_norm(samples_ode, dim=(1, 2, 3)).mean().item()
+        )
+        print(f"\nBaseline Step {step}: t={t:.4f}, dt={dt:.4f}")
+        print(f"  Sample norm before: {sample_norm_before:.4f}")
+
+        velocity = sampler.flow_model(t_batch, samples_ode, current_label)
+        vel_mag = torch.linalg.vector_norm(velocity, dim=(1, 2, 3)).mean().item()
+        print(f"  Velocity magnitude: {vel_mag:.4f}")
+        print(f"  Velocity range: [{velocity.min():.4f}, {velocity.max():.4f}]")
+
+        samples_ode = samples_ode + velocity * dt
+
+        sample_norm_after = (
+            torch.linalg.vector_norm(samples_ode, dim=(1, 2, 3)).mean().item()
+        )
+        print(f"  Sample norm after: {sample_norm_after:.4f}")
+        print(f"  Sample change: {sample_norm_after - sample_norm_before:.4f}")
+
+    # ===== VP-ODE (first few steps only) =====
+    print("\n--- VP-ODE ---")
+    samples_vp = initial_samples.clone()
+
+    # VP scheduler setup (same as in VP-ODE function)
+    class CondOTScheduler:
+        def __call__(self, t):
+            return {
+                "alpha_t": 1 - t,
+                "sigma_t": t,
+                "d_alpha_t": -torch.ones_like(t),
+                "d_sigma_t": torch.ones_like(t),
+            }
+
+        def snr_inverse(self, snr):
+            return 1.0 / (1.0 + snr)
+
+    class VPScheduler:
+        def __init__(self, beta_min=0.1, beta_max=20.0):
+            self.beta_min = beta_min
+            self.beta_max = beta_max
+
+        def __call__(self, t):
+            b, B = self.beta_min, self.beta_max
+            T = 0.5 * t**2 * (B - b) + t * b
+            dT = t * (B - b) + b
+            alpha_t = torch.exp(-0.5 * T)
+            sigma_t = torch.sqrt(1 - torch.exp(-T))
+            d_alpha_t = -0.5 * dT * torch.exp(-0.5 * T)
+            d_sigma_t = 0.5 * dT * torch.exp(-T) / torch.sqrt(1 - torch.exp(-T))
+            return {
+                "alpha_t": alpha_t,
+                "sigma_t": sigma_t,
+                "d_alpha_t": d_alpha_t,
+                "d_sigma_t": d_sigma_t,
+            }
+
+    original_scheduler = CondOTScheduler()
+    vp_scheduler = VPScheduler(beta_min, beta_max)
+
+    # VP diffusion timesteps
+    timesteps_diffusion = torch.linspace(
+        1.0, 0.0, len(sampler.timesteps), device=sampler.device
+    )
+
+    for step, t_curr_vp in enumerate(timesteps_diffusion[:-1]):
+        if step >= 3:  # Only show first few steps
+            break
+
+        t_next_vp = timesteps_diffusion[step + 1]
+        dt_vp = t_next_vp - t_curr_vp
+
+        sample_norm_before = (
+            torch.linalg.vector_norm(samples_vp, dim=(1, 2, 3)).mean().item()
+        )
+        print(f"\nVP-ODE Step {step}: t_vp={t_curr_vp:.4f}, dt={dt_vp:.4f}")
+        print(f"  Sample norm before: {sample_norm_before:.4f}")
+
+        # VP transformation (simplified)
+        vp_coeffs = vp_scheduler(t_curr_vp)
+        alpha_r, sigma_r = vp_coeffs["alpha_t"], vp_coeffs["sigma_t"]
+        snr = alpha_r / sigma_r
+        t_equiv = original_scheduler.snr_inverse(snr)
+        t_flow_matching = 1.0 - t_equiv
+
+        print(
+            f"  t_vp={t_curr_vp:.4f} → t_equiv={t_equiv:.4f} → flow_time={t_flow_matching:.4f}"
+        )
+        print(f"  VP: α={alpha_r:.4f}, σ={sigma_r:.4f}, SNR={snr:.4f}")
+
+        # Get velocity at equivalent time
+        t_batch = torch.full((batch_size,), t_flow_matching, device=sampler.device)
+        velocity = sampler.flow_model(t_batch, samples_vp, current_label)
+        vel_mag = torch.linalg.vector_norm(velocity, dim=(1, 2, 3)).mean().item()
+        print(f"  Raw velocity magnitude: {vel_mag:.4f}")
+
+        # Apply transformation (simplified - just negative velocity for now)
+        drift = -velocity
+        drift_mag = torch.linalg.vector_norm(drift, dim=(1, 2, 3)).mean().item()
+        print(f"  Drift magnitude: {drift_mag:.4f}")
+
+        samples_vp = samples_vp + drift * dt_vp
+
+        sample_norm_after = (
+            torch.linalg.vector_norm(samples_vp, dim=(1, 2, 3)).mean().item()
+        )
+        print(f"  Sample norm after: {sample_norm_after:.4f}")
+        print(f"  Sample change: {sample_norm_after - sample_norm_before:.4f}")
+
+    print("\n" + "=" * 60)
+    return samples_ode, samples_vp
 
 
 def run_sampling_experiment(
@@ -1057,6 +1209,11 @@ def run_experiment(args):
     ]
 
     print("\n\n===== Running VP-ODE experiments (deterministic) =====")
+
+    # Quick debug comparison first
+    print("Running debug comparison...")
+    compare_ode_vs_vp_ode(sampler, 0, 4, 0.1, 20.0)
+
     for beta_min, beta_max in vp_sde_configs:
         print(
             f"\nTesting VP-ODE (deterministic) with beta_min={beta_min}, beta_max={beta_max}"
