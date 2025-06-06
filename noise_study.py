@@ -582,19 +582,18 @@ def batch_sample_vp_sde_with_metrics(
             )
 
             # Debug info for first few steps
-            if step < 3:
-                print(f"\nStep {step}, t_fm={t_curr_fm:.4f}")
-                print(f"  diffusion_coeff: {diffusion_coeff:.6f}")
-                print(f"  dt_fm: {dt_fm:.6f}")
-                print(f"  sqrt(dt_fm): {torch.sqrt(torch.abs(dt_fm)):.6f}")
-                print(
-                    f"  transformed_velocity range: [{transformed_velocity.min():.6f}, {transformed_velocity.max():.6f}]"
-                )
-                print(f"  drift range: [{drift.min():.6f}, {drift.max():.6f}]")
-                print(
-                    f"  noise coeff: {diffusion_coeff * torch.sqrt(torch.abs(dt_fm)):.6f}"
-                )
-                print(f"  noise range: [{noise.min():.6f}, {noise.max():.6f}]")
+            print(f"\nStep {step}, t_fm={t_curr_fm:.4f}")
+            print(f"  diffusion_coeff: {diffusion_coeff:.6f}")
+            print(f"  dt_fm: {dt_fm:.6f}")
+            print(f"  sqrt(dt_fm): {torch.sqrt(torch.abs(dt_fm)):.6f}")
+            print(
+                f"  transformed_velocity range: [{transformed_velocity.min():.6f}, {transformed_velocity.max():.6f}]"
+            )
+            print(f"  drift range: [{drift.min():.6f}, {drift.max():.6f}]")
+            print(
+                f"  noise coeff: {diffusion_coeff * torch.sqrt(torch.abs(dt_fm)):.6f}"
+            )
+            print(f"  noise range: [{noise.min():.6f}, {noise.max():.6f}]")
 
             # Track magnitudes for monitoring
             dims = tuple(range(1, current_samples.ndim))
@@ -827,7 +826,7 @@ def run_experiment(args):
     }
 
     print("\n\n===== Running VP-SDE experiments =====")
-    vp_sde_configs = [(0.1, 20.0), (0.5, 15.0), (1.0, 10.0), (2.0, 8.0), (0.1, 5.0)]
+    vp_sde_configs = [(0.1, 1.0), (0.1, 2.0), (0.2, 1.0), (0.01, 0.5), (0.05, 0.5)]
 
     for beta_min, beta_max in vp_sde_configs:
         print(f"\nTesting VP-SDE with beta_min={beta_min}, beta_max={beta_max}")
