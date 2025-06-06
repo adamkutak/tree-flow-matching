@@ -827,8 +827,10 @@ def run_experiment(args):
     }
 
     print("\n\n===== Running VP-SDE experiments =====")
-    for beta_schedule in args.vp_sde_factors:
-        print(f"\nTesting VP-SDE with beta_schedule={beta_schedule}")
+    vp_sde_configs = [(0.1, 20.0), (0.5, 15.0), (1.0, 10.0), (2.0, 8.0), (0.1, 5.0)]
+
+    for beta_min, beta_max in vp_sde_configs:
+        print(f"\nTesting VP-SDE with beta_min={beta_min}, beta_max={beta_max}")
         vp_sde_metrics = run_sampling_experiment(
             sampler,
             device,
@@ -836,21 +838,21 @@ def run_experiment(args):
             args.num_samples,
             args.batch_size,
             batch_sample_vp_sde_with_metrics,
-            {"beta_min": beta_schedule, "beta_max": beta_schedule},
-            f"VP-SDE sampling with beta_schedule={beta_schedule}",
+            {"beta_min": beta_min, "beta_max": beta_max},
+            f"VP-SDE sampling with beta_min={beta_min}, beta_max={beta_max}",
         )
 
         results["experiments"].append(
             {
                 "type": "vp_sde",
-                "beta_min": beta_schedule,
-                "beta_max": beta_schedule,
+                "beta_min": beta_min,
+                "beta_max": beta_max,
                 "metrics": vp_sde_metrics,
             }
         )
 
         print(
-            f"VP-SDE (beta_min={beta_schedule}, beta_max={beta_schedule}) - FID: {vp_sde_metrics['fid_score']:.4f}, IS: {vp_sde_metrics['inception_score']:.4f}±{vp_sde_metrics['inception_std']:.4f}, DINO Top-1: {vp_sde_metrics['dino_top1_accuracy']:.2f}%, Top-5: {vp_sde_metrics['dino_top5_accuracy']:.2f}%"
+            f"VP-SDE (beta_min={beta_min}, beta_max={beta_max}) - FID: {vp_sde_metrics['fid_score']:.4f}, IS: {vp_sde_metrics['inception_score']:.4f}±{vp_sde_metrics['inception_std']:.4f}, DINO Top-1: {vp_sde_metrics['dino_top1_accuracy']:.2f}%, Top-5: {vp_sde_metrics['dino_top5_accuracy']:.2f}%"
         )
         print(f"Average noise/velocity ratio: {vp_sde_metrics['avg_ratio']:.4f}")
 
@@ -1075,14 +1077,6 @@ if __name__ == "__main__":
         nargs="+",
         default=[0.1, 0.2, 0.3, 0.6, 1.0],
         help="Noise scale factors for inference-time SDE sampling",
-    )
-
-    parser.add_argument(
-        "--vp_sde_factors",
-        type=float,
-        nargs="+",
-        default=[0.1, 1.0, 5.0, 10.0, 20.0],
-        help="Beta schedule values for VP-SDE sampling",
     )
 
     args = parser.parse_args()
