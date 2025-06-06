@@ -702,11 +702,43 @@ def batch_sample_vp_ode_with_metrics(
         )
         ds_r = (sigma_t * d_sigma_r - sigma_r * d_sigma_t * dt_r) / (sigma_t * sigma_t)
 
+        # Debug output for every step
+        if not hasattr(compute_velocity_transform, "debug_count"):
+            compute_velocity_transform.debug_count = 0
+
+        step = compute_velocity_transform.debug_count
+        print(f"\n=== VP-ODE Transform Debug Step {step} ===")
+        print(f"t_fm: {t_fm:.6f} -> t_vp: {t_vp:.6f} -> t_equiv: {t_equiv:.6f}")
+        print(f"VP coeffs: alpha_r={alpha_r:.6f}, sigma_r={sigma_r:.6f}, SNR={snr:.6f}")
+        print(f"CondOT coeffs: alpha_t={alpha_t:.6f}, sigma_t={sigma_t:.6f}")
+        print(f"Scaling: s_r={s_r:.6f}, dt_r={dt_r:.6f}, ds_r={ds_r:.6f}")
+
         t_batch = torch.full((x.shape[0],), t_equiv.item(), device=x.device)
-        u_t = sampler.flow_model(t_batch, x / s_r, label)
+
+        # Debug input to model
+        x_scaled = x / s_r
+        print(f"Input range: [{x.min():.4f}, {x.max():.4f}]")
+        print(f"Scaled input range: [{x_scaled.min():.4f}, {x_scaled.max():.4f}]")
+        print(f"Using model time: {t_equiv:.6f}")
+
+        u_t = sampler.flow_model(t_batch, x_scaled, label)
         u_r = ds_r * x / s_r + dt_r * s_r * u_t
 
-        return u_r  # Note: no diffusion coefficient returned
+        print(f"Original velocity range: [{u_t.min():.6f}, {u_t.max():.6f}]")
+        print(f"Transformed velocity range: [{u_r.min():.6f}, {u_r.max():.6f}]")
+        print(
+            f"Velocity magnitude ratio: {torch.linalg.vector_norm(u_r) / torch.linalg.vector_norm(u_t):.6f}"
+        )
+
+        # Check if transformation is reasonable
+        if torch.linalg.vector_norm(u_r) / torch.linalg.vector_norm(u_t) < 0.01:
+            print("WARNING: Velocity magnitude reduced by >99%!")
+        if torch.linalg.vector_norm(u_r) / torch.linalg.vector_norm(u_t) > 100:
+            print("WARNING: Velocity magnitude increased by >100x!")
+
+        compute_velocity_transform.debug_count += 1
+
+        return u_r
 
     # Initialize metrics tracking
     velocity_magnitudes = []
@@ -736,6 +768,15 @@ def batch_sample_vp_ode_with_metrics(
             t_next_fm = timesteps_fm[step + 1]
             dt_fm = t_next_fm - t_curr_fm
 
+            # Debug sample evolution
+            sample_norm_before = (
+                torch.linalg.vector_norm(current_samples, dim=(1, 2, 3)).mean().item()
+            )
+            print(
+                f"\n--- VP-ODE Step {step}: t={t_curr_fm:.4f} -> {t_next_fm:.4f} (dt={dt_fm:.4f}) ---"
+            )
+            print(f"Sample norm before: {sample_norm_before:.4f}")
+
             # Transform velocity from CondOT to VP
             transformed_velocity = compute_velocity_transform(
                 current_samples, t_curr_fm, current_label
@@ -749,8 +790,38 @@ def batch_sample_vp_ode_with_metrics(
             vel_mag = torch.linalg.vector_norm(drift, dim=dims).mean().item()
             velocity_magnitudes.append(vel_mag)
 
+            print(f"Drift magnitude: {vel_mag:.4f}")
+            print(f"Drift range: [{drift.min():.4f}, {drift.max():.4f}]")
+
             # DETERMINISTIC UPDATE: Only drift term, NO noise!
             current_samples = current_samples + drift * dt_fm
+
+            # Debug sample evolution after update
+            sample_norm_after = (
+                torch.linalg.vector_norm(current_samples, dim=(1, 2, 3)).mean().item()
+            )
+            print(f"Sample norm after: {sample_norm_after:.4f}")
+            print(f"Sample change: {sample_norm_after - sample_norm_before:.4f}")
+
+            # Check for problematic behavior
+            if torch.any(torch.isnan(current_samples)):
+                print("ERROR: NaN detected in samples!")
+                break
+            if torch.any(torch.isinf(current_samples)):
+                print("ERROR: Inf detected in samples!")
+                break
+            if sample_norm_after > 100:
+                print("WARNING: Samples are exploding!")
+            if abs(sample_norm_after - sample_norm_before) > 10:
+                print("WARNING: Large sample change!")
+
+            # Only show first few steps to avoid spam
+            if step >= 5:
+                # Reset debug counter to stop per-step debugging
+                if hasattr(compute_velocity_transform, "debug_count"):
+                    compute_velocity_transform.debug_count = (
+                        1000  # Stop detailed debugging
+                    )
 
         avg_velocity_magnitude = sum(velocity_magnitudes) / len(velocity_magnitudes)
 
