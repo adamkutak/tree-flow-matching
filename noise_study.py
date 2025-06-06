@@ -468,12 +468,36 @@ def batch_sample_vp_sde_with_metrics(
         # Compute space derivative transformation
         ds_r = (sigma_t * d_sigma_r - sigma_r * d_sigma_t * dt_r) / (sigma_t * sigma_t)
 
+        # Debug first few calls
+        if not hasattr(compute_velocity_transform, "debug_count"):
+            compute_velocity_transform.debug_count = 0
+
+        if compute_velocity_transform.debug_count < 3:
+            print(
+                f"\n=== Velocity Transform Debug (call {compute_velocity_transform.debug_count}) ==="
+            )
+            print(f"t_fm: {t_fm:.6f}, t_vp: {t_vp:.6f}, t_equiv: {t_equiv:.6f}")
+            print(f"VP coeffs - alpha_r: {alpha_r:.6f}, sigma_r: {sigma_r:.6f}")
+            print(f"CondOT coeffs - alpha_t: {alpha_t:.6f}, sigma_t: {sigma_t:.6f}")
+            print(f"SNR: {snr:.6f}")
+            print(
+                f"Scaling factors - s_r: {s_r:.6f}, dt_r: {dt_r:.6f}, ds_r: {ds_r:.6f}"
+            )
+
         # Call original model with scaled input at equivalent time
         t_batch = torch.full((x.shape[0],), t_equiv.item(), device=x.device)
         u_t = sampler.flow_model(t_batch, x / s_r, label)
 
         # Transform velocity to VP space
         u_r = ds_r * x / s_r + dt_r * s_r * u_t
+
+        if compute_velocity_transform.debug_count < 3:
+            print(f"Original velocity range: [{u_t.min():.6f}, {u_t.max():.6f}]")
+            print(f"Transformed velocity range: [{u_r.min():.6f}, {u_r.max():.6f}]")
+            print(
+                f"Transform magnitude ratio: {torch.linalg.vector_norm(u_r) / torch.linalg.vector_norm(u_t):.6f}"
+            )
+            compute_velocity_transform.debug_count += 1
 
         return u_r, sigma_r
 
@@ -525,6 +549,21 @@ def batch_sample_vp_sde_with_metrics(
                 * diffusion_coeff_expanded
                 * torch.sqrt(torch.abs(dt_fm))
             )
+
+            # Debug info for first few steps
+            if step < 3:
+                print(f"\nStep {step}, t_fm={t_curr_fm:.4f}")
+                print(f"  diffusion_coeff: {diffusion_coeff:.6f}")
+                print(f"  dt_fm: {dt_fm:.6f}")
+                print(f"  sqrt(dt_fm): {torch.sqrt(torch.abs(dt_fm)):.6f}")
+                print(
+                    f"  transformed_velocity range: [{transformed_velocity.min():.6f}, {transformed_velocity.max():.6f}]"
+                )
+                print(f"  drift range: [{drift.min():.6f}, {drift.max():.6f}]")
+                print(
+                    f"  noise coeff: {diffusion_coeff * torch.sqrt(torch.abs(dt_fm)):.6f}"
+                )
+                print(f"  noise range: [{noise.min():.6f}, {noise.max():.6f}]")
 
             # Track magnitudes for monitoring
             dims = tuple(range(1, current_samples.ndim))
