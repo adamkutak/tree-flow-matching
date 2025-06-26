@@ -990,19 +990,19 @@ if __name__ == "__main__":
     parser.add_argument(
         "--num_samples",
         type=int,
-        default=128,
+        default=1024,
         help="Number of samples to generate for each experiment",
     )
     parser.add_argument(
         "--batch_size",
         type=int,
-        default=128,
+        default=256,
         help="Batch size for sample generation",
     )
     parser.add_argument(
         "--real_samples",
         type=int,
-        default=100,
+        default=50000,
         help="Number of real samples to use for FID calculation",
     )
 

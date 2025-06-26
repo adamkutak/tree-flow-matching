@@ -157,6 +157,47 @@ def batch_sample_edm_sde_identical_start(
         return sampler.unnormalize_images(current_samples)
 
 
+def batch_sample_score_sde_identical_start(
+    sampler, class_label, single_noise, batch_size, noise_scale_factor=1.0
+):
+    """
+    Score SDE sampling where all samples start from identical noise.
+    Should produce different outputs due to stochastic noise with score-based diffusion.
+    """
+    sampler.flow_model.eval()
+
+    with torch.no_grad():
+        # All samples start identical
+        current_samples = single_noise.unsqueeze(0).repeat(batch_size, 1, 1, 1)
+        current_label = torch.full((batch_size,), class_label, device=sampler.device)
+
+        for step, t in enumerate(sampler.timesteps[:-1]):
+            dt = sampler.timesteps[step + 1] - t
+            t_batch = torch.full((batch_size,), t.item(), device=sampler.device)
+
+            # Get velocity from flow model
+            velocity = sampler.flow_model(t_batch, current_samples, current_label)
+
+            # Compute score using existing score_si_linear function
+            score = score_si_linear(current_samples, t_batch, velocity)
+
+            # Compute noise schedule g_t = t^2 scaled by factor
+            g_t = (t_batch**2) * noise_scale_factor
+            g_t = g_t.view(-1, *([1] * (current_samples.ndim - 1)))
+
+            # Compute drift coefficient: f_t(x_t) = u_t(x_t) - (g_t^2/2) * score
+            drift_correction = -(g_t**2) / 2.0 * score
+            drift = velocity + drift_correction
+
+            # Generate noise term: g_t * dW
+            noise = torch.randn_like(current_samples) * g_t * torch.sqrt(dt)
+
+            # Euler-Maruyama update
+            current_samples = current_samples + drift * dt + noise
+
+        return sampler.unnormalize_images(current_samples)
+
+
 def calculate_batch_diversity(features):
     """
     Calculate average pairwise distance between features in a batch.
@@ -298,6 +339,17 @@ def run_diversity_experiment(args):
                 "diversity": edm_sde_diversity
             }
 
+        # Test Score SDE with different noise scale factors (all starting from same noise)
+        for noise_scale_factor in args.score_sde_factors:
+            score_sde_samples = batch_sample_score_sde_identical_start(
+                sampler, class_label, single_noise, args.batch_size, noise_scale_factor
+            )
+            score_sde_features = sampler.extract_inception_features(score_sde_samples)
+            score_sde_diversity = calculate_batch_diversity(score_sde_features)
+            trial_results["methods"][f"score_sde_{noise_scale_factor}"] = {
+                "diversity": score_sde_diversity
+            }
+
         # Test ODE-divfree with different lambda values (all starting from same noise)
         for lambda_div in args.lambda_divs:
             divfree_samples = batch_sample_ode_divfree_identical_start(
@@ -385,7 +437,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--num_trials",
         type=int,
-        default=50,
+        default=100,
         help="Number of trials to test",
     )
 
@@ -408,8 +460,15 @@ if __name__ == "__main__":
         "--beta_values",
         type=float,
         nargs="+",
-        default=[0.05, 0.1, 0.2, 0.4],
+        default=[0.05, 0.1, 0.2, 0.4, 0.6],
         help="Beta values for EDM SDE sampling",
+    )
+    parser.add_argument(
+        "--score_sde_factors",
+        type=float,
+        nargs="+",
+        default=[0.1, 0.2, 0.3, 0.6, 1.0],
+        help="Noise scale factors for Score SDE sampling",
     )
 
     # Output parameters
