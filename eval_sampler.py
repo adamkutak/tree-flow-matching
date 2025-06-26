@@ -366,6 +366,28 @@ def generate_and_compute_metrics(
                 branch_start_time=branch_start_time,
                 noise_scale=noise_scale,
             )
+        elif sample_method == "score_sde_path_exploration":
+            sample = sampler.batch_sample_score_sde_path_exploration(
+                class_label=random_class_labels,
+                batch_size=current_batch_size,
+                num_branches=num_branches,
+                num_keep=num_keep,
+                selector=scoring_function,
+                use_global=True,
+                branch_start_time=branch_start_time,
+                noise_scale_factor=noise_scale,
+            )
+        elif sample_method == "random_search_then_divfree_path_exploration":
+            sample = sampler.batch_sample_random_search_then_divfree_path_exploration(
+                class_label=random_class_labels,
+                batch_size=current_batch_size,
+                num_branches=num_branches,
+                num_keep=num_keep,
+                lambda_div=lambda_div,
+                selector=scoring_function,
+                use_global=True,
+                branch_start_time=branch_start_time,
+            )
         elif sample_method == "ode_divfree_path_exploration":
             sample = sampler.batch_sample_ode_divfree_path_exploration(
                 class_label=random_class_labels,
@@ -687,8 +709,10 @@ if __name__ == "__main__":
             "ode_divfree",
             "ode_divfree_path_exploration",
             "random_search",
+            "random_search_then_divfree_path_exploration",
             "sde",
             "sde_path_exploration",
+            "score_sde_path_exploration",
             "path_exploration",
             "path_exploration_timewarp",
             "path_exploration_timewarp_shifted",

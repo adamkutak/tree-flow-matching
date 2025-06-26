@@ -7,7 +7,9 @@ from datetime import datetime
 DATASET = "imagenet256"
 SAMPLE_METHODS = [
     "sde_path_exploration",
+    "score_sde_path_exploration",
     "ode_divfree_path_exploration",
+    "random_search_then_divfree_path_exploration",
     "random_search",
 ]
 TIMESTEP_CONFIGS = [
