@@ -6,18 +6,18 @@ from datetime import datetime
 # Configuration constants for experiments
 DATASET = "imagenet256"
 SAMPLE_METHODS = [
-    # "sde_path_exploration",
-    # "score_sde_path_exploration",
+    "sde_path_exploration",
+    "score_sde_path_exploration",
     "ode_divfree_path_exploration",
-    # "random_search_then_divfree_path_exploration",
-    # "random_search",
+    "random_search_then_divfree_path_exploration",
+    "random_search",
 ]
 TIMESTEP_CONFIGS = [
     (20, 0.05, 0),
 ]  # (num_timesteps, branch_dt, branch_start_time)
 SAMPLE_SIZES = [1024]
 BRANCH_PAIRS = "1:1,2:1,4:1,8:1"  # Always use these branch pairs
-SCORING_FUNCTION = "dino_score"  # Default scoring function
+SCORING_FUNCTION = "inception_score"  # Default scoring function
 DT_STD = 0.7  # Path exploration time step standard deviation
 WARP_SCALE = 0.5  # Time warp scale factor
 DEVICE = "cuda"  # Default device
