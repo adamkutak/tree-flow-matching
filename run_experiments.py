@@ -6,11 +6,11 @@ from datetime import datetime
 # Configuration constants for experiments
 DATASET = "imagenet256"
 SAMPLE_METHODS = [
-    "sde_path_exploration",
-    "score_sde_path_exploration",
+    # "sde_path_exploration",
+    # "score_sde_path_exploration",
     "ode_divfree_path_exploration",
-    "random_search_then_divfree_path_exploration",
-    "random_search",
+    # "random_search_then_divfree_path_exploration",
+    # "random_search",
 ]
 TIMESTEP_CONFIGS = [
     (20, 0.05, 0),
