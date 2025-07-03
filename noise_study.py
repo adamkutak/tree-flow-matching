@@ -709,7 +709,6 @@ def run_sampling_experiment(
         "dino_top1_accuracy": dino_accuracy["top1_accuracy"],
         "dino_top5_accuracy": dino_accuracy["top5_accuracy"],
         **total_metrics,
-        **all_metrics,
         **sampling_params,
     }
 

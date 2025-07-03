@@ -386,7 +386,6 @@ def run_diversity_experiment(args):
         summary[method_name] = {
             "mean_diversity": float(mean_diversity),
             "std_diversity": float(std_diversity),
-            "all_diversities": [float(d) for d in diversities],
         }
 
         if method_name == "ode_random":
