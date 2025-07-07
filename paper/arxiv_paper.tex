@@ -251,6 +251,28 @@ which projects Gaussian noise onto the subspace orthogonal to the score directio
 
 To validate this approach, we evaluate how the injection of noise at inference time affects generation quality across several methods. We compare our divergence-free ODE method to a deterministic baseline, a simple Euler-Maruyama SDE, and a Langevin-style stochastic sampler derived from EDM~\cite{karras2022elucidatingdesignspacediffusionbased}. All experiments are conducted using the pretrained \textsc{SiT-XL/2} flow-matching model on ImageNet 256×256. For each configuration, we generate 1,000 samples and compute Fréchet Inception Distance (FID), Inception Score (IS), and sample diversity.
 
+\paragraph{Setup.}
+The $x$-axis in all figures represents the average magnitude of injected noise per step, normalized to the average magnitude of the velocity field \( u_t(x) \). The $y$-axis reports sample diversity, FID, or IS. We compare four sampling strategies:
+
+\begin{itemize}
+  \item \textbf{ODE-divfree}: Our proposed method, which injects divergence-free perturbations \( w_t(x) \) that preserve the continuity equation at the level of individual trajectories:
+  \[
+  dx_t = \left(u_t(x) + \lambda\,w_t(x)\right) dt,
+  \]
+  where \( \lambda \) controls the noise scale.
+  \item \textbf{SDE}: Samples are generated from a simple Euler-Maruyama SDE:
+  \[
+  dx_t = u_t(x)\,dt + \sigma\,dW_t,
+  \]
+  where \( dW_t \sim \mathcal{N}(0, dt) \), and \(\sigma\) scales the noise.
+  \item \textbf{EDM-SDE}: A stochastic method that adjusts both drift and diffusion to preserve \(p_t(x)\) in expectation:
+  \[
+  dx_t = u_t(x)\,dt - \beta(t)\,\sigma^2(t)\,\nabla \log p_t(x)\,dt + \sqrt{2\beta(t)}\,\sigma(t)\,dW_t,
+  \]
+  where \(\beta(t)\) is a user-defined schedule. See Related Work for details (Section~\ref{sec:related}).
+  \item \textbf{Score-SDE}: Uses the Score SDE formulation with analytically computed score functions from the stochastic interpolants framework.
+\end{itemize}
+
 \begin{figure}[H]
   \centering
   \begin{minipage}{0.48\textwidth}
@@ -274,28 +296,6 @@ To validate this approach, we evaluate how the injection of noise at inference t
   \caption{Pareto frontier analysis showing the trade-off between sample diversity and image quality (negative FID, where higher is better for both axes). Our divergence-free method achieves favorable positions on the frontier, maintaining high image quality while enabling substantial diversity gains compared to other stochastic sampling approaches.}
   \label{fig:pareto-fid}
 \end{figure}
-
-\paragraph{Setup.}
-The $x$-axis in all figures represents the average magnitude of injected noise per step, normalized to the average magnitude of the velocity field \( u_t(x) \). The $y$-axis reports sample diversity (Fig.~\ref{fig:div-noise}), FID (Fig.~\ref{fig:fid-noise}), or IS (Fig.~\ref{fig:is-noise}). We compare four sampling strategies:
-
-\begin{itemize}
-  \item \textbf{ODE-divfree}: Our proposed method, which injects divergence-free perturbations \( w_t(x) \) that preserve the continuity equation at the level of individual trajectories:
-  \[
-  dx_t = \left(u_t(x) + \lambda\,w_t(x)\right) dt,
-  \]
-  where \( \lambda \) controls the noise scale.
-  \item \textbf{SDE}: Samples are generated from a simple Euler-Maruyama SDE:
-  \[
-  dx_t = u_t(x)\,dt + \sigma\,dW_t,
-  \]
-  where \( dW_t \sim \mathcal{N}(0, dt) \), and \(\sigma\) scales the noise.
-  \item \textbf{EDM-SDE}: A stochastic method that adjusts both drift and diffusion to preserve \(p_t(x)\) in expectation:
-  \[
-  dx_t = u_t(x)\,dt - \beta(t)\,\sigma^2(t)\,\nabla \log p_t(x)\,dt + \sqrt{2\beta(t)}\,\sigma(t)\,dW_t,
-  \]
-  where \(\beta(t)\) is a user-defined schedule. See Related Work for details (Section~\ref{sec:related}).
-  \item \textbf{Score-SDE}: Uses the Score SDE formulation with analytically computed score functions from the stochastic interpolants framework.
-\end{itemize}
 
 \paragraph{Results.}
 As shown in the figures, our divergence-free ODE approach allows substantially higher levels of noise to be injected without degrading sample quality. Sample diversity increases smoothly with noise level (Fig.~\ref{fig:div-noise}), while FID remains stable across a wide noise range (Fig.~\ref{fig:fid-noise}). The Pareto frontier analysis (Fig.~\ref{fig:pareto-fid}) demonstrates that our method achieves superior trade-offs between diversity and quality compared to alternative stochastic approaches. In contrast, standard SDE sampling degrades rapidly as noise increases. EDM sampling performs better than the naïve SDE—consistent with its theoretical guarantee of preserving \(p_t(x)\) in expectation—but still deteriorates earlier than our method. Similar analysis for Inception Score shows comparable results (see Appendix). This suggests that satisfying the continuity equation per trajectory, as our approach does, offers stronger robustness to stochasticity during sampling.

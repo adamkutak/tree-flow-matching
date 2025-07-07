@@ -1,14 +1,14 @@
 # Fdb version 4
-["bibtex arxiv_paper"] 1751914321.76785 "arxiv_paper.aux" "arxiv_paper.bbl" "arxiv_paper" 1751914322.72669 0
+["bibtex arxiv_paper"] 1751917769.95652 "arxiv_paper.aux" "arxiv_paper.bbl" "arxiv_paper" 1751917770.92528 0
   "./main.bib" 1751906280.99579 3253 b250948208e1a3cb8674aad7a42f912a ""
   "/opt/homebrew/Cellar/texlive/20240312_3/share/texmf-dist/bibtex/bst/base/apalike.bst" 1710106625 24635 604dafcc79f521a11ea73e506e1fbd98 ""
-  "arxiv_paper.aux" 1751914322.50399 11650 336be3cb9644ada8c56de3d1c3870a67 "pdflatex"
+  "arxiv_paper.aux" 1751917770.69855 11650 9794d4577ee3fd3d835b27ee79c6c439 "pdflatex"
   (generated)
   "arxiv_paper.bbl"
   "arxiv_paper.blg"
   (rewritten before read)
-["pdflatex"] 1751914321.84303 "/Users/adamstecklov/dev/tree-step-flow-matching/paper/arxiv_paper.tex" "arxiv_paper.pdf" "arxiv_paper" 1751914322.72686 0
-  "/Users/adamstecklov/dev/tree-step-flow-matching/paper/arxiv_paper.tex" 1751914322.59701 35703 5d768e81a87df1a11d9ad1695d7b37c2 ""
+["pdflatex"] 1751917770.03697 "/Users/adamstecklov/dev/tree-step-flow-matching/paper/arxiv_paper.tex" "arxiv_paper.pdf" "arxiv_paper" 1751917770.92543 0
+  "/Users/adamstecklov/dev/tree-step-flow-matching/paper/arxiv_paper.tex" 1751917768.74275 35623 1f8a317444c84516daadf5d3ed5ba347 ""
   "/opt/homebrew/Cellar/texlive/20240312_3/share/texmf-dist/fonts/enc/dvips/base/8r.enc" 1710106625 4850 80dc9bab7f31fb78a000ccfed0e27cab ""
   "/opt/homebrew/Cellar/texlive/20240312_3/share/texmf-dist/fonts/enc/dvips/cm-super/cm-super-t1.enc" 1710106625 2971 def0b6c1f0b107b3b936def894055589 ""
   "/opt/homebrew/Cellar/texlive/20240312_3/share/texmf-dist/fonts/enc/dvips/cm-super/cm-super-ts1.enc" 1710106625 2900 1537cc8184ad1792082cd229ecc269f4 ""
@@ -139,10 +139,10 @@
   "/opt/homebrew/Cellar/texlive/20240312_3/share/texmf-dist/tex/latex/xcolor/xcolor.sty" 1710106625 55487 80a65caedd3722f4c20a14a69e785d8f ""
   "/opt/homebrew/Cellar/texlive/20240312_3/share/texmf-dist/web2c/texmf.cnf" 1710106625 41652 e14926ab86fde7902cad99d9eeaa5ca5 ""
   "/opt/homebrew/Cellar/texlive/20240312_3/share/texmf-var/web2c/pdftex/pdflatex.fmt" 1710106625 8221878 83314ecb9b2818e5586c154833f52511 ""
-  "arxiv_paper.aux" 1751914322.50399 11650 336be3cb9644ada8c56de3d1c3870a67 "pdflatex"
-  "arxiv_paper.bbl" 1751914321.84052 2685 dcce3948b12fd8726923049840ecd202 "bibtex arxiv_paper"
-  "arxiv_paper.out" 1751914322.50549 8120 0d873ee5e3ff9ce2586040669a545ef1 "pdflatex"
-  "arxiv_paper.tex" 1751914322.59701 35703 5d768e81a87df1a11d9ad1695d7b37c2 ""
+  "arxiv_paper.aux" 1751917770.69855 11650 9794d4577ee3fd3d835b27ee79c6c439 "pdflatex"
+  "arxiv_paper.bbl" 1751917770.03419 2685 dcce3948b12fd8726923049840ecd202 "bibtex arxiv_paper"
+  "arxiv_paper.out" 1751917770.69993 8120 0d873ee5e3ff9ce2586040669a545ef1 "pdflatex"
+  "arxiv_paper.tex" 1751917768.74275 35623 1f8a317444c84516daadf5d3ed5ba347 ""
   "figures/noise_study_div.pdf" 1751903221.82229 18884 7c7fb11864c0d1dbc6dae31839d3b332 ""
   "figures/noise_study_fid.pdf" 1751903221.8933 19158 f85cee150583e2a482be72f0dc8712d2 ""
   "figures/noise_study_is.pdf" 1751903221.96769 19122 51dcfe7b962fe3aa01d5fab12e31d583 ""
