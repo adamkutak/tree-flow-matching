@@ -1,0 +1,92 @@
+{
+  "summary": {
+    "ode_random": {
+      "mean_diversity": 2.4659011363983154,
+      "std_diversity": 0.3411921262741089
+    },
+    "sde_0.1": {
+      "mean_diversity": 0.26015421748161316,
+      "std_diversity": 0.07979002594947815
+    },
+    "sde_0.2": {
+      "mean_diversity": 0.4759991466999054,
+      "std_diversity": 0.11860494315624237
+    },
+    "sde_0.4": {
+      "mean_diversity": 0.8905383944511414,
+      "std_diversity": 0.17088936269283295
+    },
+    "sde_0.6": {
+      "mean_diversity": 1.003930687904358,
+      "std_diversity": 0.14693798124790192
+    },
+    "sde_1.0": {
+      "mean_diversity": 0.9823887348175049,
+      "std_diversity": 0.09669527411460876
+    },
+    "edm_sde_0.05": {
+      "mean_diversity": 0.2568504214286804,
+      "std_diversity": 0.05870894342660904
+    },
+    "edm_sde_0.1": {
+      "mean_diversity": 0.34766510128974915,
+      "std_diversity": 0.07633534073829651
+    },
+    "edm_sde_0.2": {
+      "mean_diversity": 0.47756049036979675,
+      "std_diversity": 0.08725418150424957
+    },
+    "edm_sde_0.4": {
+      "mean_diversity": 0.5573387742042542,
+      "std_diversity": 0.08663416653871536
+    },
+    "edm_sde_0.6": {
+      "mean_diversity": 0.5992598533630371,
+      "std_diversity": 0.09132860600948334
+    },
+    "score_sde_0.1": {
+      "mean_diversity": 0.06329301744699478,
+      "std_diversity": 0.016826825216412544
+    },
+    "score_sde_0.2": {
+      "mean_diversity": 0.11353094130754471,
+      "std_diversity": 0.028020847588777542
+    },
+    "score_sde_0.3": {
+      "mean_diversity": 0.1626165360212326,
+      "std_diversity": 0.03783214092254639
+    },
+    "score_sde_0.6": {
+      "mean_diversity": 0.30283644795417786,
+      "std_diversity": 0.06014136224985123
+    },
+    "score_sde_1.0": {
+      "mean_diversity": 0.45159897208213806,
+      "std_diversity": 0.07753375917673111
+    },
+    "divfree_0.1": {
+      "mean_diversity": 0.06852854788303375,
+      "std_diversity": 0.028406504541635513
+    },
+    "divfree_0.2": {
+      "mean_diversity": 0.12773239612579346,
+      "std_diversity": 0.046854324638843536
+    },
+    "divfree_0.3": {
+      "mean_diversity": 0.18538857996463776,
+      "std_diversity": 0.06095690652728081
+    },
+    "divfree_0.6": {
+      "mean_diversity": 0.3463703989982605,
+      "std_diversity": 0.1008039116859436
+    },
+    "divfree_1.0": {
+      "mean_diversity": 0.5287553071975708,
+      "std_diversity": 0.12173370271921158
+    },
+    "divfree_2.0": {
+      "mean_diversity": 0.9520108699798584,
+      "std_diversity": 0.14173643290996552
+    }
+  }
+}
