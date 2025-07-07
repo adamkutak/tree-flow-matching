@@ -1,0 +1,50 @@
+This is BibTeX, Version 0.99d (TeX Live 2024/Homebrew)
+Capacity: max_strings=200000, hash_size=200000, hash_prime=170003
+The top-level auxiliary file: arxiv_paper.aux
+The style file: apalike.bst
+Database file #1: main.bib
+Warning--I didn't find a database entry for "salimans2016improved"
+Warning--I didn't find a database entry for "caron2021emerging"
+Warning--I didn't find a database entry for "heusel2017gans"
+You've used 14 entries,
+            1935 wiz_defined-function locations,
+            534 strings with 5493 characters,
+and the built_in function-call counts, 4365 in all, are:
+= -- 423
+> -- 201
+< -- 11
++ -- 66
+- -- 64
+* -- 310
+:= -- 837
+add.period$ -- 42
+call.type$ -- 14
+change.case$ -- 90
+chr.to.int$ -- 14
+cite$ -- 14
+duplicate$ -- 176
+empty$ -- 271
+format.name$ -- 88
+if$ -- 826
+int.to.chr$ -- 1
+int.to.str$ -- 0
+missing$ -- 12
+newline$ -- 73
+num.names$ -- 42
+pop$ -- 75
+preamble$ -- 1
+purify$ -- 90
+quote$ -- 0
+skip$ -- 160
+stack$ -- 0
+substring$ -- 170
+swap$ -- 12
+text.length$ -- 0
+text.prefix$ -- 0
+top$ -- 0
+type$ -- 84
+warning$ -- 0
+while$ -- 28
+width$ -- 0
+write$ -- 170
+(There were 3 warnings)
