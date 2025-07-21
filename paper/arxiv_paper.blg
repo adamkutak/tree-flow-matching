@@ -3,15 +3,16 @@ Capacity: max_strings=200000, hash_size=200000, hash_prime=170003
 The top-level auxiliary file: arxiv_paper.aux
 The style file: apalike.bst
 Database file #1: main.bib
+Warning--I didn't find a database entry for "esser2024scaling"
+Warning--I didn't find a database entry for "wu2024foldflow"
 Warning--I didn't find a database entry for "salimans2016improved"
 Warning--I didn't find a database entry for "caron2021emerging"
 Warning--I didn't find a database entry for "heusel2017gans"
-Warning--I didn't find a database entry for "wu2024foldflow"
 Warning--I didn't find a database entry for "dauparas2022protein"
 Warning--I didn't find a database entry for "lin2022language"
 You've used 14 entries,
             1935 wiz_defined-function locations,
-            537 strings with 5541 characters,
+            538 strings with 5557 characters,
 and the built_in function-call counts, 4365 in all, are:
 = -- 423
 > -- 201
@@ -50,4 +51,4 @@ warning$ -- 0
 while$ -- 28
 width$ -- 0
 write$ -- 170
-(There were 6 warnings)
+(There were 7 warnings)
