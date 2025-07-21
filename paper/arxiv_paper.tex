@@ -77,7 +77,23 @@ Inference‑time compute scaling has become a powerful means of improving discre
 
 \section{Introduction}
 
-TODO
+Inference-time compute scaling has emerged as a transformative paradigm in generative modeling, enabling performance improvements through increased computational resources at test time without requiring model retraining. While this approach has shown remarkable success in discrete domains—from language models like OpenAI's O1~\cite{openai2024o1} to diffusion models for image generation~\cite{ma2025diffits}—its application to continuous-time generative models remains largely unexplored.
+
+Flow Matching (FM)~\cite{lipman2023fm} has established itself as a leading framework for continuous generative modeling, offering deterministic sampling through ordinary differential equations (ODEs) and achieving state-of-the-art results across diverse domains including image generation~\cite{esser2024scaling} and protein design~\cite{wu2024foldflow}. However, the deterministic nature of FM sampling presents a fundamental challenge for inference-time scaling: unlike diffusion models that naturally provide stochasticity through noise injection, FM models follow a single, predetermined trajectory from noise to data, leaving limited opportunities for exploring alternative generation paths.
+
+This work introduces the first principled approach to inference-time scaling for flow matching models. Our key insight is that we can inject carefully constructed divergence-free perturbations into the learned velocity field during sampling, creating a family of alternative ODE trajectories while preserving the fundamental mathematical properties of the original model. Specifically, our perturbations maintain the continuity equation at the trajectory level, ensuring exact conservation of probability mass throughout the generation process.
+
+We make several key contributions:
+
+\textbf{Theoretical Framework:} We prove that adding divergence-free perturbations to the velocity field preserves the continuity equation, providing mathematical guarantees that our modifications do not violate the underlying probability flow. Our approach maintains the linear interpolation paths and ODE structure that define flow matching, unlike concurrent work that converts to SDE sampling.
+
+\textbf{Practical Algorithms:} We develop two complementary strategies: (1) divergence-free path exploration that generates multiple trajectories from a single initial condition, and (2) a two-stage approach combining random search over initial conditions with divergence-free exploration around promising candidates. This mirrors the exploration-exploitation tradeoff in reinforcement learning.
+
+\textbf{Empirical Validation:} We demonstrate the effectiveness of our approach across two distinct domains. On ImageNet 256×256 using SiT-XL/2, our methods achieve significant improvements in FID, Inception Score, and DINO accuracy as compute budget increases. On protein design using FoldFlow, we show substantial improvements in structural quality (TM-score) from 0.743 to 0.868, establishing the cross-domain applicability of our approach.
+
+\textbf{Methodological Insights:} Our experiments reveal that different inference-time scaling strategies excel under different conditions: random search provides broad exploration particularly effective for discrete sequence-structure relationships, while divergence-free perturbations enable focused local search around high-quality regions. The combination of both approaches consistently outperforms either method in isolation.
+
+Our work establishes inference-time scaling as a viable and principled approach for enhancing flow matching models, opening new directions for improving continuous generative models across scientific and creative applications without the computational cost of retraining.
 
 
 \section{Preliminaries}
@@ -448,7 +464,19 @@ These results establish inference-time scaling as a promising approach for impro
 
 \section{Conclusion}
 
-TODO: Add conclusion
+We have introduced the first comprehensive framework for inference-time scaling in flow matching models, addressing a critical gap in continuous-time generative modeling. Our approach preserves the mathematical foundations of flow matching while enabling principled exploration of alternative generation trajectories through divergence-free velocity perturbations.
+
+\textbf{Key Achievements:} Our theoretical analysis proves that divergence-free perturbations maintain the continuity equation at the trajectory level, providing stronger guarantees than methods that preserve distributions only in expectation. This mathematical rigor enables robust performance across diverse noise levels and ensures compatibility with the linear interpolation paths that define flow matching. Our experimental validation demonstrates substantial improvements across two distinct domains: ImageNet image generation and protein structure design, with our two-stage approach consistently achieving the best performance.
+
+\textbf{Methodological Insights:} Our work reveals complementary strengths of different scaling strategies. Random search provides broad exploration particularly valuable for discrete relationships (e.g., protein sequence-structure mappings), while divergence-free path exploration enables focused exploitation around promising regions. The two-stage combination captures benefits of both approaches, suggesting that inference-time scaling benefits from balancing exploration and exploitation.
+
+\textbf{Practical Impact:} The training-free nature of our approach makes it immediately applicable to existing flow matching models across domains. For protein design, improvements from 0.743 to 0.868 TM-score represent meaningful advances in structural quality with implications for drug discovery and protein engineering. For image generation, our method provides a scalable path to higher quality samples without architectural modifications or retraining.
+
+\textbf{Limitations and Future Work:} While our approach shows diminishing returns at higher compute budgets (8×), suggesting practical limits to inference-time scaling, even modest compute increases (2×-4×) yield substantial quality improvements. Future work could explore adaptive scaling strategies that optimize compute allocation based on sample complexity, integration with more sophisticated verifiers for domain-specific applications, and extension to other continuous-time generative models beyond flow matching.
+
+\textbf{Broader Implications:} Our work positions inference-time scaling as a fundamental capability for continuous generative models, complementing training-time scaling. As generative models become increasingly important for scientific discovery and creative applications, the ability to trade computational resources for sample quality at inference time provides practitioners with valuable flexibility. This paradigm shift from "one model, one quality level" to "adjustable quality through inference compute" opens new possibilities for interactive applications, quality-critical deployments, and resource-constrained scenarios.
+
+Looking forward, we envision inference-time scaling becoming a standard tool in the continuous generative modeling toolkit, enabling researchers and practitioners to extract maximum value from trained models while adapting to diverse quality requirements and computational constraints.
 
 %%%%% References
 \bibliographystyle{apalike}
@@ -508,7 +536,62 @@ This appendix contains supplementary figures and detailed results that support t
 
 \section{Implementation Details}
 
-TODO: Add implementation details, hyperparameters, and computational requirements.
+\subsection{Look-Ahead Scoring for Branching Methods}
+
+Our path exploration methods (ODE-divfree explore, SDE explore, and the two-stage approach) employ a look-ahead scoring strategy for branch selection. At each branching point, multiple candidate trajectories are simulated to completion, and each generated sample is evaluated using the verifier function (Inception Score, DINO score, or TM-score). The scores are then used to select the most promising branches for continued exploration.
+
+Alternative approaches exist for scoring intermediate branches, such as evaluating partially-noised samples at branching points or using a fixed computational budget for partial trajectory simulation. However, these methods introduce additional complexity in score interpretation and may not provide reliable quality estimates for incomplete generations. For simplicity and to ensure fair comparison across methods, we use complete trajectory simulation for all scoring decisions.
+
+It is important to note that we do not include the computational cost of look-ahead scoring when reporting computational complexity or compute budgets. The reported compute factors (1×, 2×, 4×, 8×) reflect only the final number of samples retained, not the intermediate computational overhead required for branch evaluation. This choice enables cleaner comparison across methods while acknowledging that practical deployment would need to account for this additional computational cost.
+
+\subsection{Experimental Hyperparameters}
+
+Table~\ref{tab:hyperparameters} summarizes the key hyperparameters used across all experiments. These values were selected based on preliminary experiments to balance sample quality and computational efficiency.
+
+\begin{table}[H]
+\centering
+\begin{tabular}{@{}lcc@{}}
+\toprule
+\textbf{Parameter} & \textbf{ImageNet} & \textbf{FoldFlow} \\
+\midrule
+Model & SiT-XL/2 & FoldFlow \\
+Number of samples & 1,024 & 64 \\
+Integration timesteps & 20 & 50 \\
+Protein length & N/A & 50 residues \\
+\midrule
+\textbf{Divergence-free methods} & & \\
+Noise scale ($\lambda$) & 0.35 & 0.6 \\
+Branch interval & N/A & 0.1 (every 5 steps) \\
+\midrule
+\textbf{SDE methods} & & \\
+Noise scale ($\sigma$) & 0.1 & 0.3 \\
+Branch interval & N/A & 0.1 (every 5 steps) \\
+\midrule
+\textbf{Compute budgets} & 1×, 2×, 4×, 8× & 1×, 2×, 4×, 8× \\
+\textbf{Verifiers} & Inception, DINO & TM-score \\
+\bottomrule
+\end{tabular}
+\caption{Experimental hyperparameters for ImageNet and FoldFlow experiments. Branch interval controls the frequency of branching operations during path exploration.}
+\label{tab:hyperparameters}
+\end{table}
+
+\subsection{Domain-Specific Implementation Details}
+
+\subsubsection{ImageNet Experiments}
+
+For ImageNet experiments, we use the pretrained SiT-XL/2 model with 20 integration timesteps, following the standard configuration for efficient sampling. The divergence-free noise scale of $\lambda = 0.35$ was selected to provide substantial diversity without degrading sample quality, as validated in our noise study (Section~\ref{sec:noise_study}). The SDE noise scale of $\sigma = 0.1$ provides a conservative baseline for stochastic sampling comparison.
+
+All ImageNet experiments generate 1,024 samples per configuration to ensure robust statistical evaluation across the four metrics (FID, Inception Score, DINO Top-1, DINO Top-5). Verifier-based selection uses either Inception Score or DINO features, enabling comparison of verifier-method alignment effects.
+
+\subsubsection{FoldFlow Experiments}
+
+FoldFlow experiments focus on proteins of length 50 residues, providing a manageable complexity for systematic evaluation while representing realistic protein design scenarios. The model uses 50 integration timesteps by default, but performing branching operations at every timestep would be computationally prohibitive and unnecessary.
+
+The branch interval parameter controls branching frequency: a value of 0.1 indicates branching every 10\% of the trajectory. With 50 timesteps, this corresponds to branching every 5 timesteps, resulting in 10 total branching operations per trajectory. This provides sufficient exploration opportunities while maintaining computational tractability.
+
+The higher noise scales for FoldFlow ($\lambda = 0.6$ for divergence-free, $\sigma = 0.3$ for SDE) reflect the different data characteristics and model sensitivities compared to image generation. These values were calibrated to provide meaningful exploration while preserving protein structural validity.
+
+The smaller sample size (64 proteins) reflects the computational cost of protein generation and evaluation, while still providing sufficient data for reliable TM-score estimation and method comparison.
 
 \section{Additional Theoretical Analysis}
 
