@@ -62,6 +62,23 @@
 \@writefile{toc}{\contentsline {subsubsection}{\numberline {5.1.3}Results: Inception Score-Guided Scaling}{8}{subsubsection.5.1.3}\protected@file@percent }
 \@writefile{lof}{\contentsline {figure}{\numberline {4}{\ignorespaces Inference-time scaling results using Inception Score-guided selection. Left: Inception Score vs. compute budget. Right: DINO Top-1 accuracy vs. compute budget.}}{8}{figure.4}\protected@file@percent }
 \newlabel{fig:inception-scaling}{{4}{8}{Inference-time scaling results using Inception Score-guided selection. Left: Inception Score vs. compute budget. Right: DINO Top-1 accuracy vs. compute budget}{figure.4}{}}
+\citation{wu2024foldflow}
+\citation{wu2024foldflow}
+\citation{dauparas2022protein}
+\citation{lin2022language}
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {5.1.4}Results: DINO-Guided Scaling}{9}{subsubsection.5.1.4}\protected@file@percent }
+\@writefile{lof}{\contentsline {figure}{\numberline {5}{\ignorespaces Inference-time scaling results using DINO-guided selection. Left: FID vs. compute budget. Center: Inception Score vs. compute budget. Right: DINO Top-1 accuracy vs. compute budget.}}{9}{figure.5}\protected@file@percent }
+\newlabel{fig:dino-scaling}{{5}{9}{Inference-time scaling results using DINO-guided selection. Left: FID vs. compute budget. Center: Inception Score vs. compute budget. Right: DINO Top-1 accuracy vs. compute budget}{figure.5}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {5.2}FoldFlow: Protein Design}{9}{subsection.5.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {5.2.1}Experimental Setup}{9}{subsubsection.5.2.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {5.2.2}Results}{9}{subsubsection.5.2.2}\protected@file@percent }
+\@writefile{lof}{\contentsline {figure}{\numberline {6}{\ignorespaces Protein structure quality (TM-score) vs. compute budget for FoldFlow experiments. All methods start from the same baseline (standard ODE sampling at 1× compute) and show how additional inference compute improves protein designability.}}{10}{figure.6}\protected@file@percent }
+\newlabel{fig:protein-scaling}{{6}{10}{Protein structure quality (TM-score) vs. compute budget for FoldFlow experiments. All methods start from the same baseline (standard ODE sampling at 1× compute) and show how additional inference compute improves protein designability}{figure.6}{}}
+\@writefile{toc}{\contentsline {paragraph}{Two-Stage Superiority.}{10}{section*.7}\protected@file@percent }
+\@writefile{toc}{\contentsline {paragraph}{Best-of-N Effectiveness.}{10}{section*.8}\protected@file@percent }
+\@writefile{toc}{\contentsline {paragraph}{Path Exploration Benefits.}{10}{section*.9}\protected@file@percent }
+\@writefile{toc}{\contentsline {paragraph}{Compute-Quality Tradeoffs.}{10}{section*.10}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {5.2.3}Analysis}{10}{subsubsection.5.2.3}\protected@file@percent }
 \bibstyle{apalike}
 \bibdata{main}
 \bibcite{brown2024llmmonkeys}{{1}{2024}{{Brown et~al.}}{{}}}
@@ -73,29 +90,25 @@
 \bibcite{lightman2023verify}{{7}{2023}{{Lightman et~al.}}{{}}}
 \bibcite{lipman2023fm}{{8}{2023}{{Lipman et~al.}}{{}}}
 \bibcite{ma2024sit}{{9}{2024}{{Ma et~al.}}{{}}}
-\@writefile{toc}{\contentsline {subsubsection}{\numberline {5.1.4}Results: DINO-Guided Scaling}{9}{subsubsection.5.1.4}\protected@file@percent }
-\@writefile{lof}{\contentsline {figure}{\numberline {5}{\ignorespaces Inference-time scaling results using DINO-guided selection. Left: FID vs. compute budget. Center: Inception Score vs. compute budget. Right: DINO Top-1 accuracy vs. compute budget.}}{9}{figure.5}\protected@file@percent }
-\newlabel{fig:dino-scaling}{{5}{9}{Inference-time scaling results using DINO-guided selection. Left: FID vs. compute budget. Center: Inception Score vs. compute budget. Right: DINO Top-1 accuracy vs. compute budget}{figure.5}{}}
-\@writefile{toc}{\contentsline {subsection}{\numberline {5.2}FoldFlow: Protein Design}{9}{subsection.5.2}\protected@file@percent }
-\@writefile{toc}{\contentsline {section}{\numberline {6}Conclusion}{9}{section.6}\protected@file@percent }
 \bibcite{ma2025diffits}{{10}{2025}{{Ma et~al.}}{{}}}
 \bibcite{openai2024o1}{{11}{2024}{{OpenAI}}{{}}}
 \bibcite{tong2024otfm}{{12}{2024}{{Tong et~al.}}{{}}}
 \bibcite{deepseek2024r1}{{13}{2024}{{Xu et~al.}}{{}}}
 \bibcite{zhang2023secondorder}{{14}{2023}{{Zhang et~al.}}{{}}}
-\@writefile{toc}{\contentsline {section}{\numberline {A}Additional Experimental Results}{10}{appendix.A}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsection}{\numberline {A.1}Complete Noise and Diversity Study Results}{10}{subsection.A.1}\protected@file@percent }
-\@writefile{lof}{\contentsline {figure}{\numberline {6}{\ignorespaces Inception Scores across increasing noise levels. Higher is better. This complements the diversity and FID analysis shown in the main text, demonstrating similar robustness patterns for our divergence-free method.}}{10}{figure.6}\protected@file@percent }
-\newlabel{fig:is-noise}{{6}{10}{Inception Scores across increasing noise levels. Higher is better. This complements the diversity and FID analysis shown in the main text, demonstrating similar robustness patterns for our divergence-free method}{figure.6}{}}
-\@writefile{lof}{\contentsline {figure}{\numberline {7}{\ignorespaces Pareto frontier analysis showing the trade-off between sample diversity and Inception Score (higher is better for both axes). This complements the FID-based Pareto analysis in the main text.}}{11}{figure.7}\protected@file@percent }
-\newlabel{fig:pareto-inception}{{7}{11}{Pareto frontier analysis showing the trade-off between sample diversity and Inception Score (higher is better for both axes). This complements the FID-based Pareto analysis in the main text}{figure.7}{}}
-\@writefile{toc}{\contentsline {subsection}{\numberline {A.2}Complete Inference-Time Scaling Results}{11}{subsection.A.2}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsubsection}{\numberline {A.2.1}Inception Score-Guided Scaling (All Metrics)}{11}{subsubsection.A.2.1}\protected@file@percent }
-\@writefile{lof}{\contentsline {figure}{\numberline {8}{\ignorespaces Additional Inception Score-guided scaling results. Left: FID vs. compute budget. Right: DINO Top-5 accuracy vs. compute budget.}}{11}{figure.8}\protected@file@percent }
-\newlabel{fig:inception-scaling-complete}{{8}{11}{Additional Inception Score-guided scaling results. Left: FID vs. compute budget. Right: DINO Top-5 accuracy vs. compute budget}{figure.8}{}}
-\@writefile{toc}{\contentsline {subsubsection}{\numberline {A.2.2}DINO-Guided Scaling (All Metrics)}{12}{subsubsection.A.2.2}\protected@file@percent }
-\@writefile{lof}{\contentsline {figure}{\numberline {9}{\ignorespaces DINO Top-5 accuracy vs. compute budget for DINO-guided scaling experiments.}}{12}{figure.9}\protected@file@percent }
-\newlabel{fig:dino-scaling-complete}{{9}{12}{DINO Top-5 accuracy vs. compute budget for DINO-guided scaling experiments}{figure.9}{}}
-\@writefile{toc}{\contentsline {section}{\numberline {B}Implementation Details}{12}{appendix.B}\protected@file@percent }
-\@writefile{toc}{\contentsline {section}{\numberline {C}Additional Theoretical Analysis}{12}{appendix.C}\protected@file@percent }
-\gdef \@abspage@last{12}
+\@writefile{toc}{\contentsline {section}{\numberline {6}Conclusion}{11}{section.6}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {A}Additional Experimental Results}{11}{appendix.A}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {A.1}Complete Noise and Diversity Study Results}{12}{subsection.A.1}\protected@file@percent }
+\@writefile{lof}{\contentsline {figure}{\numberline {7}{\ignorespaces Inception Scores across increasing noise levels. Higher is better. This complements the diversity and FID analysis shown in the main text, demonstrating similar robustness patterns for our divergence-free method.}}{12}{figure.7}\protected@file@percent }
+\newlabel{fig:is-noise}{{7}{12}{Inception Scores across increasing noise levels. Higher is better. This complements the diversity and FID analysis shown in the main text, demonstrating similar robustness patterns for our divergence-free method}{figure.7}{}}
+\@writefile{lof}{\contentsline {figure}{\numberline {8}{\ignorespaces Pareto frontier analysis showing the trade-off between sample diversity and Inception Score (higher is better for both axes). This complements the FID-based Pareto analysis in the main text.}}{12}{figure.8}\protected@file@percent }
+\newlabel{fig:pareto-inception}{{8}{12}{Pareto frontier analysis showing the trade-off between sample diversity and Inception Score (higher is better for both axes). This complements the FID-based Pareto analysis in the main text}{figure.8}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {A.2}Complete Inference-Time Scaling Results}{13}{subsection.A.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {A.2.1}Inception Score-Guided Scaling (All Metrics)}{13}{subsubsection.A.2.1}\protected@file@percent }
+\@writefile{lof}{\contentsline {figure}{\numberline {9}{\ignorespaces Additional Inception Score-guided scaling results. Left: FID vs. compute budget. Right: DINO Top-5 accuracy vs. compute budget.}}{13}{figure.9}\protected@file@percent }
+\newlabel{fig:inception-scaling-complete}{{9}{13}{Additional Inception Score-guided scaling results. Left: FID vs. compute budget. Right: DINO Top-5 accuracy vs. compute budget}{figure.9}{}}
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {A.2.2}DINO-Guided Scaling (All Metrics)}{13}{subsubsection.A.2.2}\protected@file@percent }
+\@writefile{lof}{\contentsline {figure}{\numberline {10}{\ignorespaces DINO Top-5 accuracy vs. compute budget for DINO-guided scaling experiments.}}{13}{figure.10}\protected@file@percent }
+\newlabel{fig:dino-scaling-complete}{{10}{13}{DINO Top-5 accuracy vs. compute budget for DINO-guided scaling experiments}{figure.10}{}}
+\@writefile{toc}{\contentsline {section}{\numberline {B}Implementation Details}{13}{appendix.B}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {C}Additional Theoretical Analysis}{13}{appendix.C}\protected@file@percent }
+\gdef \@abspage@last{13}
