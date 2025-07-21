@@ -284,6 +284,11 @@ INPUT ./figures/scaling_dino_top1.pdf
 INPUT ./figures/scaling_dino_top1.pdf
 INPUT ./figures/scaling_dino_top1.pdf
 INPUT ./figures/scaling_dino_top1.pdf
+INPUT ./figures/protein_scaling_tm_score.pdf
+INPUT ./figures/protein_scaling_tm_score.pdf
+INPUT ./figures/protein_scaling_tm_score.pdf
+INPUT ./figures/protein_scaling_tm_score.pdf
+INPUT ./figures/protein_scaling_tm_score.pdf
 INPUT ./arxiv_paper.bbl
 INPUT ./arxiv_paper.bbl
 INPUT arxiv_paper.bbl
