@@ -445,21 +445,21 @@ if __name__ == "__main__":
         "--noise_scales",
         type=float,
         nargs="+",
-        default=[0.1, 0.2, 0.4, 0.6],
+        default=[0.1, 0.13, 0.16, 0.2, 0.4, 0.6],
         help="Noise scale values to test for SDE sampling",
     )
     parser.add_argument(
         "--lambda_divs",
         type=float,
         nargs="+",
-        default=[0.35, 0.4, 0.45, 0.5, 0.6],
+        default=[0.1, 0.35, 0.4, 0.45, 0.5, 0.6, 2.0],
         help="Lambda values for divergence-free flow to test",
     )
     parser.add_argument(
         "--beta_values",
         type=float,
         nargs="+",
-        default=[0.05, 0.1, 0.2],
+        default=[0.05, 0.1, 0.2, 0.3, 0.4],
         help="Beta values for EDM SDE sampling",
     )
     parser.add_argument(
