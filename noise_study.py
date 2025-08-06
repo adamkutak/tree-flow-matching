@@ -864,7 +864,7 @@ def run_experiment(args):
         print(f"Average noise/velocity ratio: {edm_sde_metrics['avg_ratio']:.4f}")
 
     print("\n\n===== Running score SDE experiments =====")
-    for noise_scale_factor in args.inference_sde_factors:
+    for noise_scale_factor in args.score_sde_factors:
         print(f"\nTesting Score SDE with noise_scale_factor={noise_scale_factor}")
         inference_sde_metrics = run_sampling_experiment(
             sampler,
@@ -1005,22 +1005,6 @@ if __name__ == "__main__":
         help="Number of real samples to use for FID calculation",
     )
 
-    # Noise parameters
-    parser.add_argument(
-        "--noise_scales",
-        type=float,
-        nargs="+",
-        default=[0.1, 0.2, 0.4, 0.6, 1.0],
-        help="Noise scale values to test for SDE sampling",
-    )
-    parser.add_argument(
-        "--lambda_divs",
-        type=float,
-        nargs="+",
-        default=[0.1, 0.2, 0.3, 0.6, 1.0, 2.0],
-        help="Lambda values for divergence-free flow to test",
-    )
-
     # Output parameters
     parser.add_argument(
         "--output_dir",
@@ -1029,19 +1013,33 @@ if __name__ == "__main__":
         help="Directory to save results",
     )
 
+    # Noise parameters
+    parser.add_argument(
+        "--noise_scales",
+        type=float,
+        nargs="+",
+        default=[0.1, 0.2, 0.4, 0.6],
+        help="Noise scale values to test for SDE sampling",
+    )
+    parser.add_argument(
+        "--lambda_divs",
+        type=float,
+        nargs="+",
+        default=[0.35, 0.4, 0.45, 0.5, 0.6],
+        help="Lambda values for divergence-free flow to test",
+    )
     parser.add_argument(
         "--beta_values",
         type=float,
         nargs="+",
-        default=[0.05, 0.1, 0.2, 0.4, 0.6],
+        default=[0.05, 0.1, 0.2],
         help="Beta values for EDM SDE sampling",
     )
-
     parser.add_argument(
-        "--inference_sde_factors",
+        "--score_sde_factors",
         type=float,
         nargs="+",
-        default=[0.1, 0.2, 0.3, 0.6, 1.0],
+        default=[0.1, 0.2, 0.3],
         help="Noise scale factors for Score SDE sampling",
     )
 
