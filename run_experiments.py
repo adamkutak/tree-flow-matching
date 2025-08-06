@@ -21,8 +21,8 @@ SCORING_FUNCTION = "inception_score"  # Default scoring function
 DT_STD = 0.7  # Path exploration time step standard deviation
 WARP_SCALE = 0.5  # Time warp scale factor
 DEVICE = "cuda"  # Default device
-NOISE_SCALE = 0.12
-LAMBDA_DIV = 0.5
+NOISE_SCALE = 0.14
+LAMBDA_DIV = 0.55
 
 
 def run_experiment(cmd):
