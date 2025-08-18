@@ -57,6 +57,11 @@ os.makedirs(OUTPUT_DIR, exist_ok=True)
 # Modern color palette for protein methods
 colors = {
     "standard": "#7F8C8D",  # Gray (baseline)
+    "Best-of-N": "#E67E22",  # Orange
+    "Path-DivFree": "#9B59B6",  # Purple
+    "Path-SDE": "#E74C3C",  # Red
+    "BestN+Path-DivFree": "#1ABC9C",  # Teal (two-stage)
+    # Keep old names for backward compatibility
     "best_of_n": "#E67E22",  # Orange (Random Search)
     "divergence_free_ode": "#9B59B6",  # Purple
     "sde_path_exploration": "#E74C3C",  # Red
@@ -70,22 +75,22 @@ markers = ["o", "s", "^", "v", "D"]
 # PROTEIN EXPERIMENT DATA
 # ══════════════════════════════════════════════════════════════════════════════
 
-# Raw data from CSV
+# Raw data from CSV (with updated naming conventions)
 protein_data = {
     "method": [
         "standard",
-        "sde_path_exploration",
-        "random_search_divfree",
-        "random_search_divfree",
-        "sde_path_exploration",
-        "divergence_free_ode",
-        "random_search_divfree",
-        "best_of_n",
-        "best_of_n",
-        "divergence_free_ode",
-        "sde_path_exploration",
-        "best_of_n",
-        "divergence_free_ode",
+        "Path-SDE",
+        "BestN+Path-DivFree",
+        "BestN+Path-DivFree",
+        "Path-SDE",
+        "Path-DivFree",
+        "BestN+Path-DivFree",
+        "Best-of-N",
+        "Best-of-N",
+        "Path-DivFree",
+        "Path-SDE",
+        "Best-of-N",
+        "Path-DivFree",
     ],
     "num_branches": [1, 2, 2, 4, 4, 2, 8, 2, 4, 4, 8, 8, 8],
     "mean_score": [
@@ -223,11 +228,20 @@ def plot_protein_scaling():
             color = colors.get(method, colors["standard"])
             marker = markers[i % len(markers)]
 
+            # Create cleaner labels for display
+            display_labels = {
+                "Best-of-N": "Best-of-N",
+                "Path-DivFree": "Path-DivFree",
+                "Path-SDE": "Path-SDE",
+                "BestN+Path-DivFree": "BestN+Path-DivFree",
+            }
+            display_label = display_labels.get(method, method.replace("_", " ").title())
+
             ax.plot(
                 valid_budgets,
                 valid_scores,
                 marker=marker,
-                label=method.replace("_", " ").title(),
+                label=display_label,
                 color=color,
                 linewidth=3,
                 markersize=10,

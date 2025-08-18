@@ -66,6 +66,14 @@ colors = {
     "EDM-SDE": "#3498DB",  # Blue
     "Score-SDE": "#2ECC71",  # Green
     "ODE-divfree": "#9B59B6",  # Purple
+    "Best-of-N": "#E67E22",  # Orange
+    "Path-DivFree": "#9B59B6",  # Purple
+    "Path-SDE": "#E74C3C",  # Red
+    "Path-ScoreSDE": "#2ECC71",  # Green
+    "BestN+Path-DivFree": "#1ABC9C",  # Teal
+    "NoiseSearch-3R-DivFree": "#F39C12",  # Gold
+    "BestN+NoiseSearch-3R-DivFree": "#8E44AD",  # Dark Purple
+    # Keep old names for noise study compatibility
     "Random Search": "#E67E22",  # Orange
     "ODE-divfree explore": "#9B59B6",
     "RS → Divfree explore": "#1ABC9C",  # Teal
@@ -197,35 +205,35 @@ incp_baseline = {
 }
 
 incp_scaling = {
-    "Random Search": {
-        "fid": [incp_baseline["fid"], 54.7576789856, 52.5880737305, 50.7637405396],
-        "is": [incp_baseline["is"], 47.9309883118, 66.1153640747, 75.6240463257],
-        "top1": [incp_baseline["top1"], 67.28515625, 75.9765625, 80.17578125],
-        "top5": [incp_baseline["top5"], 84.765625, 89.74609375, 92.87109375],
+    "Best-of-N": {
+        "fid": [incp_baseline["fid"], 53.2056465149, 50.8040390015, 52.0526847839],
+        "is": [incp_baseline["is"], 50.1982078552, 63.9881401062, 74.6413650513],
+        "top1": [incp_baseline["top1"], 67.48046875, 73.33984375, 80.46875],
+        "top5": [incp_baseline["top5"], 84.86328125, 91.2109375, 91.6015625],
     },
-    "ODE-divfree explore": {
-        "fid": [incp_baseline["fid"], 52.6444015503, 58.6198463440, 61.1252670288],
-        "is": [incp_baseline["is"], 65.5407104492, 78.7351913452, 85.6708831787],
-        "top1": [incp_baseline["top1"], 68.1640625, 63.28125, 67.67578125],
-        "top5": [incp_baseline["top5"], 85.83984375, 81.54296875, 83.3984375],
+    "Path-DivFree": {
+        "fid": [incp_baseline["fid"], 54.8920936584, 58.4799156189, 68.3677062988],
+        "is": [incp_baseline["is"], 63.2807121277, 83.5469818115, 89.4558868408],
+        "top1": [incp_baseline["top1"], 63.0859375, 69.140625, 66.015625],
+        "top5": [incp_baseline["top5"], 82.71484375, 83.88671875, 83.49609375],
     },
-    "RS → Divfree explore": {
-        "fid": [incp_baseline["fid"], 49.6474685669, 54.0792846680, 61.8381042480],
-        "is": [incp_baseline["is"], 70.3865203857, 86.1988906860, 92.1974639893],
-        "top1": [incp_baseline["top1"], 73.4375, 80.17578125, 84.66796875],
-        "top5": [incp_baseline["top5"], 89.453125, 92.48046875, 92.67578125],
+    "BestN+Path-DivFree": {
+        "fid": [incp_baseline["fid"], 51.0203018188, 56.5868797302, 68.6828994751],
+        "is": [incp_baseline["is"], 71.8548355103, 87.8421020508, 91.9832916260],
+        "top1": [incp_baseline["top1"], 74.12109375, 81.15234375, 84.375],
+        "top5": [incp_baseline["top5"], 87.98828125, 92.48046875, 95.1171875],
     },
-    "Score-SDE explore": {
-        "fid": [incp_baseline["fid"], 53.9133262634, 54.7942695618, 54.3388023376],
-        "is": [incp_baseline["is"], 47.0511093140, 55.4215469360, 64.1331634521],
-        "top1": [incp_baseline["top1"], 66.89453125, 62.6953125, 64.74609375],
-        "top5": [incp_baseline["top5"], 82.71484375, 82.8125, 83.3984375],
+    "Path-ScoreSDE": {
+        "fid": [incp_baseline["fid"], 53.4748840332, 52.7677459717, 55.4086990356],
+        "is": [incp_baseline["is"], 49.7877578735, 61.4951171875, 67.5772705078],
+        "top1": [incp_baseline["top1"], 67.3828125, 65.52734375, 63.0859375],
+        "top5": [incp_baseline["top5"], 84.1796875, 83.10546875, 84.27734375],
     },
-    "SDE explore": {
-        "fid": [incp_baseline["fid"], 54.1602745056, 58.5168266296, 62.2201728821],
-        "is": [incp_baseline["is"], 64.1173782349, 80.1871185303, 87.8954238892],
-        "top1": [incp_baseline["top1"], 65.4296875, 68.75, 67.96875],
-        "top5": [incp_baseline["top5"], 83.30078125, 84.9609375, 85.7421875],
+    "Path-SDE": {
+        "fid": [incp_baseline["fid"], 56.4615898132, 60.6950569153, 67.4587478638],
+        "is": [incp_baseline["is"], 64.1559677124, 81.0101165771, 88.5352249146],
+        "top1": [incp_baseline["top1"], 62.6953125, 65.33203125, 68.65234375],
+        "top5": [incp_baseline["top5"], 81.640625, 84.1796875, 84.765625],
     },
 }
 
@@ -242,35 +250,35 @@ dino_baseline = {  # Random-Search 1× under DINO-scoring
 }
 
 dino_scaling = {
-    "Random Search": {
-        "fid": [dino_baseline["fid"], 51.6026611328, 46.9245452881, 44.7447700500],
-        "is": [dino_baseline["is"], 39.0032386780, 50.9636688232, 56.4447441101],
-        "top1": [dino_baseline["top1"], 71.09375, 86.71875, 93.1640625],
-        "top5": [dino_baseline["top5"], 89.84375, 97.55859375, 99.70703125],
+    "Best-of-N": {
+        "fid": [dino_baseline["fid"], 51.8314666748, 46.8698577881, 46.2298698425],
+        "is": [dino_baseline["is"], 40.1176834106, 52.1529541016, 56.6535110474],
+        "top1": [dino_baseline["top1"], 75.1953125, 84.9609375, 93.45703125],
+        "top5": [dino_baseline["top5"], 91.69921875, 97.36328125, 99.609375],
     },
-    "ODE-divfree explore": {  # corrected run
-        "fid": [dino_baseline["fid"], 50.1412963867, 49.0300178528, 47.7467346191],
-        "is": [dino_baseline["is"], 40.6086311340, 41.4910354614, 42.9033813477],
-        "top1": [dino_baseline["top1"], 79.6875, 89.453125, 91.9921875],
-        "top5": [dino_baseline["top5"], 94.43359375, 97.0703125, 98.4375],
+    "Path-DivFree": {  # corrected run
+        "fid": [dino_baseline["fid"], 51.2642211914, 48.0354537964, 46.9875450134],
+        "is": [dino_baseline["is"], 41.1047897339, 45.5917053223, 45.5746231079],
+        "top1": [dino_baseline["top1"], 83.203125, 91.11328125, 96.38671875],
+        "top5": [dino_baseline["top5"], 94.62890625, 97.94921875, 99.21875],
     },
-    "RS → Divfree explore": {
-        "fid": [dino_baseline["fid"], 45.0442619324, 44.4675903320, 45.2783470154],
-        "is": [dino_baseline["is"], 48.6486282349, 59.8598442078, 61.2256698608],
-        "top1": [dino_baseline["top1"], 88.671875, 97.4609375, 98.92578125],
-        "top5": [dino_baseline["top5"], 97.75390625, 100.0, 100.0],
+    "BestN+Path-DivFree": {
+        "fid": [dino_baseline["fid"], 45.4849014282, 44.1251449585, 46.7672691345],
+        "is": [dino_baseline["is"], 49.0139312744, 59.3470230103, 63.7213439941],
+        "top1": [dino_baseline["top1"], 89.74609375, 98.14453125, 99.51171875],
+        "top5": [dino_baseline["top5"], 98.53515625, 100.0, 100.0],
     },
-    "Score-SDE explore": {
-        "fid": [dino_baseline["fid"], 51.0865936279, 52.2667312622, 50.8811492920],
-        "is": [dino_baseline["is"], 38.8347549438, 39.3962249756, 39.6080360413],
-        "top1": [dino_baseline["top1"], 71.09375, 75.68359375, 79.6875],
-        "top5": [dino_baseline["top5"], 88.671875, 90.13671875, 93.45703125],
+    "Path-ScoreSDE": {
+        "fid": [dino_baseline["fid"], 53.7896003723, 52.7023506165, 51.4293212891],
+        "is": [dino_baseline["is"], 37.2301712036, 36.2029876709, 38.8587951660],
+        "top1": [dino_baseline["top1"], 72.265625, 77.05078125, 81.0546875],
+        "top5": [dino_baseline["top5"], 88.671875, 92.578125, 94.04296875],
     },
-    "SDE explore": {
-        "fid": [dino_baseline["fid"], 50.9161262512, 48.6213989258, 47.5634880066],
-        "is": [dino_baseline["is"], 39.5118789673, 43.5768890381, 46.3124923706],
-        "top1": [dino_baseline["top1"], 78.80859375, 89.6484375, 93.5546875],
-        "top5": [dino_baseline["top5"], 93.1640625, 97.8515625, 98.92578125],
+    "Path-SDE": {
+        "fid": [dino_baseline["fid"], 50.4010772705, 49.0975723267, 47.7479972839],
+        "is": [dino_baseline["is"], 42.1980285645, 47.1010398865, 47.0342483521],
+        "top1": [dino_baseline["top1"], 83.3984375, 92.1875, 94.62890625],
+        "top5": [dino_baseline["top5"], 95.21484375, 99.0234375, 99.609375],
     },
 }
 
