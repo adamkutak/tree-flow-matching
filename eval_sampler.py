@@ -231,6 +231,7 @@ def evaluate_single_samples(
             fid=fid,
             noise_scale=noise_scale,
             lambda_div=lambda_div,
+            rounds=args.rounds,
         )
 
         # Store results for this branch/keep pair
@@ -281,6 +282,7 @@ def generate_and_compute_metrics(
     fid,
     noise_scale=0.1,
     lambda_div=0.2,
+    rounds=3,
 ):
     """
     Generate samples and compute metrics
@@ -434,6 +436,39 @@ def generate_and_compute_metrics(
                 use_global=True,
                 branch_start_time=branch_start_time,
                 branch_dt=branch_dt,
+            )
+        elif sample_method == "noise_search_ode_divfree":
+            sample = sampler.batch_sample_noise_search_ode_divfree(
+                class_label=random_class_labels,
+                batch_size=current_batch_size,
+                num_branches=num_branches,
+                num_keep=num_keep,
+                rounds=rounds,
+                lambda_div=lambda_div,
+                selector=scoring_function,
+                use_global=True,
+            )
+        elif sample_method == "noise_search_sde":
+            sample = sampler.batch_sample_noise_search_sde(
+                class_label=random_class_labels,
+                batch_size=current_batch_size,
+                num_branches=num_branches,
+                num_keep=num_keep,
+                rounds=rounds,
+                noise_scale=noise_scale,
+                selector=scoring_function,
+                use_global=True,
+            )
+        elif sample_method == "random_search_then_noise_search_ode_divfree":
+            sample = sampler.batch_sample_random_search_then_noise_search_ode_divfree(
+                class_label=random_class_labels,
+                batch_size=current_batch_size,
+                num_branches=num_branches,
+                num_keep=num_keep,
+                rounds=rounds,
+                lambda_div=lambda_div,
+                selector=scoring_function,
+                use_global=True,
             )
         else:
             raise ValueError(f"Unsupported sample method: {sample_method}")
@@ -716,6 +751,9 @@ if __name__ == "__main__":
             "path_exploration",
             "path_exploration_timewarp",
             "path_exploration_timewarp_shifted",
+            "noise_search_ode_divfree",
+            "noise_search_sde",
+            "random_search_then_noise_search_ode_divfree",
         ],
         help="Sampling method to use (for both single samples and batch optimization)",
     )
@@ -781,6 +819,13 @@ if __name__ == "__main__":
         type=float,
         default=DEFAULT_LAMBDA_DIV,
         help="Lambda for divergence-free sampling",
+    )
+
+    parser.add_argument(
+        "--rounds",
+        type=int,
+        default=3,
+        help="Number of rounds for noise search methods",
     )
 
     args = parser.parse_args()
