@@ -1,13 +1,13 @@
 # Fdb version 4
-["bibtex arxiv_paper"] 1755535081.75421 "arxiv_paper.aux" "arxiv_paper.bbl" "arxiv_paper" 1755535081.8217 2
+["bibtex arxiv_paper"] 1755535149.77853 "arxiv_paper.aux" "arxiv_paper.bbl" "arxiv_paper" 1755535152.24546 2
   "./main.bib" 1755461500.65426 5155 19c52e0c3f78dcefc75fc3d40a783112 ""
   "/opt/homebrew/Cellar/texlive/20240312_3/share/texmf-dist/bibtex/bst/base/apalike.bst" 1710106625 24635 604dafcc79f521a11ea73e506e1fbd98 ""
-  "arxiv_paper.aux" 1755535081.7526 32 3985256e7290058c681f74d7a3565a19 "pdflatex"
+  "arxiv_paper.aux" 1755535152.0192 16040 0b0b6e773524e4d41b052b8da04a9e4c "pdflatex"
   (generated)
   "arxiv_paper.bbl"
   "arxiv_paper.blg"
   (rewritten before read)
-["pdflatex"] 1755535077.73159 "/Users/adamstecklov/dev/tree-step-flow-matching/paper/arxiv_paper.tex" "arxiv_paper.pdf" "arxiv_paper" 1755535078.7958 2
+["pdflatex"] 1755535151.27311 "/Users/adamstecklov/dev/tree-step-flow-matching/paper/arxiv_paper.tex" "arxiv_paper.pdf" "arxiv_paper" 1755535152.24563 2
   "/Users/adamstecklov/dev/tree-step-flow-matching/paper/arxiv_paper.tex" 1755470734.18862 61981 b7f38dc058f9fa241ccdc5513ecfd04f ""
   "/opt/homebrew/Cellar/texlive/20240312_3/share/texmf-dist/fonts/enc/dvips/base/8r.enc" 1710106625 4850 80dc9bab7f31fb78a000ccfed0e27cab ""
   "/opt/homebrew/Cellar/texlive/20240312_3/share/texmf-dist/fonts/enc/dvips/cm-super/cm-super-t1.enc" 1710106625 2971 def0b6c1f0b107b3b936def894055589 ""
@@ -139,9 +139,9 @@
   "/opt/homebrew/Cellar/texlive/20240312_3/share/texmf-dist/tex/latex/xcolor/xcolor.sty" 1710106625 55487 80a65caedd3722f4c20a14a69e785d8f ""
   "/opt/homebrew/Cellar/texlive/20240312_3/share/texmf-dist/web2c/texmf.cnf" 1710106625 41652 e14926ab86fde7902cad99d9eeaa5ca5 ""
   "/opt/homebrew/Cellar/texlive/20240312_3/share/texmf-var/web2c/pdftex/pdflatex.fmt" 1710106625 8221878 83314ecb9b2818e5586c154833f52511 ""
-  "arxiv_paper.aux" 1755535081.7526 32 3985256e7290058c681f74d7a3565a19 "pdflatex"
-  "arxiv_paper.bbl" 1755535081.82066 0 d41d8cd98f00b204e9800998ecf8427e "bibtex arxiv_paper"
-  "arxiv_paper.out" 0 -1 0 "pdflatex"
+  "arxiv_paper.aux" 1755535152.0192 16040 0b0b6e773524e4d41b052b8da04a9e4c "pdflatex"
+  "arxiv_paper.bbl" 1755535149.84603 0 d41d8cd98f00b204e9800998ecf8427e "bibtex arxiv_paper"
+  "arxiv_paper.out" 1755535152.0207 12240 4f0096619da16a1ec0e6a70423f455d5 "pdflatex"
   "arxiv_paper.tex" 1755470734.18862 61981 b7f38dc058f9fa241ccdc5513ecfd04f ""
   "figures/noise_study_div.pdf" 1754936214.45199 17600 2b46c5cc145c883dcfbc2d2d9b23b2d0 ""
   "figures/noise_study_fid.pdf" 1754936214.52727 18690 eac78d55fa843cfefedccd4a3f7a1150 ""

@@ -1,2 +1,132 @@
 \relax 
-\gdef \@abspage@last{1}
+\providecommand\hyper@newdestlabel[2]{}
+\providecommand\HyField@AuxAddToFields[1]{}
+\providecommand\HyField@AuxAddToCoFields[2]{}
+\citation{openai2024o1}
+\citation{ma2025diffits}
+\citation{lipman2023fm}
+\citation{esser2024scaling}
+\citation{wu2024foldflow}
+\@writefile{toc}{\contentsline {section}{\numberline {1}Introduction}{1}{section.1}\protected@file@percent }
+\citation{lipman2023fm}
+\citation{tong2024otfm,song2021score,ma2024sit}
+\citation{tong2024otfm}
+\@writefile{toc}{\contentsline {section}{\numberline {2}Preliminaries}{2}{section.2}\protected@file@percent }
+\newlabel{sec:preliminaries}{{2}{2}{Preliminaries}{section.2}{}}
+\@writefile{toc}{\contentsline {paragraph}{Notation.}{2}{section*.1}\protected@file@percent }
+\newlabel{eq:continuity}{{1}{2}{Notation}{equation.2.1}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {2.1}Flow Matching}{2}{subsection.2.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {2.2}Minibatch Optimal Transport Flow Matching (OT-FM)}{2}{subsection.2.2}\protected@file@percent }
+\citation{tong2024otfm}
+\citation{ma2024sit}
+\citation{gandhi2024sos,cobbe2021verifiers,lightman2023verify,brown2024llmmonkeys}
+\citation{openai2024o1}
+\citation{deepseek2024r1}
+\citation{ma2025diffits}
+\@writefile{toc}{\contentsline {subsection}{\numberline {2.3}Stochastic Interpolants: A Unifying Framework}{3}{subsection.2.3}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {2.4}Inference-Time Compute Scaling in Generative AI}{3}{subsection.2.4}\protected@file@percent }
+\citation{kim2025flowits}
+\citation{ma2024sit}
+\citation{kim2025flowits}
+\citation{karras2022elucidatingdesignspacediffusionbased}
+\@writefile{toc}{\contentsline {section}{\numberline {3}Related Work}{4}{section.3}\protected@file@percent }
+\newlabel{sec:related}{{3}{4}{Related Work}{section.3}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {3.1}Inference-Time Scaling for Flow Matching Models}{4}{subsection.3.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {3.2}Noise Injection while Preserving the Continuity Equation}{4}{subsection.3.2}\protected@file@percent }
+\citation{ma2025diffits}
+\citation{zhang2023secondorder}
+\citation{dockhorn2023stochastic}
+\@writefile{toc}{\contentsline {subsection}{\numberline {3.3}Inference-Time Scaling for Diffusion Models}{5}{subsection.3.3}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {3.4}Other Approaches to Efficient or Accurate Continuous Generative Models}{5}{subsection.3.4}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {4}Inference Time Scaling for Flow Matching while Preserving the ODE}{5}{section.4}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {4.1}Divergence-Free Noise}{5}{subsection.4.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {4.2}Proof: Adding Divergence-Free Noise at Inference Preserves the Continuity Equation and the Probability Flow ODE}{5}{subsection.4.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {paragraph}{}{5}{section*.2}\protected@file@percent }
+\citation{ma2024sit}
+\@writefile{toc}{\contentsline {subsection}{\numberline {4.3}Baseline Noise Injection Methods}{6}{subsection.4.3}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {4.4}Inference Algorithms}{6}{subsection.4.4}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {4.4.1}Best-of-N Sampling}{7}{subsubsection.4.4.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {4.4.2}Path Exploration}{7}{subsubsection.4.4.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {4.4.3}Best-of-N + Path Exploration}{7}{subsubsection.4.4.3}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {4.4.4}Noise Search}{7}{subsubsection.4.4.4}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {4.4.5}Best-of-N + Noise Search}{7}{subsubsection.4.4.5}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {4.4.6}Multi-Round Noise Search}{7}{subsubsection.4.4.6}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {4.4.7}Connection to Particle Sampling}{7}{subsubsection.4.4.7}\protected@file@percent }
+\citation{karras2022elucidatingdesignspacediffusionbased}
+\@writefile{toc}{\contentsline {subsection}{\numberline {4.5}Empirical Demonstration of Diversity Without Reducing Quality}{8}{subsection.4.5}\protected@file@percent }
+\newlabel{sec:noise_study}{{4.5}{8}{Empirical Demonstration of Diversity Without Reducing Quality}{subsection.4.5}{}}
+\@writefile{toc}{\contentsline {paragraph}{Setup.}{8}{section*.5}\protected@file@percent }
+\@writefile{lof}{\contentsline {figure}{\numberline {1}{\ignorespaces Sample diversity across increasing noise levels. Higher is better.}}{8}{figure.1}\protected@file@percent }
+\newlabel{fig:div-noise}{{1}{8}{Sample diversity across increasing noise levels. Higher is better}{figure.1}{}}
+\@writefile{lof}{\contentsline {figure}{\numberline {2}{\ignorespaces FID across increasing noise levels. Lower is better.}}{8}{figure.2}\protected@file@percent }
+\newlabel{fig:fid-noise}{{2}{8}{FID across increasing noise levels. Lower is better}{figure.2}{}}
+\@writefile{lof}{\contentsline {figure}{\numberline {3}{\ignorespaces Pareto frontier analysis showing the trade-off between sample diversity and image quality (negative FID, where higher is better for both axes). Our divergence-free method achieves favorable positions on the frontier, maintaining high image quality while enabling substantial diversity gains compared to other stochastic sampling approaches.}}{9}{figure.3}\protected@file@percent }
+\newlabel{fig:pareto-fid}{{3}{9}{Pareto frontier analysis showing the trade-off between sample diversity and image quality (negative FID, where higher is better for both axes). Our divergence-free method achieves favorable positions on the frontier, maintaining high image quality while enabling substantial diversity gains compared to other stochastic sampling approaches}{figure.3}{}}
+\@writefile{toc}{\contentsline {paragraph}{Results.}{9}{section*.6}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {5}Experiments}{9}{section.5}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {5.1}Evaluated Method Combinations}{9}{subsection.5.1}\protected@file@percent }
+\citation{salimans2016improved}
+\citation{caron2021emerging}
+\citation{heusel2017gans}
+\@writefile{toc}{\contentsline {subsection}{\numberline {5.2}ImageNet 256×256: Inference-Time Scaling with SiT-XL/2}{10}{subsection.5.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {5.2.1}Experimental Setup}{10}{subsubsection.5.2.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {5.2.2}Evaluation Metrics and Verifiers}{10}{subsubsection.5.2.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {5.2.3}Results: Inception Score-Guided Scaling}{10}{subsubsection.5.2.3}\protected@file@percent }
+\@writefile{lof}{\contentsline {figure}{\numberline {4}{\ignorespaces Inference-time scaling results using Inception Score-guided selection. Left: Inception Score vs. compute budget. Right: DINO Top-1 accuracy vs. compute budget.}}{10}{figure.4}\protected@file@percent }
+\newlabel{fig:inception-scaling}{{4}{10}{Inference-time scaling results using Inception Score-guided selection. Left: Inception Score vs. compute budget. Right: DINO Top-1 accuracy vs. compute budget}{figure.4}{}}
+\citation{foldflow2}
+\citation{foldflow2}
+\citation{proteinmpnn}
+\citation{esmfold}
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {5.2.4}Results: DINO-Guided Scaling}{11}{subsubsection.5.2.4}\protected@file@percent }
+\@writefile{lof}{\contentsline {figure}{\numberline {5}{\ignorespaces Inference-time scaling results using DINO-guided selection. Left: FID vs. compute budget. Center: Inception Score vs. compute budget. Right: DINO Top-1 accuracy vs. compute budget.}}{11}{figure.5}\protected@file@percent }
+\newlabel{fig:dino-scaling}{{5}{11}{Inference-time scaling results using DINO-guided selection. Left: FID vs. compute budget. Center: Inception Score vs. compute budget. Right: DINO Top-1 accuracy vs. compute budget}{figure.5}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {5.3}FoldFlow: Protein Design}{11}{subsection.5.3}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {5.3.1}Experimental Setup}{11}{subsubsection.5.3.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {5.3.2}Self-Consistency Evaluation}{11}{subsubsection.5.3.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {5.3.3}Evaluation Metrics}{12}{subsubsection.5.3.3}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {5.3.4}Results}{12}{subsubsection.5.3.4}\protected@file@percent }
+\@writefile{lof}{\contentsline {figure}{\numberline {6}{\ignorespaces Protein structure quality (self-consistency TM-score) vs. compute budget for FoldFlow experiments. All methods start from the same baseline (standard ODE sampling at 1× compute) and demonstrate how additional inference compute improves protein designability.}}{12}{figure.6}\protected@file@percent }
+\newlabel{fig:protein-scaling}{{6}{12}{Protein structure quality (self-consistency TM-score) vs. compute budget for FoldFlow experiments. All methods start from the same baseline (standard ODE sampling at 1× compute) and demonstrate how additional inference compute improves protein designability}{figure.6}{}}
+\bibstyle{apalike}
+\bibdata{main}
+\@writefile{toc}{\contentsline {section}{\numberline {6}Conclusion}{13}{section.6}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {A}Inference Algorithm Implementations}{13}{appendix.A}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {A.1}Best-of-N Sampling}{14}{subsection.A.1}\protected@file@percent }
+\@writefile{loa}{\contentsline {algorithm}{\numberline {1}{\ignorespaces Best-of-N Sampling}}{14}{algorithm.1}\protected@file@percent }
+\newlabel{alg:best-of-n}{{1}{14}{Best-of-N Sampling}{algorithm.1}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {A.2}Path Exploration}{14}{subsection.A.2}\protected@file@percent }
+\@writefile{loa}{\contentsline {algorithm}{\numberline {2}{\ignorespaces Path Exploration with Noise Injection}}{14}{algorithm.2}\protected@file@percent }
+\newlabel{alg:path-exploration}{{2}{14}{Path Exploration}{algorithm.2}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {A.3}Best-of-N + Path Exploration}{14}{subsection.A.3}\protected@file@percent }
+\@writefile{loa}{\contentsline {algorithm}{\numberline {3}{\ignorespaces Two-Stage Best-of-N + Path Exploration}}{14}{algorithm.3}\protected@file@percent }
+\newlabel{alg:best-of-n-path-exploration}{{3}{14}{Best-of-N + Path Exploration}{algorithm.3}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {A.4}Noise Search}{15}{subsection.A.4}\protected@file@percent }
+\@writefile{loa}{\contentsline {algorithm}{\numberline {4}{\ignorespaces Multi-Round Noise Search}}{15}{algorithm.4}\protected@file@percent }
+\newlabel{alg:noise-search}{{4}{15}{Noise Search}{algorithm.4}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {A.5}Best-of-N + Noise Search}{15}{subsection.A.5}\protected@file@percent }
+\@writefile{loa}{\contentsline {algorithm}{\numberline {5}{\ignorespaces Two-Stage Best-of-N + Noise Search}}{15}{algorithm.5}\protected@file@percent }
+\newlabel{alg:best-of-n-noise-search}{{5}{15}{Best-of-N + Noise Search}{algorithm.5}{}}
+\@writefile{toc}{\contentsline {section}{\numberline {B}Additional Experimental Results}{15}{appendix.B}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {B.1}Complete Noise and Diversity Study Results}{16}{subsection.B.1}\protected@file@percent }
+\@writefile{lof}{\contentsline {figure}{\numberline {7}{\ignorespaces Inception Scores across increasing noise levels. Higher is better. This complements the diversity and FID analysis shown in the main text, demonstrating similar robustness patterns for our divergence-free method.}}{16}{figure.7}\protected@file@percent }
+\newlabel{fig:is-noise}{{7}{16}{Inception Scores across increasing noise levels. Higher is better. This complements the diversity and FID analysis shown in the main text, demonstrating similar robustness patterns for our divergence-free method}{figure.7}{}}
+\@writefile{lof}{\contentsline {figure}{\numberline {8}{\ignorespaces Pareto frontier analysis showing the trade-off between sample diversity and Inception Score (higher is better for both axes). This complements the FID-based Pareto analysis in the main text.}}{16}{figure.8}\protected@file@percent }
+\newlabel{fig:pareto-inception}{{8}{16}{Pareto frontier analysis showing the trade-off between sample diversity and Inception Score (higher is better for both axes). This complements the FID-based Pareto analysis in the main text}{figure.8}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {B.2}Complete Inference-Time Scaling Results}{17}{subsection.B.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {B.2.1}Inception Score-Guided Scaling (All Metrics)}{17}{subsubsection.B.2.1}\protected@file@percent }
+\@writefile{lof}{\contentsline {figure}{\numberline {9}{\ignorespaces Additional Inception Score-guided scaling results. Left: FID vs. compute budget. Right: DINO Top-5 accuracy vs. compute budget.}}{17}{figure.9}\protected@file@percent }
+\newlabel{fig:inception-scaling-complete}{{9}{17}{Additional Inception Score-guided scaling results. Left: FID vs. compute budget. Right: DINO Top-5 accuracy vs. compute budget}{figure.9}{}}
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {B.2.2}DINO-Guided Scaling (All Metrics)}{17}{subsubsection.B.2.2}\protected@file@percent }
+\@writefile{lof}{\contentsline {figure}{\numberline {10}{\ignorespaces DINO Top-5 accuracy vs. compute budget for DINO-guided scaling experiments.}}{17}{figure.10}\protected@file@percent }
+\newlabel{fig:dino-scaling-complete}{{10}{17}{DINO Top-5 accuracy vs. compute budget for DINO-guided scaling experiments}{figure.10}{}}
+\@writefile{toc}{\contentsline {section}{\numberline {C}Implementation Details}{17}{appendix.C}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {C.1}Look-Ahead Scoring for Branching Methods}{17}{subsection.C.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {C.2}Experimental Hyperparameters}{18}{subsection.C.2}\protected@file@percent }
+\@writefile{lot}{\contentsline {table}{\numberline {1}{\ignorespaces Experimental hyperparameters for ImageNet and FoldFlow experiments. Branch interval controls the frequency of branching operations during path exploration.}}{18}{table.1}\protected@file@percent }
+\newlabel{tab:hyperparameters}{{1}{18}{Experimental hyperparameters for ImageNet and FoldFlow experiments. Branch interval controls the frequency of branching operations during path exploration}{table.1}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {C.3}Domain-Specific Implementation Details}{18}{subsection.C.3}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {C.3.1}ImageNet Experiments}{18}{subsubsection.C.3.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {C.3.2}FoldFlow Experiments}{18}{subsubsection.C.3.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {D}Additional Theoretical Analysis}{18}{appendix.D}\protected@file@percent }
+\gdef \@abspage@last{18}
