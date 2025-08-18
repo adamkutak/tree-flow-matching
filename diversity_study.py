@@ -198,6 +198,40 @@ def batch_sample_score_sde_identical_start(
         return sampler.unnormalize_images(current_samples)
 
 
+def batch_sample_sde_divfree_identical_start(
+    sampler, class_label, single_noise, batch_size, lambda_div=0.2
+):
+    """
+    SDE sampling with divergence-free field as noise where all samples start from identical noise.
+    Uses Euler-Maruyama with the divergence-free field as the stochastic noise term.
+    """
+    sampler.flow_model.eval()
+
+    with torch.no_grad():
+        # All samples start identical
+        current_samples = single_noise.unsqueeze(0).repeat(batch_size, 1, 1, 1)
+        current_label = torch.full((batch_size,), class_label, device=sampler.device)
+
+        for step, t in enumerate(sampler.timesteps[:-1]):
+            dt = sampler.timesteps[step + 1] - t
+            t_batch = torch.full((batch_size,), t.item(), device=sampler.device)
+
+            velocity = sampler.flow_model(t_batch, current_samples, current_label)
+
+            # Compute divergence-free field
+            w_unscaled = divfree_swirl_si(
+                current_samples, t_batch, current_label, velocity
+            )
+
+            # Use divergence-free field as noise term in Euler-Maruyama scheme
+            divfree_noise = w_unscaled * torch.sqrt(dt) * lambda_div
+
+            # Euler-Maruyama update: drift + noise
+            current_samples = current_samples + velocity * dt + divfree_noise
+
+        return sampler.unnormalize_images(current_samples)
+
+
 def calculate_batch_diversity(features):
     """
     Calculate average pairwise distance between features in a batch.
@@ -359,6 +393,19 @@ def run_diversity_experiment(args):
             divfree_diversity = calculate_batch_diversity(divfree_features)
             trial_results["methods"][f"divfree_{lambda_div}"] = {
                 "diversity": divfree_diversity
+            }
+
+        # Test SDE-divfree with different lambda values (all starting from same noise)
+        for lambda_div in args.lambda_divs:
+            sde_divfree_samples = batch_sample_sde_divfree_identical_start(
+                sampler, class_label, single_noise, args.batch_size, lambda_div
+            )
+            sde_divfree_features = sampler.extract_inception_features(
+                sde_divfree_samples
+            )
+            sde_divfree_diversity = calculate_batch_diversity(sde_divfree_features)
+            trial_results["methods"][f"sde_divfree_{lambda_div}"] = {
+                "diversity": sde_divfree_diversity
             }
 
         results["experiments"].append(trial_results)

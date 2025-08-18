@@ -134,6 +134,81 @@ def batch_sample_sde_with_metrics(
         )
 
 
+def batch_sample_sde_divfree_with_metrics(
+    sampler,
+    class_label,
+    batch_size=16,
+    lambda_div=0.2,
+):
+    """
+    SDE sampling with divergence-free field as noise, with divergence-free field magnitude tracking.
+    Uses Euler-Maruyama with the divergence-free field as the stochastic noise term.
+    """
+    is_tensor = torch.is_tensor(class_label)
+    sampler.flow_model.eval()
+
+    velocity_magnitudes = []
+    divfree_magnitudes = []
+    divfree_to_velocity_ratios = []
+
+    with torch.no_grad():
+        x = torch.randn(
+            batch_size,
+            sampler.channels,
+            sampler.image_size,
+            sampler.image_size,
+            device=sampler.device,
+        )
+
+        if is_tensor:
+            y = class_label
+        else:
+            y = torch.full(
+                (batch_size,), class_label, device=sampler.device, dtype=torch.long
+            )
+
+        for step, t in enumerate(sampler.timesteps[:-1]):
+            dt = sampler.timesteps[step + 1] - t
+            t_batch = torch.full((batch_size,), t.item(), device=sampler.device)
+
+            u_t = sampler.flow_model(t_batch, x, y)  # drift
+            w_unscaled = divfree_swirl_si(x, t_batch, y, u_t)
+
+            # Use divergence-free field as noise term in Euler-Maruyama scheme
+            divfree_noise = w_unscaled * torch.sqrt(dt) * lambda_div
+
+            # Track magnitudes
+            dims = tuple(range(1, u_t.ndim))
+            vel_mag = torch.linalg.vector_norm(u_t, dim=dims).mean().item()
+            velocity_magnitudes.append(vel_mag)
+
+            div_mag = torch.linalg.vector_norm(divfree_noise, dim=dims).mean().item()
+            divfree_magnitudes.append(div_mag)
+
+            # Track ratio
+            ratio = div_mag / vel_mag if vel_mag > 0 else 0
+            divfree_to_velocity_ratios.append(ratio)
+
+            # Euler-Maruyama update: drift + noise
+            x = x + u_t * dt + divfree_noise
+
+        avg_velocity_magnitude = sum(velocity_magnitudes) / len(velocity_magnitudes)
+        avg_divfree_magnitude = sum(divfree_magnitudes) / len(divfree_magnitudes)
+        avg_divfree_to_velocity_ratio = sum(divfree_to_velocity_ratios) / len(
+            divfree_to_velocity_ratios
+        )
+
+        return (
+            sampler.unnormalize_images(x),
+            avg_velocity_magnitude,
+            avg_divfree_magnitude,
+            avg_divfree_to_velocity_ratio,
+            velocity_magnitudes,
+            divfree_magnitudes,
+            divfree_to_velocity_ratios,
+        )
+
+
 def batch_sample_ode_divfree_with_metrics(
     sampler,
     class_label,
@@ -344,270 +419,6 @@ def batch_sample_score_sde_with_metrics(
             # Euler-Maruyama update
             current_samples = current_samples + drift * dt + noise
 
-        avg_velocity_magnitude = sum(velocity_magnitudes) / len(velocity_magnitudes)
-        avg_noise_magnitude = sum(noise_magnitudes) / len(noise_magnitudes)
-        avg_noise_to_velocity_ratio = sum(noise_to_velocity_ratios) / len(
-            noise_to_velocity_ratios
-        )
-
-        return (
-            sampler.unnormalize_images(current_samples),
-            avg_velocity_magnitude,
-            avg_noise_magnitude,
-            avg_noise_to_velocity_ratio,
-            velocity_magnitudes,
-            noise_magnitudes,
-            noise_to_velocity_ratios,
-        )
-
-
-def batch_sample_vp_sde_with_metrics(
-    sampler, class_label, batch_size=16, beta_min=0.1, beta_max=20.0
-):
-    """
-    Complete VP-SDE sampler using proper velocity transformation.
-
-    This implements the repository's approach:
-    1. SNR matching between CondOT (flow matching) and VP schedulers
-    2. Proper velocity field transformation
-    3. VP-SDE sampling with transformed velocities
-
-    Args:
-        sampler: Your flow matching sampler with timesteps in [0,1] (0=noise, 1=clean)
-        class_label: Class label for conditional sampling
-        batch_size: Number of samples to generate
-        beta_min, beta_max: VP scheduler parameters
-    """
-    is_tensor = torch.is_tensor(class_label)
-    sampler.flow_model.eval()
-
-    # Scheduler implementations matching the repository
-    class CondOTScheduler:
-        """Flow matching scheduler: linear interpolation between noise and data"""
-
-        def __call__(self, t):
-            return {
-                "alpha_t": 1 - t,
-                "sigma_t": t,
-                "d_alpha_t": -torch.ones_like(t),
-                "d_sigma_t": torch.ones_like(t),
-            }
-
-        def snr_inverse(self, snr):
-            # For CondOT: snr = alpha/sigma = (1-t)/t
-            # Solving: snr = (1-t)/t  =>  t = 1/(1+snr)
-            return 1.0 / (1.0 + snr)
-
-    class VPScheduler:
-        """Variance Preserving scheduler"""
-
-        def __init__(self, beta_min=0.1, beta_max=20.0):
-            self.beta_min = beta_min
-            self.beta_max = beta_max
-
-        def __call__(self, t):
-            b = self.beta_min
-            B = self.beta_max
-            T = 0.5 * t**2 * (B - b) + t * b
-            dT = t * (B - b) + b
-
-            alpha_t = torch.exp(-0.5 * T)
-            sigma_t = torch.sqrt(1 - torch.exp(-T))
-            d_alpha_t = -0.5 * dT * torch.exp(-0.5 * T)
-            d_sigma_t = 0.5 * dT * torch.exp(-T) / torch.sqrt(1 - torch.exp(-T))
-
-            return {
-                "alpha_t": alpha_t,
-                "sigma_t": sigma_t,
-                "d_alpha_t": d_alpha_t,
-                "d_sigma_t": d_sigma_t,
-            }
-
-    original_scheduler = CondOTScheduler()
-    vp_scheduler = VPScheduler(beta_min, beta_max)
-
-    def compute_velocity_transform(x, t_fm, label):
-        """
-        Transform velocity from CondOT to VP scheduler.
-        This implements the repository's compute_velocity_transform_scheduler logic.
-        """
-        # Convert flow matching time to VP time
-        # Flow matching: t=0 (noise) → t=1 (clean)
-        # VP diffusion: t=1 (noise) → t=0 (clean)
-        t_vp = 1.0 - t_fm
-
-        # Get VP scheduler coefficients
-        vp_coeffs = vp_scheduler(t_vp)
-        alpha_r = vp_coeffs["alpha_t"]
-        sigma_r = vp_coeffs["sigma_t"]
-        d_alpha_r = vp_coeffs["d_alpha_t"]
-        d_sigma_r = vp_coeffs["d_sigma_t"]
-
-        # Find equivalent CondOT time using SNR matching
-        snr = alpha_r / sigma_r
-        t_equiv = original_scheduler.snr_inverse(snr)
-
-        # Get CondOT coefficients at equivalent time
-        ot_coeffs = original_scheduler(t_equiv)
-        alpha_t = ot_coeffs["alpha_t"]
-        sigma_t = ot_coeffs["sigma_t"]
-        d_alpha_t = ot_coeffs["d_alpha_t"]
-        d_sigma_t = ot_coeffs["d_sigma_t"]
-
-        # Compute scaling factor
-        s_r = sigma_r / sigma_t
-
-        # Compute time derivative transformation
-        dt_r = (
-            sigma_t
-            * sigma_t
-            * (sigma_r * d_alpha_r - alpha_r * d_sigma_r)
-            / (sigma_r * sigma_r * (sigma_t * d_alpha_t - alpha_t * d_sigma_t))
-        )
-
-        # Compute space derivative transformation
-        ds_r = (sigma_t * d_sigma_r - sigma_r * d_sigma_t * dt_r) / (sigma_t * sigma_t)
-
-        # Debug first few calls
-        if not hasattr(compute_velocity_transform, "debug_count"):
-            compute_velocity_transform.debug_count = 0
-
-        if compute_velocity_transform.debug_count < 3:
-            print(
-                f"\n=== Velocity Transform Debug (call {compute_velocity_transform.debug_count}) ==="
-            )
-            print(f"t_fm: {t_fm:.6f}, t_vp: {t_vp:.6f}, t_equiv: {t_equiv:.6f}")
-            print(f"VP coeffs - alpha_r: {alpha_r:.6f}, sigma_r: {sigma_r:.6f}")
-            print(f"CondOT coeffs - alpha_t: {alpha_t:.6f}, sigma_t: {sigma_t:.6f}")
-            print(f"SNR: {snr:.6f}")
-            print(
-                f"VP derivatives - d_alpha_r: {d_alpha_r:.6f}, d_sigma_r: {d_sigma_r:.6f}"
-            )
-            print(
-                f"CondOT derivatives - d_alpha_t: {d_alpha_t:.6f}, d_sigma_t: {d_sigma_t:.6f}"
-            )
-
-            # Debug dt_r calculation step by step
-            numerator_dt = (
-                sigma_t * sigma_t * (sigma_r * d_alpha_r - alpha_r * d_sigma_r)
-            )
-            denominator_dt = (
-                sigma_r * sigma_r * (sigma_t * d_alpha_t - alpha_t * d_sigma_t)
-            )
-            print(
-                f"dt_r numerator: {numerator_dt:.6f} = {sigma_t:.6f}^2 * ({sigma_r:.6f} * {d_alpha_r:.6f} - {alpha_r:.6f} * {d_sigma_r:.6f})"
-            )
-            print(
-                f"dt_r denominator: {denominator_dt:.6f} = {sigma_r:.6f}^2 * ({sigma_t:.6f} * {d_alpha_t:.6f} - {alpha_t:.6f} * {d_sigma_t:.6f})"
-            )
-            print(f"dt_r = {numerator_dt:.6f} / {denominator_dt:.6f} = {dt_r:.6f}")
-
-            # Debug ds_r calculation step by step
-            numerator_ds = sigma_t * d_sigma_r - sigma_r * d_sigma_t * dt_r
-            denominator_ds = sigma_t * sigma_t
-            print(
-                f"ds_r numerator: {numerator_ds:.6f} = {sigma_t:.6f} * {d_sigma_r:.6f} - {sigma_r:.6f} * {d_sigma_t:.6f} * {dt_r:.6f}"
-            )
-            print(f"ds_r denominator: {denominator_ds:.6f} = {sigma_t:.6f}^2")
-            print(f"ds_r = {numerator_ds:.6f} / {denominator_ds:.6f} = {ds_r:.6f}")
-
-            print(
-                f"Scaling factors - s_r: {s_r:.6f}, dt_r: {dt_r:.6f}, ds_r: {ds_r:.6f}"
-            )
-
-        # Call original model with scaled input at equivalent time
-        t_batch = torch.full((x.shape[0],), t_equiv.item(), device=x.device)
-        u_t = sampler.flow_model(t_batch, x / s_r, label)
-
-        # Transform velocity to VP space
-        u_r = ds_r * x / s_r + dt_r * s_r * u_t
-
-        if compute_velocity_transform.debug_count < 3:
-            print(f"Original velocity range: [{u_t.min():.6f}, {u_t.max():.6f}]")
-            print(f"Transformed velocity range: [{u_r.min():.6f}, {u_r.max():.6f}]")
-            print(
-                f"Transform magnitude ratio: {torch.linalg.vector_norm(u_r) / torch.linalg.vector_norm(u_t):.6f}"
-            )
-            compute_velocity_transform.debug_count += 1
-
-        return u_r, sigma_r
-
-    # Initialize metrics tracking
-    velocity_magnitudes = []
-    noise_magnitudes = []
-    noise_to_velocity_ratios = []
-
-    with torch.no_grad():
-        # Initialize samples with pure noise
-        current_samples = torch.randn(
-            batch_size,
-            sampler.channels,
-            sampler.image_size,
-            sampler.image_size,
-            device=sampler.device,
-        )
-
-        # Prepare class labels
-        if is_tensor:
-            current_label = class_label
-        else:
-            current_label = torch.full(
-                (batch_size,), class_label, device=sampler.device
-            )
-
-        # Get timesteps (flow matching notation: 0→1)
-        timesteps_fm = sampler.timesteps
-
-        # VP-SDE sampling loop
-        for step, t_curr_fm in enumerate(timesteps_fm[:-1]):
-            t_next_fm = timesteps_fm[step + 1]
-            dt_fm = t_next_fm - t_curr_fm  # Time step size
-
-            # Transform velocity from CondOT to VP
-            transformed_velocity, diffusion_coeff = compute_velocity_transform(
-                current_samples, t_curr_fm, current_label
-            )
-
-            # VP-SDE drift: just negative velocity (no additional score conversion needed)
-            drift = -transformed_velocity
-
-            # VP-SDE diffusion: use σ(t) from VP scheduler
-            diffusion_coeff_expanded = diffusion_coeff.view(
-                -1, *([1] * (current_samples.ndim - 1))
-            )
-            noise = (
-                torch.randn_like(current_samples)
-                * diffusion_coeff_expanded
-                * torch.sqrt(torch.abs(dt_fm))
-            )
-
-            # Debug info for first few steps
-            print(f"\nStep {step}, t_fm={t_curr_fm:.4f}")
-            print(f"  diffusion_coeff: {diffusion_coeff:.6f}")
-            print(f"  dt_fm: {dt_fm:.6f}")
-            print(f"  sqrt(dt_fm): {torch.sqrt(torch.abs(dt_fm)):.6f}")
-            print(
-                f"  transformed_velocity range: [{transformed_velocity.min():.6f}, {transformed_velocity.max():.6f}]"
-            )
-            print(f"  drift range: [{drift.min():.6f}, {drift.max():.6f}]")
-            print(
-                f"  noise coeff: {diffusion_coeff * torch.sqrt(torch.abs(dt_fm)):.6f}"
-            )
-            print(f"  noise range: [{noise.min():.6f}, {noise.max():.6f}]")
-
-            # Track magnitudes for monitoring
-            dims = tuple(range(1, current_samples.ndim))
-            vel_mag = torch.linalg.vector_norm(drift, dim=dims).mean().item()
-            noise_mag = torch.linalg.vector_norm(noise, dim=dims).mean().item()
-
-            velocity_magnitudes.append(vel_mag)
-            noise_magnitudes.append(noise_mag)
-            noise_to_velocity_ratios.append(noise_mag / vel_mag if vel_mag > 0 else 0)
-
-            # Update samples using Euler-Maruyama
-            current_samples = current_samples + drift * dt_fm + noise
-
-        # Compute average metrics
         avg_velocity_magnitude = sum(velocity_magnitudes) / len(velocity_magnitudes)
         avg_noise_magnitude = sum(noise_magnitudes) / len(noise_magnitudes)
         avg_noise_to_velocity_ratio = sum(noise_to_velocity_ratios) / len(
@@ -939,6 +750,33 @@ def run_experiment(args):
             f"ODE-divfree (lambda_div={lambda_div}) - FID: {divfree_metrics['fid_score']:.4f}, IS: {divfree_metrics['inception_score']:.4f}±{divfree_metrics['inception_std']:.4f}, DINO Top-1: {divfree_metrics['dino_top1_accuracy']:.2f}%, Top-5: {divfree_metrics['dino_top5_accuracy']:.2f}%"
         )
         print(f"Average divfree/velocity ratio: {divfree_metrics['avg_ratio']:.4f}")
+
+    print("\n\n===== Running SDE-divfree experiments =====")
+    for lambda_div in args.lambda_divs:
+        print(f"\nTesting SDE-divfree with lambda_div={lambda_div}")
+        sde_divfree_metrics = run_sampling_experiment(
+            sampler,
+            device,
+            fid,
+            args.num_samples,
+            args.batch_size,
+            batch_sample_sde_divfree_with_metrics,
+            {"lambda_div": lambda_div},
+            f"SDE-divfree sampling with lambda_div={lambda_div}",
+        )
+
+        results["experiments"].append(
+            {
+                "type": "sde_divfree",
+                "lambda_div": lambda_div,
+                "metrics": sde_divfree_metrics,
+            }
+        )
+
+        print(
+            f"SDE-divfree (lambda_div={lambda_div}) - FID: {sde_divfree_metrics['fid_score']:.4f}, IS: {sde_divfree_metrics['inception_score']:.4f}±{sde_divfree_metrics['inception_std']:.4f}, DINO Top-1: {sde_divfree_metrics['dino_top1_accuracy']:.2f}%, Top-5: {sde_divfree_metrics['dino_top5_accuracy']:.2f}%"
+        )
+        print(f"Average divfree/velocity ratio: {sde_divfree_metrics['avg_ratio']:.4f}")
 
     # Save results
     result_file = os.path.join(results_dir, f"noise_study_results_{timestamp}.json")
