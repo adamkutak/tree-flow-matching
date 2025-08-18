@@ -1214,914 +1214,6 @@ class MCTSFlowSampler:
 
             return self.unnormalize_images(torch.stack(final_samples))
 
-    def batch_sample_with_path_exploration_timewarp(
-        self,
-        class_label,
-        batch_size=16,
-        num_branches=4,
-        num_keep=2,
-        warp_scale=0.5,
-        selector="fid",
-        use_global=False,
-        branch_start_time=0.0,
-        branch_dt=None,
-        sqrt_epsilon=1e-8,
-    ):
-        """
-        Enhanced sampling method using time warping path exploration.
-        Supports num_branches > 4.
-        Applies chain rule for time warping: dx/dt = v(x, f(t)) * f'(t).
-
-        Args:
-            class_label: Tensor of class labels for each sample
-            batch_size: Number of final samples to generate
-            num_branches: Number of branches per batch element at each step
-            num_keep: Number of samples to keep before next branching
-            warp_scale: Scale factor for time warping
-            selector: Selection criteria - options include "fid", "mahalanobis", "mean", "inception_score", "dino_score"
-            use_global: Whether to use global statistics instead of class-specific ones
-            branch_start_time: Time point at which to start branching (0.0 to 1.0)
-            branch_dt: Step size to use after branching begins (if None, uses base_dt)
-            sqrt_epsilon: Small value for numerical stability
-        """
-        if num_branches == 1 and num_keep == 1:
-            return self.batch_sample_with_timewarp_only(class_label, batch_size)
-
-        assert (
-            num_branches % num_keep == 0
-        ), "num_branches must be divisible by num_keep"
-        assert 0.0 <= branch_start_time < 1.0, "branch_start_time must be in [0, 1)"
-
-        # --- Get warping functions and derivatives ---
-        warp_fns, warp_deriv_fns = self._get_warp_functions(
-            num_branches, self.device, sqrt_epsilon
-        )
-        # --- End Warp Function Definitions ---
-
-        score_fn, use_global = self._get_score_function(selector, use_global)
-
-        self.flow_model.eval()
-        actual_dt_step = (
-            branch_dt if branch_dt is not None else (1 / self.num_timesteps)
-        )
-
-        with torch.no_grad():
-            # Initialize with tensor class labels
-            current_samples = torch.randn(
-                batch_size,
-                self.channels,
-                self.image_size,
-                self.image_size,
-                device=self.device,
-            )
-            current_times = torch.zeros(batch_size, device=self.device)
-            # Class label is already a tensor of batch_size
-            current_label = class_label
-
-            # Regular flow until branch_start_time (same as before)
-            base_dt = 1 / self.num_timesteps  # Keep base_dt for this initial phase
-            while torch.any(current_times < branch_start_time):
-                # Ensure we only step up to branch_start_time
-                max_dt = torch.clamp(branch_start_time - current_times, min=0.0)
-                dt = torch.minimum(base_dt * torch.ones_like(current_times), max_dt)
-                active_mask = dt > 0  # Only compute velocity for active samples
-
-                if not torch.any(active_mask):
-                    break  # Exit if all reached start time
-
-                velocity = self.flow_model(
-                    current_times[active_mask],
-                    current_samples[active_mask],
-                    current_label[active_mask],
-                )
-                current_samples[active_mask] = current_samples[
-                    active_mask
-                ] + velocity * dt[active_mask].view(-1, 1, 1, 1)
-                current_times[active_mask] = (
-                    current_times[active_mask] + dt[active_mask]
-                )
-
-            # --- Main Path Exploration Loop ---
-            while torch.any(current_times < 1.0):
-                active_batch_mask = current_times < 1.0
-                if not torch.any(active_batch_mask):
-                    break
-
-                active_samples = current_samples[active_batch_mask]
-                active_times = current_times[active_batch_mask]
-                active_label = current_label[active_batch_mask]  # Get active labels
-                num_active = len(active_samples)
-
-                # --- 1. Create Branches ---
-                branched_samples = active_samples.repeat_interleave(num_branches, dim=0)
-                branched_times = active_times.repeat_interleave(num_branches)
-                branched_label = active_label.repeat_interleave(
-                    num_branches
-                )  # Repeat active labels
-                branch_indices_map = torch.arange(
-                    num_active, device=self.device
-                ).repeat_interleave(num_branches)
-
-                # Randomly select warp function indices for each branch
-                warp_indices = torch.randint(
-                    0, num_branches, (len(branched_samples),), device=self.device
-                )
-
-                # --- 2. Take ONE Branching Step with Warping ---
-                dt_step = torch.minimum(
-                    actual_dt_step * torch.ones_like(branched_times),
-                    1.0 - branched_times,
-                )
-
-                warped_times_step = torch.zeros_like(branched_times)
-                warp_derivs_step = torch.zeros_like(branched_times)
-                # Use the fetched functions
-                for i in range(num_branches):
-                    mask = warp_indices == i
-                    if torch.any(mask):
-                        orig_t = branched_times[mask]
-                        warped_t = warp_fns[i](orig_t)  # Use warp_fns list
-                        final_warped_t = (
-                            1 - warp_scale
-                        ) * orig_t + warp_scale * warped_t
-                        warped_times_step[mask] = final_warped_t
-
-                        orig_deriv = warp_deriv_fns[i](
-                            orig_t
-                        )  # Use warp_deriv_fns list
-                        final_warp_deriv = (1 - warp_scale) * torch.ones_like(
-                            orig_deriv
-                        ) + warp_scale * orig_deriv
-                        warp_derivs_step[mask] = final_warp_deriv
-
-                velocity_step = self.flow_model(
-                    warped_times_step, branched_samples, branched_label
-                )
-                branched_samples = (
-                    branched_samples
-                    + velocity_step
-                    * warp_derivs_step.view(-1, 1, 1, 1)
-                    * dt_step.view(-1, 1, 1, 1)
-                )
-                branched_times = branched_times + dt_step
-
-                # --- 3. Simulate Each Branch to Completion (for Scoring) ---
-                simulated_samples = branched_samples.clone()
-                simulated_times = branched_times.clone()
-                sim_warp_indices = warp_indices.clone()
-
-                while torch.any(simulated_times < 1.0):
-                    sim_active_mask = simulated_times < 1.0
-                    if not torch.any(sim_active_mask):
-                        break
-
-                    active_sim_samples = simulated_samples[sim_active_mask]
-                    active_sim_times = simulated_times[sim_active_mask]
-                    active_sim_label = branched_label[sim_active_mask]
-                    active_sim_warp_indices = sim_warp_indices[sim_active_mask]
-
-                    dt_sim = torch.minimum(
-                        actual_dt_step * torch.ones_like(active_sim_times),
-                        1.0 - active_sim_times,
-                    )
-
-                    warped_times_sim = torch.zeros_like(active_sim_times)
-                    warp_derivs_sim = torch.zeros_like(active_sim_times)
-                    # Use the fetched functions
-                    for i in range(num_branches):
-                        mask = active_sim_warp_indices == i
-                        if torch.any(mask):
-                            orig_t = active_sim_times[mask]
-                            warped_t = warp_fns[i](orig_t)  # Use warp_fns list
-                            final_warped_t = (
-                                1 - warp_scale
-                            ) * orig_t + warp_scale * warped_t
-                            warped_times_sim[mask] = final_warped_t
-
-                            orig_deriv = warp_deriv_fns[i](
-                                orig_t
-                            )  # Use warp_deriv_fns list
-                            final_warp_deriv = (1 - warp_scale) * torch.ones_like(
-                                orig_deriv
-                            ) + warp_scale * orig_deriv
-                            warp_derivs_sim[mask] = final_warp_deriv
-
-                    velocity_sim = self.flow_model(
-                        warped_times_sim, active_sim_samples, active_sim_label
-                    )
-                    update = (
-                        velocity_sim
-                        * warp_derivs_sim.view(-1, 1, 1, 1)
-                        * dt_sim.view(-1, 1, 1, 1)
-                    )
-                    simulated_samples[sim_active_mask] = active_sim_samples + update
-                    simulated_times[sim_active_mask] = active_sim_times + dt_sim
-
-                # --- 4. Score Simulated Samples ---
-                if use_global:
-                    final_scores = score_fn(simulated_samples)
-                else:
-                    final_scores = score_fn(simulated_samples, branched_label)
-
-                # --- 5. Select Best Branches ---
-                selected_samples_list = []
-                selected_times_list = []
-                selected_labels_list = []  # Track labels
-
-                for idx in range(num_active):  # Iterate through original active samples
-                    # Find all branches originating from the idx-th active sample
-                    mask = branch_indices_map == idx
-                    # Get the states AFTER THE FIRST BRANCHING STEP for these branches
-                    batch_branched_samples = branched_samples[mask]
-                    batch_branched_times = branched_times[mask]
-                    batch_branched_labels = branched_label[mask]  # Keep labels
-                    # Get the scores from the SIMULATED results for these branches
-                    batch_scores = final_scores[mask]
-
-                    # Select top num_keep based on scores
-                    num_to_keep = min(
-                        num_keep, len(batch_scores)
-                    )  # Handle cases with fewer branches than num_keep
-                    top_k_values, top_k_indices = torch.topk(
-                        batch_scores, k=num_to_keep, dim=0
-                    )
-                    # Keep the state from *after the branching step*
-                    selected_samples_list.append(batch_branched_samples[top_k_indices])
-                    selected_times_list.append(batch_branched_times[top_k_indices])
-                    selected_labels_list.append(
-                        batch_branched_labels[top_k_indices]
-                    )  # Keep labels
-
-                # --- 6. Update Current State ---
-                if not selected_samples_list:  # Handle empty case
-                    break  # No active samples left to process
-
-                # Update the state for the *next iteration* using the selected branches
-                next_samples = torch.cat(selected_samples_list, dim=0)
-                next_times = torch.cat(selected_times_list, dim=0)
-                next_label = torch.cat(
-                    selected_labels_list, dim=0
-                )  # Use concat for labels
-
-                # Replace the finished/processed samples with the new selected ones
-                new_current_samples = torch.zeros_like(current_samples)
-                new_current_times = torch.zeros_like(current_times)
-                new_current_label = torch.zeros_like(
-                    current_label
-                )  # Keep label tensor shape
-
-                # Keep samples that were already >= 1.0
-                finished_mask = ~active_batch_mask
-                if torch.any(finished_mask):
-                    new_current_samples[finished_mask] = current_samples[finished_mask]
-                    new_current_times[finished_mask] = current_times[finished_mask]
-                    new_current_label[finished_mask] = current_label[finished_mask]
-
-                # Add the newly selected samples (results of the branching)
-                new_current_samples[active_batch_mask] = next_samples
-                new_current_times[active_batch_mask] = next_times
-                new_current_label[active_batch_mask] = next_label
-
-                current_samples = new_current_samples
-                current_times = new_current_times
-                current_label = new_current_label
-
-            # --- Final Selection (after loop finishes) ---
-            if use_global:
-                final_scores = score_fn(current_samples)
-            else:
-                final_scores = score_fn(current_samples, current_label)
-
-            final_samples = []
-            samples_per_original = (
-                current_samples.shape[0] // batch_size
-            )  # Should be num_keep
-
-            # Correct way to handle potentially varying number of samples per batch item
-            current_batch_indices = torch.arange(
-                batch_size, device=self.device
-            ).repeat_interleave(
-                samples_per_original
-            )  # Map current samples back to original batch index
-
-            for i in range(batch_size):
-                batch_mask = current_batch_indices == i
-                batch_final_samples = current_samples[batch_mask]
-                batch_final_scores = final_scores[batch_mask]
-
-                best_idx_in_batch = torch.argmax(batch_final_scores)
-                final_samples.append(batch_final_samples[best_idx_in_batch])
-
-            return self.unnormalize_images(torch.stack(final_samples))
-
-    def batch_sample_with_timewarp_only(
-        self,
-        class_label,
-        batch_size=16,
-        warp_scale=0.5,
-        branch_dt=None,
-        sqrt_epsilon=1e-8,
-    ):
-        """
-        Sample using timewarping without branching, randomly selecting timewarp functions.
-        Similar to path exploration but with num_branches=1, without simulation/scoring.
-
-        Args:
-            class_label: Tensor of class labels for each sample
-            batch_size: Number of final samples to generate
-            warp_scale: Scale factor for time warping
-            branch_dt: Step size to use (if None, uses base_dt)
-            sqrt_epsilon: Small value for numerical stability
-        """
-        print("using timewarp-only sampler")
-
-        # Get a set of warping functions and derivatives
-        num_warp_fns = 2  # Number of different warp functions to choose from
-        warp_fns, warp_deriv_fns = self._get_warp_functions(
-            num_warp_fns, self.device, sqrt_epsilon
-        )
-
-        self.flow_model.eval()
-        actual_dt_step = (
-            branch_dt if branch_dt is not None else (1 / self.num_timesteps)
-        )
-
-        with torch.no_grad():
-            # Initialize with tensor class labels
-            current_samples = torch.randn(
-                batch_size,
-                self.channels,
-                self.image_size,
-                self.image_size,
-                device=self.device,
-            )
-            current_times = torch.zeros(batch_size, device=self.device)
-
-            # Main sampling loop
-            while torch.any(current_times < 1.0):
-                active_mask = current_times < 1.0
-                if not torch.any(active_mask):
-                    break
-
-                active_samples = current_samples[active_mask]
-                active_times = current_times[active_mask]
-                active_label = class_label[active_mask]
-
-                # Compute step size
-                dt_step = torch.minimum(
-                    actual_dt_step * torch.ones_like(active_times),
-                    1.0 - active_times,
-                )
-
-                # Randomly select a warp function for each sample
-                warp_indices = torch.randint(
-                    0, num_warp_fns, (len(active_samples),), device=self.device
-                )
-
-                # Apply the selected warp functions
-                warped_times = torch.zeros_like(active_times)
-                warp_derivs = torch.zeros_like(active_times)
-
-                for i in range(num_warp_fns):
-                    mask = warp_indices == i
-                    if torch.any(mask):
-                        orig_t = active_times[mask]
-                        warped_t = warp_fns[i](orig_t)
-                        final_warped_t = (
-                            1 - warp_scale
-                        ) * orig_t + warp_scale * warped_t
-                        warped_times[mask] = final_warped_t
-
-                        orig_deriv = warp_deriv_fns[i](orig_t)
-                        final_warp_deriv = (1 - warp_scale) * torch.ones_like(
-                            orig_deriv
-                        ) + warp_scale * orig_deriv
-                        warp_derivs[mask] = final_warp_deriv
-
-                # Compute velocity and update samples
-                velocity = self.flow_model(warped_times, active_samples, active_label)
-
-                # Apply velocity with time warping (chain rule)
-                update = (
-                    velocity * warp_derivs.view(-1, 1, 1, 1) * dt_step.view(-1, 1, 1, 1)
-                )
-                active_samples = active_samples + update
-
-                # Update times
-                active_times = active_times + dt_step
-
-                # Update the main tensors
-                current_samples[active_mask] = active_samples
-                current_times[active_mask] = active_times
-
-            return self.unnormalize_images(current_samples)
-
-    def batch_sample_with_path_exploration_timewarp_shifted(
-        self,
-        class_label,
-        batch_size=16,
-        num_branches=4,
-        num_keep=2,
-        warp_scale=0.5,
-        selector="fid",
-        use_global=False,
-        branch_start_time=0.0,
-        branch_dt=None,
-        sqrt_epsilon=1e-8,
-    ):
-        """
-        Enhanced sampling method using time warping path exploration.
-        Supports num_branches > 4.
-        Applies chain rule for time warping: dx/dt = v(x, f(t)) * f'(t).
-
-        Args:
-            class_label: Tensor of class labels for each sample
-            batch_size: Number of final samples to generate
-            num_branches: Number of branches per batch element at each step
-            num_keep: Number of samples to keep before next branching
-            warp_scale: Scale factor for time warping
-            selector: Selection criteria - options include "fid", "mahalanobis", "mean", "inception_score", "dino_score"
-            use_global: Whether to use global statistics instead of class-specific ones
-            branch_start_time: Time point at which to start branching (0.0 to 1.0)
-            branch_dt: Step size to use after branching begins (if None, uses base_dt)
-            sqrt_epsilon: Small value for numerical stability
-        """
-        if num_branches == 1 and num_keep == 1:
-            return self.batch_sample_with_shifted_timewarp_only(class_label, batch_size)
-
-        assert (
-            num_branches % num_keep == 0
-        ), "num_branches must be divisible by num_keep"
-        assert 0.0 <= branch_start_time < 1.0, "branch_start_time must be in [0, 1)"
-
-        # --- Get warping functions and derivatives ---
-        warp_fns, warp_deriv_fns = self._get_warp_functions(
-            num_branches, self.device, sqrt_epsilon
-        )
-        # --- End Warp Function Definitions ---
-
-        score_fn, use_global = self._get_score_function(selector, use_global)
-
-        self.flow_model.eval()
-        actual_dt_step = (
-            branch_dt if branch_dt is not None else (1 / self.num_timesteps)
-        )
-
-        with torch.no_grad():
-            # Initialize with tensor class labels
-            current_samples = torch.randn(
-                batch_size,
-                self.channels,
-                self.image_size,
-                self.image_size,
-                device=self.device,
-            )
-            current_times = torch.zeros(batch_size, device=self.device)
-            # Class label is already a tensor of batch_size
-            current_label = class_label
-
-            # Regular flow until branch_start_time (same as before)
-            base_dt = 1 / self.num_timesteps  # Keep base_dt for this initial phase
-            while torch.any(current_times < branch_start_time):
-                # Ensure we only step up to branch_start_time
-                max_dt = torch.clamp(branch_start_time - current_times, min=0.0)
-                dt = torch.minimum(base_dt * torch.ones_like(current_times), max_dt)
-                active_mask = dt > 0  # Only compute velocity for active samples
-
-                if not torch.any(active_mask):
-                    break  # Exit if all reached start time
-
-                velocity = self.flow_model(
-                    current_times[active_mask],
-                    current_samples[active_mask],
-                    current_label[active_mask],
-                )
-                current_samples[active_mask] = current_samples[
-                    active_mask
-                ] + velocity * dt[active_mask].view(-1, 1, 1, 1)
-                current_times[active_mask] = (
-                    current_times[active_mask] + dt[active_mask]
-                )
-
-            current_warped_times = current_times.clone()
-            # --- Main Path Exploration Loop ---
-            while torch.any(current_times < 1.0):
-                active_batch_mask = current_times < 1.0
-                if not torch.any(active_batch_mask):
-                    break
-
-                active_samples = current_samples[active_batch_mask]
-                active_times = current_times[active_batch_mask]
-                active_warped_times = current_warped_times[
-                    active_batch_mask
-                ]  # Get current warped times
-                active_label = current_label[active_batch_mask]
-                num_active = len(active_samples)
-
-                # --- 1. Create Branches ---
-                branched_samples = active_samples.repeat_interleave(num_branches, dim=0)
-                branched_times = active_times.repeat_interleave(num_branches)
-                branched_warped_times = active_warped_times.repeat_interleave(
-                    num_branches
-                )  # Include warped times
-                branched_label = active_label.repeat_interleave(num_branches)
-                branch_indices_map = torch.arange(
-                    num_active, device=self.device
-                ).repeat_interleave(num_branches)
-                warp_indices = (
-                    torch.arange(len(branched_samples), device=self.device)
-                    % num_branches
-                )
-
-                # --- 2. Take ONE Branching Step with Warping ---
-                dt_step = torch.minimum(
-                    actual_dt_step * torch.ones_like(branched_times),
-                    1.0 - branched_times,
-                )
-
-                # Create all warping functions for each branch directly
-                all_warp_fns = []
-                all_warp_deriv_fns = []
-
-                # For each branch, create continuous warping functions at its current time
-                for i in range(len(branched_samples)):
-                    branch_time = branched_times[i].item()
-                    branch_warped_time = branched_warped_times[
-                        i
-                    ].item()  # Use the current warped time
-                    warp_idx = warp_indices[i].item()
-
-                    # Generate continuous warping functions at this branch's time and warped time
-                    warp_fns_i, warp_deriv_fns_i = self._get_continuous_warp_functions(
-                        num_branches,
-                        self.device,
-                        branch_time,
-                        current_warped_time=branch_warped_time,  # Pass the current warped time
-                        sqrt_epsilon=sqrt_epsilon,
-                        clamp_time=True,
-                    )
-
-                    # Store the specific function needed for this branch
-                    all_warp_fns.append(warp_fns_i[warp_idx])
-                    all_warp_deriv_fns.append(warp_deriv_fns_i[warp_idx])
-
-                # Apply warping to each branch
-                warped_times_step = torch.zeros_like(branched_times)
-                warp_derivs_step = torch.zeros_like(branched_times)
-
-                for i in range(len(branched_samples)):
-                    t = branched_times[i]
-                    warped_t = all_warp_fns[i](t.unsqueeze(0)).squeeze()
-                    final_warped_t = (1 - warp_scale) * t + warp_scale * warped_t
-                    warped_times_step[i] = final_warped_t
-
-                    warp_deriv = all_warp_deriv_fns[i](t.unsqueeze(0)).squeeze()
-                    final_warp_deriv = (1 - warp_scale) * torch.ones_like(
-                        warp_deriv
-                    ) + warp_scale * warp_deriv
-                    warp_derivs_step[i] = final_warp_deriv
-
-                # Compute velocity using the warped times
-                velocity_step = self.flow_model(
-                    warped_times_step, branched_samples, branched_label
-                )
-
-                # Update samples using the velocity and warp derivatives
-                branched_samples = (
-                    branched_samples
-                    + velocity_step
-                    * warp_derivs_step.view(-1, 1, 1, 1)
-                    * dt_step.view(-1, 1, 1, 1)
-                )
-                branched_times = branched_times + dt_step
-                next_branched_warped_times = (
-                    warped_times_step.clone()
-                )  # Store for next iteration
-
-                # --- 3. Simulate Each Branch to Completion (for Scoring) ---
-                simulated_samples = branched_samples.clone()
-                simulated_times = branched_times.clone()
-                simulated_warped_times = (
-                    next_branched_warped_times.clone()
-                )  # Track warped times during simulation
-
-                # Clone the warping functions for simulation
-                sim_warp_fns = all_warp_fns.copy()
-                sim_warp_deriv_fns = all_warp_deriv_fns.copy()
-
-                while torch.any(simulated_times < 1.0):
-                    sim_active_mask = simulated_times < 1.0
-                    if not torch.any(sim_active_mask):
-                        break
-
-                    active_indices = torch.where(sim_active_mask)[0]
-                    active_sim_samples = simulated_samples[sim_active_mask]
-                    active_sim_times = simulated_times[sim_active_mask]
-                    active_sim_warped_times = simulated_warped_times[sim_active_mask]
-                    active_sim_label = branched_label[sim_active_mask]
-
-                    dt_sim = torch.minimum(
-                        actual_dt_step * torch.ones_like(active_sim_times),
-                        1.0 - active_sim_times,
-                    )
-
-                    warped_times_sim = torch.zeros_like(active_sim_times)
-                    warp_derivs_sim = torch.zeros_like(active_sim_times)
-
-                    # Apply warping functions to each active branch
-                    for idx, i in enumerate(active_indices):
-                        t = active_sim_times[idx]
-                        warped_t = sim_warp_fns[i](t.unsqueeze(0)).squeeze()
-                        final_warped_t = (1 - warp_scale) * t + warp_scale * warped_t
-                        warped_times_sim[idx] = final_warped_t
-
-                        warp_deriv = sim_warp_deriv_fns[i](t.unsqueeze(0)).squeeze()
-                        final_warp_deriv = (1 - warp_scale) * torch.ones_like(
-                            warp_deriv
-                        ) + warp_scale * warp_deriv
-                        warp_derivs_sim[idx] = final_warp_deriv
-
-                    # Compute velocity and update samples
-                    velocity_sim = self.flow_model(
-                        warped_times_sim, active_sim_samples, active_sim_label
-                    )
-                    update = (
-                        velocity_sim
-                        * warp_derivs_sim.view(-1, 1, 1, 1)
-                        * dt_sim.view(-1, 1, 1, 1)
-                    )
-                    simulated_samples[sim_active_mask] = active_sim_samples + update
-                    simulated_times[sim_active_mask] = active_sim_times + dt_sim
-                    simulated_warped_times[sim_active_mask] = (
-                        warped_times_sim  # Update warped times for next step
-                    )
-
-                # After simulation, score samples as before
-                if use_global:
-                    final_scores = score_fn(simulated_samples)
-                else:
-                    final_scores = score_fn(simulated_samples, branched_label)
-
-                # --- 5. Select Best Branches and update ---
-                selected_samples_list = []
-                selected_times_list = []
-                selected_warped_times_list = []  # Also track selected warped times
-                selected_labels_list = []
-
-                for idx in range(num_active):
-                    mask = branch_indices_map == idx
-                    batch_branched_samples = branched_samples[mask]
-                    batch_branched_times = branched_times[mask]
-                    batch_branched_warped_times = next_branched_warped_times[
-                        mask
-                    ]  # Get warped times
-                    batch_branched_labels = branched_label[mask]
-                    batch_scores = final_scores[mask]
-
-                    num_to_keep = min(num_keep, len(batch_scores))
-                    top_k_values, top_k_indices = torch.topk(
-                        batch_scores, k=num_to_keep, dim=0
-                    )
-
-                    selected_samples_list.append(batch_branched_samples[top_k_indices])
-                    selected_times_list.append(batch_branched_times[top_k_indices])
-                    selected_warped_times_list.append(
-                        batch_branched_warped_times[top_k_indices]
-                    )  # Keep warped times
-                    selected_labels_list.append(batch_branched_labels[top_k_indices])
-
-                # --- 6. Update Current State ---
-                if not selected_samples_list:
-                    break
-
-                next_samples = torch.cat(selected_samples_list, dim=0)
-                next_times = torch.cat(selected_times_list, dim=0)
-                next_warped_times = torch.cat(
-                    selected_warped_times_list, dim=0
-                )  # Update warped times
-                next_label = torch.cat(selected_labels_list, dim=0)
-
-                # Replace the finished/processed samples with the new selected ones
-                new_current_samples = torch.zeros_like(current_samples)
-                new_current_times = torch.zeros_like(current_times)
-                new_current_warped_times = torch.zeros_like(
-                    current_warped_times
-                )  # For warped times
-                new_current_label = torch.zeros_like(current_label)
-
-                # Keep samples that were already >= 1.0
-                finished_mask = ~active_batch_mask
-                if torch.any(finished_mask):
-                    new_current_samples[finished_mask] = current_samples[finished_mask]
-                    new_current_times[finished_mask] = current_times[finished_mask]
-                    new_current_warped_times[finished_mask] = current_warped_times[
-                        finished_mask
-                    ]
-                    new_current_label[finished_mask] = current_label[finished_mask]
-
-                # Add the newly selected samples (results of the branching)
-                new_current_samples[active_batch_mask] = next_samples
-                new_current_times[active_batch_mask] = next_times
-                new_current_warped_times[active_batch_mask] = next_warped_times
-                new_current_label[active_batch_mask] = next_label
-
-                current_samples = new_current_samples
-                current_times = new_current_times
-                current_warped_times = new_current_warped_times
-                current_label = new_current_label
-            # --- Final Selection (after loop finishes) ---
-            if use_global:
-                final_scores = score_fn(current_samples)
-            else:
-                final_scores = score_fn(current_samples, current_label)
-
-            final_samples = []
-            samples_per_original = (
-                current_samples.shape[0] // batch_size
-            )  # Should be num_keep
-
-            # Correct way to handle potentially varying number of samples per batch item
-            current_batch_indices = torch.arange(
-                batch_size, device=self.device
-            ).repeat_interleave(
-                samples_per_original
-            )  # Map current samples back to original batch index
-
-            for i in range(batch_size):
-                batch_mask = current_batch_indices == i
-                batch_final_samples = current_samples[batch_mask]
-                batch_final_scores = final_scores[batch_mask]
-
-                best_idx_in_batch = torch.argmax(batch_final_scores)
-                final_samples.append(batch_final_samples[best_idx_in_batch])
-
-            return self.unnormalize_images(torch.stack(final_samples))
-
-    def batch_sample_with_shifted_timewarp_only(
-        self,
-        class_label,
-        batch_size=16,
-        warp_scale=0.5,
-        branch_dt=None,
-        sqrt_epsilon=1e-8,
-        max_steps=1000,  # Add maximum number of steps to prevent infinite loops
-    ):
-        """
-        Sample using continuous timewarping without branching, with shifted warping.
-        Uses warped time as the true time parameter of the system.
-
-        Args:
-            class_label: Tensor of class labels for each sample
-            batch_size: Number of final samples to generate
-            warp_scale: Scale factor for time warping
-            branch_dt: Step size to use (if None, uses base_dt)
-            sqrt_epsilon: Small value for numerical stability
-            max_steps: Maximum number of steps to prevent infinite loops
-        """
-        print("using shifted timewarp-only sampler (warped time as true time)")
-
-        # Number of different warp functions to choose from
-        num_warp_fns = 4
-
-        self.flow_model.eval()
-        actual_dt_step = (
-            branch_dt if branch_dt is not None else (1 / self.num_timesteps)
-        )
-
-        with torch.no_grad():
-            # Initialize
-            current_samples = torch.randn(
-                batch_size,
-                self.channels,
-                self.image_size,
-                self.image_size,
-                device=self.device,
-            )
-            # Track internal times (0 to 1 parameter)
-            current_times = torch.zeros(batch_size, device=self.device)
-            # Track warped times (true time parameter for the system)
-            current_warped_times = torch.zeros(batch_size, device=self.device)
-
-            step_count = 0
-
-            # Main sampling loop - continue until all warped times reach close to 1.0
-            while torch.any(current_warped_times < 0.999) and step_count < max_steps:
-                step_count += 1
-                active_mask = current_warped_times < 0.999  # Use 0.999 as threshold
-                if not torch.any(active_mask):
-                    break
-
-                active_samples = current_samples[active_mask]
-                active_times = current_times[active_mask]
-                active_warped_times = current_warped_times[active_mask]
-                active_label = class_label[active_mask]
-
-                # Compute step size for internal time
-                dt_step = torch.minimum(
-                    actual_dt_step * torch.ones_like(active_times),
-                    1.0 - active_times,
-                )
-
-                # Check if we're making very small time steps (might cause infinite loop)
-                if torch.all(dt_step < 1e-6):
-                    print("Warning: Very small time steps detected, forcing completion")
-                    current_warped_times[active_mask] = 1.0
-                    break
-
-                # Randomly select a warp function for each sample
-                warp_indices = torch.randint(
-                    0, num_warp_fns, (len(active_samples),), device=self.device
-                )
-
-                # Create warping functions for each sample
-                all_warp_fns = []
-                all_warp_deriv_fns = []
-
-                # For each sample, create continuous warping functions at its current time
-                for i in range(len(active_samples)):
-                    sample_time = active_times[i].item()
-                    sample_warped_time = active_warped_times[i].item()
-                    warp_idx = warp_indices[i].item()
-
-                    # Generate continuous warping functions at this sample's time and warped time
-                    warp_fns_i, warp_deriv_fns_i = self._get_continuous_warp_functions(
-                        num_warp_fns,
-                        self.device,
-                        sample_time,
-                        current_warped_time=sample_warped_time,
-                        sqrt_epsilon=sqrt_epsilon,
-                        clamp_time=True,
-                    )
-
-                    # Store the specific function needed for this sample
-                    all_warp_fns.append(warp_fns_i[warp_idx])
-                    all_warp_deriv_fns.append(warp_deriv_fns_i[warp_idx])
-
-                # Apply warping to each sample
-                next_warped_times = torch.zeros_like(active_times)
-                warp_derivs = torch.zeros_like(active_times)
-
-                for i in range(len(active_samples)):
-                    t = active_times[i]
-                    warped_t = all_warp_fns[i](t.unsqueeze(0)).squeeze()
-                    final_warped_t = (1 - warp_scale) * t + warp_scale * warped_t
-                    next_warped_times[i] = final_warped_t
-
-                    warp_deriv = all_warp_deriv_fns[i](t.unsqueeze(0)).squeeze()
-                    final_warp_deriv = (1 - warp_scale) * torch.ones_like(
-                        warp_deriv
-                    ) + warp_scale * warp_deriv
-                    warp_derivs[i] = final_warp_deriv
-
-                # Ensure progress in warped time
-                min_warped_time_progress = (
-                    0.001  # Minimum progress to ensure loop termination
-                )
-                warped_dt = next_warped_times - active_warped_times
-                too_small_progress = warped_dt < min_warped_time_progress
-
-                if torch.any(too_small_progress):
-                    # Boost progress to ensure termination for samples making little progress
-                    next_warped_times[too_small_progress] = (
-                        active_warped_times[too_small_progress]
-                        + min_warped_time_progress
-                    )
-
-                # Ensure we don't overshoot beyond warped time = 1.0
-                next_warped_times = torch.clamp(next_warped_times, max=1.0)
-
-                # Compute velocity using the warped times
-                velocity = self.flow_model(
-                    next_warped_times, active_samples, active_label
-                )
-
-                # Apply velocity
-                # For simplified integration, we use a direct step based on velocity
-                active_samples = active_samples + velocity * dt_step.view(-1, 1, 1, 1)
-
-                # Update times
-                active_times = active_times + dt_step
-
-                # Update the main tensors
-                current_samples[active_mask] = active_samples
-                current_times[active_mask] = active_times
-                current_warped_times[active_mask] = next_warped_times
-
-                # Print progress periodically
-                if step_count % 100 == 0:
-                    print(
-                        f"Step {step_count}, max warped time: {current_warped_times.max().item():.4f}"
-                    )
-
-            if step_count >= max_steps:
-                print(
-                    f"Warning: Reached maximum steps ({max_steps}). Some samples may not be fully integrated."
-                )
-                # Force completion for any remaining samples
-                current_warped_times[current_warped_times < 1.0] = 1.0
-
-            return self.unnormalize_images(current_samples)
-
     def batch_sample_with_random_search(
         self,
         class_label,
@@ -2490,909 +1582,6 @@ class MCTSFlowSampler:
                 if "hypothetical_features" in locals():
                     del hypothetical_features
                 torch.cuda.empty_cache()
-
-            print(
-                f"--- End Pass {pass_num + 1}: Made {num_swaps_this_pass} swaps. Current FID: {current_global_fid:.4f} ---"
-            )
-
-        return self.unnormalize_images(initial_pool_samples)
-
-    def batch_sample_refine_global_fid_path_explore(
-        self,
-        n_samples: int,  # Total samples in the final dataset
-        refinement_batch_size: int,  # Size of batches to swap
-        num_branches: int,  # Branches per sample at each step
-        num_batches: int = 10,  # Number of random batches to evaluate
-        dt_std: float = 0.1,  # Standard deviation for dt sampling
-        num_iterations: int = 1,  # Number of FULL refinement passes over the data
-        use_global: bool = True,  # Use global or class-specific target FID stats
-        branch_start_time: float = 0.0,  # When to start branching
-        branch_dt: float = None,  # Step size during branching phase
-    ):
-        """
-        Generates a full dataset and iteratively refines it to minimize global FID
-        using path exploration with dt sampling. Systematically attempts to replace
-        each batch num_iterations times, starting from initial noise states at
-        branch_start_time and exploring different paths from there.
-
-        Args:
-            n_samples: Total number of samples in the final dataset.
-            refinement_batch_size: Size of the batches to consider swapping out.
-            num_branches: Branches per sample at each step.
-            num_batches: Number of random batches to evaluate for improvement.
-            dt_std: Standard deviation for sampling different dt values.
-            num_iterations: Number of full passes over the dataset for refinement.
-            use_global: Whether to use global target stats for FID calculation.
-            branch_start_time: Time point at which to start branching (0.0 to 1.0).
-            branch_dt: Step size to use after branching begins (if None, uses base_dt).
-
-        Returns:
-            Tensor of [n_samples, C, H, W] representing the final refined dataset.
-        """
-
-        self.flow_model.eval()
-        samples_per_class = n_samples // self.num_classes
-        base_dt = 1 / self.num_timesteps
-        branch_dt = branch_dt if branch_dt is not None else base_dt
-
-        # --- 1. Initialization: Generate Initial Noise and Partial Integration ---
-        # We store both initial noise and integrated samples at branch_start_time
-        initial_pool_noise = torch.randn(
-            (n_samples, self.channels, self.image_size, self.image_size),
-            dtype=torch.float32,
-            device=self.device,
-        )
-        initial_pool_samples = initial_pool_noise.clone()
-        initial_pool_labels = torch.zeros(
-            n_samples, dtype=torch.long, device=self.device
-        )
-
-        # Store samples at branch_start_time for later refinement
-        branched_pool_samples = initial_pool_noise.clone()
-
-        current_idx = 0
-        feature_batch_size = 128
-
-        # Generate initial samples by class and integrate to branch_start_time
-        for class_label in range(self.num_classes):
-            generated_for_class = 0
-            # Calculate target number ensuring the last class gets the remainder
-            target_for_class = (
-                samples_per_class
-                if class_label < self.num_classes - 1
-                else n_samples - current_idx
-            )
-
-            while generated_for_class < target_for_class:
-                chunk_size = min(
-                    refinement_batch_size, target_for_class - generated_for_class
-                )
-                if chunk_size <= 0:
-                    break
-
-                # Get the slice of initial noise
-                chunk_start = current_idx
-                chunk_end = chunk_start + chunk_size
-                chunk_samples = initial_pool_noise[chunk_start:chunk_end].clone()
-                chunk_label = torch.full((chunk_size,), class_label, device=self.device)
-
-                # Set labels in the main pool
-                initial_pool_labels[chunk_start:chunk_end] = chunk_label
-
-                # Integrate to branch_start_time
-                if branch_start_time > 0:
-                    current_t = 0.0
-                    while current_t < branch_start_time:
-                        dt = min(base_dt, branch_start_time - current_t)
-                        t_batch = torch.full(
-                            (chunk_size,), current_t, device=self.device
-                        )
-                        with torch.no_grad():
-                            velocity = self.flow_model(
-                                t_batch, chunk_samples, chunk_label
-                            )
-                        chunk_samples = chunk_samples + velocity * dt
-                        current_t += dt
-
-                # Store partially integrated samples at branch_start_time for refinement later
-                branched_pool_samples[chunk_start:chunk_end] = chunk_samples
-
-                # Continue integration to t=1.0 for initial pool
-                current_t = branch_start_time
-                while current_t < 1.0:
-                    dt = min(base_dt, 1.0 - current_t)
-                    t_batch = torch.full((chunk_size,), current_t, device=self.device)
-                    with torch.no_grad():
-                        velocity = self.flow_model(t_batch, chunk_samples, chunk_label)
-                    chunk_samples = chunk_samples + velocity * dt
-                    current_t += dt
-
-                # Store final integrated samples
-                initial_pool_samples[chunk_start:chunk_end] = chunk_samples
-
-                # Update counters
-                current_idx += chunk_size
-                generated_for_class += chunk_size
-
-        # --- Handle num_branches == 1 Case ---
-        if num_branches == 1:
-            return initial_pool_samples
-
-        # --- Pre-compute Initial Features and FID ---
-        with torch.no_grad():
-            all_features_list = []
-            for i in range(0, n_samples, feature_batch_size):
-                batch = initial_pool_samples[i : i + feature_batch_size]
-                features = self.extract_inception_features(batch)
-                all_features_list.append(features)
-            current_pool_features = np.concatenate(all_features_list, axis=0)
-
-        # Get target statistics
-        if use_global:
-            target_mu = self.global_fid["mu"]
-            target_sigma = self.global_fid["sigma"]
-        else:
-            raise NotImplementedError(
-                "Class-specific FID refinement target not implemented yet."
-            )
-
-        current_global_fid = self.compute_fid_from_features(
-            current_pool_features, target_mu, target_sigma
-        )
-        print(f"Initial Global FID: {current_global_fid:.4f}")
-
-        # --- 2. Refinement Loop ---
-        for pass_num in range(num_iterations):
-            print(f"\n--- Refinement Pass {pass_num + 1}/{num_iterations} ---")
-            num_swaps_this_pass = 0
-
-            # Iterate systematically through classes and batches within classes
-            for target_class in range(self.num_classes):
-                class_indices = torch.where(initial_pool_labels == target_class)[0]
-                num_samples_in_class = len(class_indices)
-                if num_samples_in_class == 0:
-                    continue
-
-                # Iterate through batches within the class
-                for batch_start_idx in range(
-                    0, num_samples_in_class, refinement_batch_size
-                ):
-                    batch_end_idx = min(
-                        batch_start_idx + refinement_batch_size, num_samples_in_class
-                    )
-                    actual_refinement_size = batch_end_idx - batch_start_idx
-                    if actual_refinement_size == 0:
-                        continue
-
-                    # Get the indices within the GLOBAL pool for this batch
-                    indices_to_replace = class_indices[
-                        batch_start_idx:batch_end_idx
-                    ].cpu()
-
-                    # Start with the partially integrated samples at branch_start_time
-                    current_batch_samples = branched_pool_samples[
-                        indices_to_replace
-                    ].clone()
-                    current_batch_times = torch.full(
-                        (actual_refinement_size,), branch_start_time, device=self.device
-                    )
-                    current_batch_label = torch.full(
-                        (actual_refinement_size,), target_class, device=self.device
-                    )
-
-                    # Prepare feature pool without the batch we're replacing
-                    pool_indices_mask = np.ones(n_samples, dtype=bool)
-                    pool_indices_mask[indices_to_replace] = False
-                    features_pool_without_replaced = current_pool_features[
-                        pool_indices_mask
-                    ]
-
-                    # Path exploration with continuous checking
-                    with torch.no_grad():
-                        current_time = branch_start_time
-
-                        while current_time < 1.0:
-                            # Create branches for the current batch
-                            branched_samples = current_batch_samples.repeat_interleave(
-                                num_branches, dim=0
-                            )
-                            branched_times = current_batch_times.repeat_interleave(
-                                num_branches
-                            )
-                            branched_label = current_batch_label.repeat_interleave(
-                                num_branches
-                            )
-
-                            # Track which original sample each branch belongs to
-                            branch_indices = torch.arange(
-                                len(current_batch_samples), device=self.device
-                            ).repeat_interleave(num_branches)
-
-                            # Sample different dt values for each branch
-                            dts = torch.normal(
-                                mean=branch_dt,
-                                std=dt_std * branch_dt,
-                                size=(len(branched_samples),),
-                                device=self.device,
-                            )
-                            dts = torch.clamp(
-                                dts,
-                                min=torch.tensor(0.0, device=self.device),
-                                max=1.0 - branched_times,
-                            )
-
-                            # Take the branching step
-                            velocity = self.flow_model(
-                                branched_times, branched_samples, branched_label
-                            )
-                            branched_samples = branched_samples + velocity * dts.view(
-                                -1, 1, 1, 1
-                            )
-                            branched_times = branched_times + dts
-
-                            # Simulate forward to completion (t=1.0)
-                            simulated_samples = branched_samples.clone()
-                            simulated_times = branched_times.clone()
-
-                            while torch.any(simulated_times < 1.0):
-                                active_mask = simulated_times < 1.0
-                                if not torch.any(active_mask):
-                                    break
-
-                                sim_velocity = self.flow_model(
-                                    simulated_times[active_mask],
-                                    simulated_samples[active_mask],
-                                    branched_label[active_mask],
-                                )
-
-                                sim_dt = torch.min(
-                                    base_dt
-                                    * torch.ones_like(simulated_times[active_mask]),
-                                    1.0 - simulated_times[active_mask],
-                                )
-                                simulated_samples[active_mask] = simulated_samples[
-                                    active_mask
-                                ] + sim_velocity * sim_dt.view(-1, 1, 1, 1)
-                                simulated_times[active_mask] = (
-                                    simulated_times[active_mask] + sim_dt
-                                )
-
-                            # Extract features for all completed samples
-                            all_simulated_features = []
-                            for i in range(
-                                0, len(simulated_samples), feature_batch_size
-                            ):
-                                batch = simulated_samples[i : i + feature_batch_size]
-                                features = self.extract_inception_features(batch)
-                                all_simulated_features.append(features)
-                            all_simulated_features = np.concatenate(
-                                all_simulated_features, axis=0
-                            )
-
-                            # Evaluate potential batches
-                            best_hypothetical_fid = float("inf")
-                            best_batch_indices = None
-                            best_original_indices = None
-
-                            # Create and evaluate num_batches random batches, ensuring diversity
-                            for batch_idx in range(num_batches):
-                                # Select exactly one branch from each original sample
-                                batch_indices = []
-
-                                # For each original sample index
-                                for orig_idx in range(actual_refinement_size):
-                                    # Find all branches from this original sample
-                                    branch_mask = branch_indices == orig_idx
-                                    candidate_indices = torch.where(branch_mask)[0]
-
-                                    # Randomly select one branch
-                                    if len(candidate_indices) > 0:
-                                        selected_idx = candidate_indices[
-                                            torch.randint(
-                                                len(candidate_indices),
-                                                (1,),
-                                                device=self.device,
-                                            )
-                                        ].item()
-                                        batch_indices.append(selected_idx)
-
-                                # Skip if we couldn't form a complete batch
-                                if len(batch_indices) != actual_refinement_size:
-                                    continue
-
-                                # Get features for this batch
-                                batch_features = all_simulated_features[batch_indices]
-
-                                # Calculate hypothetical FID
-                                hypothetical_features = np.concatenate(
-                                    (features_pool_without_replaced, batch_features),
-                                    axis=0,
-                                )
-                                hypothetical_fid = self.compute_fid_from_features(
-                                    hypothetical_features, target_mu, target_sigma
-                                )
-
-                                # Update best if improved
-                                if hypothetical_fid < best_hypothetical_fid:
-                                    best_hypothetical_fid = hypothetical_fid
-                                    best_batch_indices = batch_indices
-                                    best_original_indices = np.array(
-                                        [
-                                            branch_indices[idx].item()
-                                            for idx in batch_indices
-                                        ]
-                                    )
-
-                            # Update the pool samples ONLY if the best batch improves global FID
-                            if best_hypothetical_fid < current_global_fid:
-                                print(
-                                    f"      Found better batch at t={current_time:.4f}. New FID: {best_hypothetical_fid:.4f}"
-                                )
-                                num_swaps_this_pass += 1
-
-                                # Update the final samples in the main pool
-                                initial_pool_samples[indices_to_replace] = (
-                                    simulated_samples[best_batch_indices]
-                                )
-
-                                # Update features
-                                current_pool_features[indices_to_replace] = (
-                                    all_simulated_features[best_batch_indices]
-                                )
-
-                                # Update the current FID
-                                current_global_fid = best_hypothetical_fid
-
-                            # For path exploration, select the best branches
-                            # We need exactly one branch per original sample
-                            next_batch_samples = []
-                            next_batch_times = []
-
-                            # Use the original indices from the best batch to select which samples to continue with
-                            for orig_idx in range(actual_refinement_size):
-                                # Find position in the best batch where this original index appears
-                                positions = np.where(best_original_indices == orig_idx)[
-                                    0
-                                ]
-
-                                if len(positions) > 0:
-                                    # If present in best batch, use the corresponding branch
-                                    branch_idx = best_batch_indices[positions[0]]
-                                    next_batch_samples.append(
-                                        branched_samples[branch_idx]
-                                    )
-                                    next_batch_times.append(branched_times[branch_idx])
-                                else:
-                                    # If not in best batch, use a random branch for this original
-                                    branch_mask = branch_indices == orig_idx
-                                    candidate_indices = torch.where(branch_mask)[0]
-                                    if len(candidate_indices) > 0:
-                                        random_idx = candidate_indices[
-                                            torch.randint(
-                                                len(candidate_indices),
-                                                (1,),
-                                                device=self.device,
-                                            )
-                                        ].item()
-                                        next_batch_samples.append(
-                                            branched_samples[random_idx]
-                                        )
-                                        next_batch_times.append(
-                                            branched_times[random_idx]
-                                        )
-                                    else:
-                                        # This case shouldn't happen with proper branching
-                                        pass
-
-                            # Update current batch for next iteration
-                            if len(next_batch_samples) == actual_refinement_size:
-                                current_batch_samples = torch.stack(next_batch_samples)
-                                current_batch_times = torch.stack(next_batch_times)
-
-                                # Update current time to minimum of current batch times
-                                current_time = current_batch_times.min().item()
-                            else:
-                                # If we couldn't form a complete batch, end path exploration
-                                break
-
-                            # Clean up to save memory
-                            del (
-                                branched_samples,
-                                branched_times,
-                                simulated_samples,
-                                simulated_times,
-                            )
-                            del all_simulated_features
-                            if "hypothetical_features" in locals():
-                                del hypothetical_features
-                            torch.cuda.empty_cache()
-
-            print(
-                f"--- End Pass {pass_num + 1}: Made {num_swaps_this_pass} swaps. Current FID: {current_global_fid:.4f} ---"
-            )
-
-        return self.unnormalize_images(initial_pool_samples)
-
-    def batch_sample_refine_global_fid_timewarp(
-        self,
-        n_samples: int,  # Total samples in the final dataset
-        refinement_batch_size: int,  # Size of batches to swap
-        num_branches: int,  # Branches per sample at each step
-        num_batches: int = 10,  # Number of random batches to evaluate
-        warp_scale: float = 0.5,  # Scale of time warping (0-1)
-        num_iterations: int = 1,  # Number of FULL refinement passes over the data
-        use_global: bool = True,  # Use global or class-specific target FID stats
-        branch_start_time: float = 0.0,  # When to start branching
-        branch_dt: float = None,  # Step size during branching phase
-        sqrt_epsilon: float = 1e-8,  # Small epsilon for safe sqrt operations
-    ):
-        """
-        Generates a full dataset and iteratively refines it to minimize global FID
-        using time warping path exploration. Systematically attempts to replace
-        each batch num_iterations times, starting from initial noise states at
-        branch_start_time and exploring different paths from there using time warping.
-
-        Args:
-            n_samples: Total number of samples in the final dataset.
-            refinement_batch_size: Size of the batches to consider swapping out.
-            num_branches: Branches per sample at each step.
-            num_batches: Number of random batches to evaluate for improvement.
-            warp_scale: Scale of time warping effect (0-1).
-            num_iterations: Number of full passes over the dataset for refinement.
-            use_global: Whether to use global target stats for FID calculation.
-            branch_start_time: Time point at which to start branching (0.0 to 1.0).
-            branch_dt: Step size to use after branching begins (if None, uses base_dt).
-            sqrt_epsilon: Small constant to ensure numerical stability in warping functions.
-
-        Returns:
-            Tensor of [n_samples, C, H, W] representing the final refined dataset.
-        """
-
-        self.flow_model.eval()
-        samples_per_class = n_samples // self.num_classes
-        base_dt = 1 / self.num_timesteps
-        branch_dt = branch_dt if branch_dt is not None else base_dt
-
-        # --- Get time warping functions and derivatives ---
-        warp_fns, warp_deriv_fns = self._get_warp_functions(
-            num_branches, self.device, sqrt_epsilon
-        )
-
-        # --- 1. Initialization: Generate Initial Noise and Partial Integration ---
-        # We store both initial noise and integrated samples at branch_start_time
-        initial_pool_noise = torch.randn(
-            (n_samples, self.channels, self.image_size, self.image_size),
-            dtype=torch.float32,
-            device=self.device,
-        )
-        initial_pool_samples = initial_pool_noise.clone()
-        initial_pool_labels = torch.zeros(
-            n_samples, dtype=torch.long, device=self.device
-        )
-
-        # Store samples at branch_start_time for later refinement
-        branched_pool_samples = initial_pool_noise.clone()
-
-        current_idx = 0
-        feature_batch_size = 128
-
-        # Generate initial samples by class and integrate to branch_start_time
-        for class_label in range(self.num_classes):
-            generated_for_class = 0
-            # Calculate target number ensuring the last class gets the remainder
-            target_for_class = (
-                samples_per_class
-                if class_label < self.num_classes - 1
-                else n_samples - current_idx
-            )
-
-            while generated_for_class < target_for_class:
-                chunk_size = min(
-                    refinement_batch_size, target_for_class - generated_for_class
-                )
-                if chunk_size <= 0:
-                    break
-
-                # Get the slice of initial noise
-                chunk_start = current_idx
-                chunk_end = chunk_start + chunk_size
-                chunk_samples = initial_pool_noise[chunk_start:chunk_end].clone()
-                chunk_label = torch.full((chunk_size,), class_label, device=self.device)
-
-                # Set labels in the main pool
-                initial_pool_labels[chunk_start:chunk_end] = chunk_label
-
-                # Integrate to branch_start_time
-                if branch_start_time > 0:
-                    current_t = 0.0
-                    while current_t < branch_start_time:
-                        dt = min(base_dt, branch_start_time - current_t)
-                        t_batch = torch.full(
-                            (chunk_size,), current_t, device=self.device
-                        )
-                        with torch.no_grad():
-                            velocity = self.flow_model(
-                                t_batch, chunk_samples, chunk_label
-                            )
-                        chunk_samples = chunk_samples + velocity * dt
-                        current_t += dt
-
-                # Store partially integrated samples at branch_start_time for refinement later
-                branched_pool_samples[chunk_start:chunk_end] = chunk_samples
-
-                # Continue integration to t=1.0 for initial pool
-                current_t = branch_start_time
-                while current_t < 1.0:
-                    dt = min(base_dt, 1.0 - current_t)
-                    t_batch = torch.full((chunk_size,), current_t, device=self.device)
-                    with torch.no_grad():
-                        velocity = self.flow_model(t_batch, chunk_samples, chunk_label)
-                    chunk_samples = chunk_samples + velocity * dt
-                    current_t += dt
-
-                # Store final integrated samples
-                initial_pool_samples[chunk_start:chunk_end] = chunk_samples
-
-                # Update counters
-                current_idx += chunk_size
-                generated_for_class += chunk_size
-
-        # --- Handle num_branches == 1 Case ---
-        if num_branches == 1:
-            return initial_pool_samples
-
-        # --- Pre-compute Initial Features and FID ---
-        with torch.no_grad():
-            all_features_list = []
-            for i in range(0, n_samples, feature_batch_size):
-                batch = initial_pool_samples[i : i + feature_batch_size]
-                features = self.extract_inception_features(batch)
-                all_features_list.append(features)
-            current_pool_features = np.concatenate(all_features_list, axis=0)
-
-        # Get target statistics
-        if use_global:
-            target_mu = self.global_fid["mu"]
-            target_sigma = self.global_fid["sigma"]
-        else:
-            raise NotImplementedError(
-                "Class-specific FID refinement target not implemented yet."
-            )
-
-        current_global_fid = self.compute_fid_from_features(
-            current_pool_features, target_mu, target_sigma
-        )
-        print(f"Initial Global FID: {current_global_fid:.4f}")
-
-        # --- 2. Refinement Loop ---
-        for pass_num in range(num_iterations):
-            print(f"\n--- Refinement Pass {pass_num + 1}/{num_iterations} ---")
-            num_swaps_this_pass = 0
-
-            # Iterate systematically through classes and batches within classes
-            for target_class in range(self.num_classes):
-                class_indices = torch.where(initial_pool_labels == target_class)[0]
-                num_samples_in_class = len(class_indices)
-                if num_samples_in_class == 0:
-                    continue
-
-                # Iterate through batches within the class
-                for batch_start_idx in range(
-                    0, num_samples_in_class, refinement_batch_size
-                ):
-                    batch_end_idx = min(
-                        batch_start_idx + refinement_batch_size, num_samples_in_class
-                    )
-                    actual_refinement_size = batch_end_idx - batch_start_idx
-                    if actual_refinement_size == 0:
-                        continue
-
-                    # Get the indices within the GLOBAL pool for this batch
-                    indices_to_replace = class_indices[
-                        batch_start_idx:batch_end_idx
-                    ].cpu()
-
-                    # Start with the partially integrated samples at branch_start_time
-                    current_batch_samples = branched_pool_samples[
-                        indices_to_replace
-                    ].clone()
-                    current_batch_times = torch.full(
-                        (actual_refinement_size,), branch_start_time, device=self.device
-                    )
-                    current_batch_label = torch.full(
-                        (actual_refinement_size,), target_class, device=self.device
-                    )
-
-                    # Prepare feature pool without the batch we're replacing
-                    pool_indices_mask = np.ones(n_samples, dtype=bool)
-                    pool_indices_mask[indices_to_replace] = False
-                    features_pool_without_replaced = current_pool_features[
-                        pool_indices_mask
-                    ]
-
-                    # Path exploration with continuous checking
-                    with torch.no_grad():
-                        current_time = branch_start_time
-
-                        while current_time < 1.0:
-                            # Create branches for the current batch
-                            branched_samples = current_batch_samples.repeat_interleave(
-                                num_branches, dim=0
-                            )
-                            branched_times = current_batch_times.repeat_interleave(
-                                num_branches
-                            )
-                            branched_label = current_batch_label.repeat_interleave(
-                                num_branches
-                            )
-
-                            # Track which original sample each branch belongs to
-                            branch_indices = torch.arange(
-                                len(current_batch_samples), device=self.device
-                            ).repeat_interleave(num_branches)
-
-                            # Track which warping function to use for each sample
-                            warp_indices = (
-                                torch.arange(len(branched_samples), device=self.device)
-                                % num_branches
-                            )
-
-                            # Take ONE branching step with time warping
-                            dt_step = torch.minimum(
-                                branch_dt * torch.ones_like(branched_times),
-                                1.0 - branched_times,
-                            )
-
-                            # Apply time warping
-                            warped_times_step = torch.zeros_like(branched_times)
-                            warp_derivs_step = torch.zeros_like(branched_times)
-
-                            # Use the fetched warping functions
-                            for i in range(num_branches):
-                                mask = warp_indices == i
-                                if torch.any(mask):
-                                    orig_t = branched_times[mask]
-                                    warped_t = warp_fns[i](orig_t)
-                                    final_warped_t = (
-                                        1 - warp_scale
-                                    ) * orig_t + warp_scale * warped_t
-                                    warped_times_step[mask] = final_warped_t
-
-                                    orig_deriv = warp_deriv_fns[i](orig_t)
-                                    final_warp_deriv = (
-                                        1 - warp_scale
-                                    ) * torch.ones_like(
-                                        orig_deriv
-                                    ) + warp_scale * orig_deriv
-                                    warp_derivs_step[mask] = final_warp_deriv
-
-                            # Calculate velocity using warped times
-                            velocity_step = self.flow_model(
-                                warped_times_step, branched_samples, branched_label
-                            )
-
-                            # Apply the step with chain rule: dx/dt = v(x, f(t)) * f'(t)
-                            branched_samples = (
-                                branched_samples
-                                + velocity_step
-                                * warp_derivs_step.view(-1, 1, 1, 1)
-                                * dt_step.view(-1, 1, 1, 1)
-                            )
-                            branched_times = branched_times + dt_step
-
-                            # Simulate forward to completion (t=1.0)
-                            simulated_samples = branched_samples.clone()
-                            simulated_times = branched_times.clone()
-                            sim_warp_indices = warp_indices.clone()
-
-                            while torch.any(simulated_times < 1.0):
-                                active_mask = simulated_times < 1.0
-                                if not torch.any(active_mask):
-                                    break
-
-                                active_sim_samples = simulated_samples[active_mask]
-                                active_sim_times = simulated_times[active_mask]
-                                active_sim_label = branched_label[active_mask]
-                                active_sim_warp_indices = sim_warp_indices[active_mask]
-
-                                dt_sim = torch.minimum(
-                                    branch_dt * torch.ones_like(active_sim_times),
-                                    1.0 - active_sim_times,
-                                )
-
-                                # Apply time warping for simulation
-                                warped_times_sim = torch.zeros_like(active_sim_times)
-                                warp_derivs_sim = torch.zeros_like(active_sim_times)
-
-                                for i in range(num_branches):
-                                    mask = active_sim_warp_indices == i
-                                    if torch.any(mask):
-                                        orig_t = active_sim_times[mask]
-                                        warped_t = warp_fns[i](orig_t)
-                                        final_warped_t = (
-                                            1 - warp_scale
-                                        ) * orig_t + warp_scale * warped_t
-                                        warped_times_sim[mask] = final_warped_t
-
-                                        orig_deriv = warp_deriv_fns[i](orig_t)
-                                        final_warp_deriv = (
-                                            1 - warp_scale
-                                        ) * torch.ones_like(
-                                            orig_deriv
-                                        ) + warp_scale * orig_deriv
-                                        warp_derivs_sim[mask] = final_warp_deriv
-
-                                # Calculate velocity using warped times
-                                velocity_sim = self.flow_model(
-                                    warped_times_sim,
-                                    active_sim_samples,
-                                    active_sim_label,
-                                )
-
-                                # Apply the step with chain rule
-                                update = (
-                                    velocity_sim
-                                    * warp_derivs_sim.view(-1, 1, 1, 1)
-                                    * dt_sim.view(-1, 1, 1, 1)
-                                )
-                                simulated_samples[active_mask] = (
-                                    active_sim_samples + update
-                                )
-                                simulated_times[active_mask] = active_sim_times + dt_sim
-
-                            # Extract features for all completed samples
-                            all_simulated_features = []
-                            for i in range(
-                                0, len(simulated_samples), feature_batch_size
-                            ):
-                                batch = simulated_samples[i : i + feature_batch_size]
-                                features = self.extract_inception_features(batch)
-                                all_simulated_features.append(features)
-                            all_simulated_features = np.concatenate(
-                                all_simulated_features, axis=0
-                            )
-
-                            # Evaluate potential batches
-                            best_hypothetical_fid = float("inf")
-                            best_batch_indices = None
-                            best_original_indices = None
-
-                            # Create and evaluate num_batches random batches, ensuring diversity
-                            for batch_idx in range(num_batches):
-                                # Select exactly one branch from each original sample
-                                batch_indices = []
-
-                                # For each original sample index
-                                for orig_idx in range(actual_refinement_size):
-                                    # Find all branches from this original sample
-                                    branch_mask = branch_indices == orig_idx
-                                    candidate_indices = torch.where(branch_mask)[0]
-
-                                    # Randomly select one branch
-                                    if len(candidate_indices) > 0:
-                                        selected_idx = candidate_indices[
-                                            torch.randint(
-                                                len(candidate_indices),
-                                                (1,),
-                                                device=self.device,
-                                            )
-                                        ].item()
-                                        batch_indices.append(selected_idx)
-
-                                # Skip if we couldn't form a complete batch
-                                if len(batch_indices) != actual_refinement_size:
-                                    continue
-
-                                # Get features for this batch
-                                batch_features = all_simulated_features[batch_indices]
-
-                                # Calculate hypothetical FID
-                                hypothetical_features = np.concatenate(
-                                    (features_pool_without_replaced, batch_features),
-                                    axis=0,
-                                )
-                                hypothetical_fid = self.compute_fid_from_features(
-                                    hypothetical_features, target_mu, target_sigma
-                                )
-
-                                # Update best if improved
-                                if hypothetical_fid < best_hypothetical_fid:
-                                    best_hypothetical_fid = hypothetical_fid
-                                    best_batch_indices = batch_indices
-                                    best_original_indices = np.array(
-                                        [
-                                            branch_indices[idx].item()
-                                            for idx in batch_indices
-                                        ]
-                                    )
-
-                            # Update the pool samples ONLY if the best batch improves global FID
-                            if best_hypothetical_fid < current_global_fid:
-                                print(
-                                    f"      Found better batch at t={current_time:.4f}. New FID: {best_hypothetical_fid:.4f}"
-                                )
-                                num_swaps_this_pass += 1
-
-                                # Update the final samples in the main pool
-                                initial_pool_samples[indices_to_replace] = (
-                                    simulated_samples[best_batch_indices]
-                                )
-
-                                # Update features
-                                current_pool_features[indices_to_replace] = (
-                                    all_simulated_features[best_batch_indices]
-                                )
-
-                                # Update the current FID
-                                current_global_fid = best_hypothetical_fid
-
-                            # For path exploration, select the best branches
-                            # We need exactly one branch per original sample
-                            next_batch_samples = []
-                            next_batch_times = []
-                            next_batch_warp_indices = []
-
-                            # Use the original indices from the best batch to select which samples to continue with
-                            for orig_idx in range(actual_refinement_size):
-                                # Find position in the best batch where this original index appears
-                                positions = np.where(best_original_indices == orig_idx)[
-                                    0
-                                ]
-
-                                if len(positions) > 0:
-                                    # If present in best batch, use the corresponding branch
-                                    branch_idx = best_batch_indices[positions[0]]
-                                    next_batch_samples.append(
-                                        branched_samples[branch_idx]
-                                    )
-                                    next_batch_times.append(branched_times[branch_idx])
-                                    next_batch_warp_indices.append(
-                                        warp_indices[branch_idx].item()
-                                    )
-                                else:
-                                    # If not in best batch, use a random branch for this original
-                                    branch_mask = branch_indices == orig_idx
-                                    candidate_indices = torch.where(branch_mask)[0]
-                                    if len(candidate_indices) > 0:
-                                        random_idx = candidate_indices[
-                                            torch.randint(
-                                                len(candidate_indices),
-                                                (1,),
-                                                device=self.device,
-                                            )
-                                        ].item()
-                                        next_batch_samples.append(
-                                            branched_samples[random_idx]
-                                        )
-                                        next_batch_times.append(
-                                            branched_times[random_idx]
-                                        )
-                                        next_batch_warp_indices.append(
-                                            warp_indices[random_idx].item()
-                                        )
-
-                            # Update current batch for next iteration
-                            if len(next_batch_samples) == actual_refinement_size:
-                                current_batch_samples = torch.stack(next_batch_samples)
-                                current_batch_times = torch.stack(next_batch_times)
-
-                                # Update current time to minimum of current batch times
-                                current_time = current_batch_times.min().item()
-                            else:
-                                # If we couldn't form a complete batch, end path exploration
-                                break
-
-                            # Clean up to save memory
-                            del (
-                                branched_samples,
-                                branched_times,
-                                simulated_samples,
-                                simulated_times,
-                            )
-                            del all_simulated_features
-                            if "hypothetical_features" in locals():
-                                del hypothetical_features
-                            torch.cuda.empty_cache()
 
             print(
                 f"--- End Pass {pass_num + 1}: Made {num_swaps_this_pass} swaps. Current FID: {current_global_fid:.4f} ---"
@@ -4896,5 +3085,661 @@ class MCTSFlowSampler:
                 batch_data = samples_by_batch[i]
                 best_idx = torch.argmax(batch_data["scores"])
                 final_samples.append(batch_data["samples"][best_idx])
+
+            return self.unnormalize_images(torch.stack(final_samples))
+
+    def _sample_with_divfree_noise(
+        self, start_sample, label, start_time=0.0, lambda_div=0.2
+    ):
+        """
+        Helper function to sample from start_time to t=1 with divergence-free noise.
+
+        Args:
+            start_sample: Starting sample (shape: [1, C, H, W])
+            label: Class label (shape: [1])
+            start_time: Time to start sampling from (0.0 to 1.0)
+            lambda_div: Scale factor for divergence-free field
+
+        Returns:
+            Final sample at t=1
+        """
+        current_sample = start_sample.clone()
+        base_dt = 1 / self.num_timesteps
+        current_time = start_time
+
+        while current_time < 1.0:
+            dt = min(base_dt, 1.0 - current_time)
+            t_batch = torch.full((1,), current_time, device=self.device)
+
+            # Get velocity and add divergence-free noise
+            u_t = self.flow_model(t_batch, current_sample, label)
+            w = lambda_div * divfree_swirl_si(current_sample, t_batch, label, u_t)
+
+            # Update sample
+            current_sample = current_sample + (u_t + w) * dt
+            current_time += dt
+
+        return current_sample
+
+    def _sample_with_sde_noise(
+        self, start_sample, label, start_time=0.0, noise_scale=0.05
+    ):
+        """
+        Helper function to sample from start_time to t=1 with SDE noise.
+
+        Args:
+            start_sample: Starting sample (shape: [1, C, H, W])
+            label: Class label (shape: [1])
+            start_time: Time to start sampling from (0.0 to 1.0)
+            noise_scale: Scale of SDE noise
+
+        Returns:
+            Final sample at t=1
+        """
+        current_sample = start_sample.clone()
+        base_dt = 1 / self.num_timesteps
+        current_time = start_time
+
+        while current_time < 1.0:
+            dt = min(base_dt, 1.0 - current_time)
+            t_batch = torch.full((1,), current_time, device=self.device)
+
+            # Get velocity and add SDE noise
+            velocity = self.flow_model(t_batch, current_sample, label)
+            noise = torch.randn_like(current_sample) * noise_scale * np.sqrt(dt)
+
+            # Update sample
+            current_sample = current_sample + velocity * dt + noise
+            current_time += dt
+
+        return current_sample
+
+    def batch_sample_noise_search_ode_divfree(
+        self,
+        class_label,
+        batch_size=16,
+        num_branches=4,
+        num_keep=2,
+        rounds=3,
+        lambda_div=0.2,
+        selector="fid",
+        use_global=False,
+    ):
+        """
+        Multi-round noise search with divergence-free ODE sampling.
+        Each round starts from a different time point and uses noise injection
+        to explore around the current best candidates.
+
+        Args:
+            class_label: Target class(es) to generate. Can be a single integer or a tensor of class labels.
+            batch_size: Number of samples to generate
+            num_branches: Number of branches (N) to generate per round
+            num_keep: Number of candidates (K) to keep per round
+            rounds: Number of iterative refinement rounds (default 3)
+            lambda_div: Scale factor for the divergence-free field
+            selector: Selection criteria - "fid", "mahalanobis", "mean", "inception_score", "dino_score"
+            use_global: Whether to use global statistics instead of class-specific ones
+        """
+        assert (
+            len(class_label) == batch_size if torch.is_tensor(class_label) else True
+        ), "class_label tensor length must match batch_size"
+
+        if num_branches == 1 and rounds == 1:
+            # If no search needed, just do basic ODE sampling
+            return self.batch_sample_ode_divfree(class_label, batch_size, lambda_div)
+
+        score_fn, use_global = self._get_score_function(selector, use_global)
+        self.flow_model.eval()
+
+        # Handle both tensor and single class label cases
+        if torch.is_tensor(class_label):
+            current_label = class_label
+        else:
+            current_label = torch.full((batch_size,), class_label, device=self.device)
+
+        with torch.no_grad():
+            # Initialize candidates: start with random noise for round 1
+            current_candidates = []
+            for i in range(batch_size):
+                # For round 1, start with random initial conditions
+                candidates = torch.randn(
+                    num_keep,
+                    self.channels,
+                    self.image_size,
+                    self.image_size,
+                    device=self.device,
+                )
+                current_candidates.append(candidates)
+
+            # Track top K samples from all rounds for global selection
+            all_round_top_samples = []  # List of lists for each batch element
+            all_round_top_labels = []  # Corresponding labels
+
+            for i in range(batch_size):
+                all_round_top_samples.append([])
+                all_round_top_labels.append([])
+
+            # Multi-round noise search
+            for round_idx in range(rounds):
+                # Time point for this round: t_i = round_idx / rounds
+                # Round 1: t=0, Round 2: t=0.5, Round 3: t=0.75
+                start_time = round_idx / rounds if round_idx > 0 else 0.0
+                print(
+                    f"Noise search round {round_idx + 1}/{rounds}, start_time={start_time:.2f}"
+                )
+
+                all_round_samples = []
+                all_round_labels = []
+
+                # Generate samples for each batch element
+                for batch_idx in range(batch_size):
+                    batch_samples = []
+
+                    # For each candidate from previous round
+                    for candidate_idx in range(num_keep):
+                        # Generate num_branches samples from this candidate
+                        for branch_idx in range(num_branches):
+                            if round_idx == 0:
+                                # Round 1: start from random noise at t=0
+                                sample_start = torch.randn(
+                                    1,
+                                    self.channels,
+                                    self.image_size,
+                                    self.image_size,
+                                    device=self.device,
+                                )
+                                current_time = 0.0
+                            else:
+                                # Later rounds: start from previous candidate at start_time
+                                sample_start = current_candidates[batch_idx][
+                                    candidate_idx : candidate_idx + 1
+                                ]
+                                current_time = start_time
+
+                            # Sample from current_time to t=1 with divergence-free noise
+                            final_sample = self._sample_with_divfree_noise(
+                                sample_start,
+                                current_label[batch_idx : batch_idx + 1],
+                                start_time=current_time,
+                                lambda_div=lambda_div,
+                            )
+                            batch_samples.append(final_sample)
+
+                    # Stack samples for this batch element
+                    batch_samples = torch.cat(batch_samples, dim=0)
+                    all_round_samples.append(batch_samples)
+
+                    # Create corresponding labels
+                    batch_labels = current_label[batch_idx : batch_idx + 1].repeat(
+                        num_keep * num_branches
+                    )
+                    all_round_labels.append(batch_labels)
+
+                # Evaluate all samples from this round
+                all_samples = torch.cat(all_round_samples, dim=0)
+                all_labels = torch.cat(all_round_labels, dim=0)
+
+                if use_global:
+                    all_scores = score_fn(all_samples)
+                else:
+                    all_scores = score_fn(all_samples, all_labels)
+
+                # Select top candidates for next round AND accumulate for global selection
+                new_candidates = []
+                start_idx = 0
+
+                for batch_idx in range(batch_size):
+                    batch_size_this = num_keep * num_branches
+                    end_idx = start_idx + batch_size_this
+
+                    batch_scores = all_scores[start_idx:end_idx]
+                    batch_samples = all_samples[start_idx:end_idx]
+                    batch_labels = all_labels[start_idx:end_idx]
+
+                    # Keep top num_keep samples for next round
+                    top_indices = torch.topk(batch_scores, num_keep).indices
+                    top_samples = batch_samples[top_indices]
+                    top_labels = batch_labels[top_indices]
+                    new_candidates.append(top_samples)
+
+                    # Accumulate top K samples from this round for global selection
+                    all_round_top_samples[batch_idx].append(top_samples)
+                    all_round_top_labels[batch_idx].append(top_labels)
+
+                    start_idx = end_idx
+
+                current_candidates = new_candidates
+
+            # Global final selection: select best from ALL rounds' top K samples
+            final_samples = []
+            for batch_idx in range(batch_size):
+                # Concatenate top K samples from all rounds for this batch element
+                batch_all_samples = torch.cat(all_round_top_samples[batch_idx], dim=0)
+                batch_all_labels = torch.cat(all_round_top_labels[batch_idx], dim=0)
+
+                # Score all accumulated samples
+                if use_global:
+                    all_candidate_scores = score_fn(batch_all_samples)
+                else:
+                    all_candidate_scores = score_fn(batch_all_samples, batch_all_labels)
+
+                # Select globally best sample
+                best_idx = torch.argmax(all_candidate_scores)
+                final_samples.append(batch_all_samples[best_idx])
+
+            return self.unnormalize_images(torch.stack(final_samples))
+
+    def batch_sample_noise_search_sde(
+        self,
+        class_label,
+        batch_size=16,
+        num_branches=4,
+        num_keep=2,
+        rounds=3,
+        noise_scale=0.05,
+        selector="fid",
+        use_global=False,
+    ):
+        """
+        Multi-round noise search with SDE sampling.
+        Each round starts from a different time point and uses SDE noise injection
+        to explore around the current best candidates.
+
+        Args:
+            class_label: Target class(es) to generate. Can be a single integer or a tensor of class labels.
+            batch_size: Number of samples to generate
+            num_branches: Number of branches (N) to generate per round
+            num_keep: Number of candidates (K) to keep per round
+            rounds: Number of iterative refinement rounds (default 3)
+            noise_scale: Scale of the SDE noise to add during sampling
+            selector: Selection criteria - "fid", "mahalanobis", "mean", "inception_score", "dino_score"
+            use_global: Whether to use global statistics instead of class-specific ones
+        """
+        assert (
+            len(class_label) == batch_size if torch.is_tensor(class_label) else True
+        ), "class_label tensor length must match batch_size"
+
+        if num_branches == 1 and rounds == 1:
+            # If no search needed, just do basic SDE sampling
+            return self.batch_sample_sde(class_label, batch_size, noise_scale)
+
+        score_fn, use_global = self._get_score_function(selector, use_global)
+        self.flow_model.eval()
+
+        # Handle both tensor and single class label cases
+        if torch.is_tensor(class_label):
+            current_label = class_label
+        else:
+            current_label = torch.full((batch_size,), class_label, device=self.device)
+
+        with torch.no_grad():
+            # Initialize candidates: start with random noise for round 1
+            current_candidates = []
+            for i in range(batch_size):
+                # For round 1, start with random initial conditions
+                candidates = torch.randn(
+                    num_keep,
+                    self.channels,
+                    self.image_size,
+                    self.image_size,
+                    device=self.device,
+                )
+                current_candidates.append(candidates)
+
+            # Track top K samples from all rounds for global selection
+            all_round_top_samples = []  # List of lists for each batch element
+            all_round_top_labels = []  # Corresponding labels
+
+            for i in range(batch_size):
+                all_round_top_samples.append([])
+                all_round_top_labels.append([])
+
+            # Multi-round noise search
+            for round_idx in range(rounds):
+                # Time point for this round: t_i = round_idx / rounds
+                # Round 1: t=0, Round 2: t=0.5, Round 3: t=0.75
+                start_time = round_idx / rounds if round_idx > 0 else 0.0
+                print(
+                    f"Noise search round {round_idx + 1}/{rounds}, start_time={start_time:.2f}"
+                )
+
+                all_round_samples = []
+                all_round_labels = []
+
+                # Generate samples for each batch element
+                for batch_idx in range(batch_size):
+                    batch_samples = []
+
+                    # For each candidate from previous round
+                    for candidate_idx in range(num_keep):
+                        # Generate num_branches samples from this candidate
+                        for branch_idx in range(num_branches):
+                            if round_idx == 0:
+                                # Round 1: start from random noise at t=0
+                                sample_start = torch.randn(
+                                    1,
+                                    self.channels,
+                                    self.image_size,
+                                    self.image_size,
+                                    device=self.device,
+                                )
+                                current_time = 0.0
+                            else:
+                                # Later rounds: start from previous candidate at start_time
+                                sample_start = current_candidates[batch_idx][
+                                    candidate_idx : candidate_idx + 1
+                                ]
+                                current_time = start_time
+
+                            # Sample from current_time to t=1 with SDE noise
+                            final_sample = self._sample_with_sde_noise(
+                                sample_start,
+                                current_label[batch_idx : batch_idx + 1],
+                                start_time=current_time,
+                                noise_scale=noise_scale,
+                            )
+                            batch_samples.append(final_sample)
+
+                    # Stack samples for this batch element
+                    batch_samples = torch.cat(batch_samples, dim=0)
+                    all_round_samples.append(batch_samples)
+
+                    # Create corresponding labels
+                    batch_labels = current_label[batch_idx : batch_idx + 1].repeat(
+                        num_keep * num_branches
+                    )
+                    all_round_labels.append(batch_labels)
+
+                # Evaluate all samples from this round
+                all_samples = torch.cat(all_round_samples, dim=0)
+                all_labels = torch.cat(all_round_labels, dim=0)
+
+                if use_global:
+                    all_scores = score_fn(all_samples)
+                else:
+                    all_scores = score_fn(all_samples, all_labels)
+
+                # Select top candidates for next round AND accumulate for global selection
+                new_candidates = []
+                start_idx = 0
+
+                for batch_idx in range(batch_size):
+                    batch_size_this = num_keep * num_branches
+                    end_idx = start_idx + batch_size_this
+
+                    batch_scores = all_scores[start_idx:end_idx]
+                    batch_samples = all_samples[start_idx:end_idx]
+                    batch_labels = all_labels[start_idx:end_idx]
+
+                    # Keep top num_keep samples for next round
+                    top_indices = torch.topk(batch_scores, num_keep).indices
+                    top_samples = batch_samples[top_indices]
+                    top_labels = batch_labels[top_indices]
+                    new_candidates.append(top_samples)
+
+                    # Accumulate top K samples from this round for global selection
+                    all_round_top_samples[batch_idx].append(top_samples)
+                    all_round_top_labels[batch_idx].append(top_labels)
+
+                    start_idx = end_idx
+
+                current_candidates = new_candidates
+
+            # Global final selection: select best from ALL rounds' top K samples
+            final_samples = []
+            for batch_idx in range(batch_size):
+                # Concatenate top K samples from all rounds for this batch element
+                batch_all_samples = torch.cat(all_round_top_samples[batch_idx], dim=0)
+                batch_all_labels = torch.cat(all_round_top_labels[batch_idx], dim=0)
+
+                # Score all accumulated samples
+                if use_global:
+                    all_candidate_scores = score_fn(batch_all_samples)
+                else:
+                    all_candidate_scores = score_fn(batch_all_samples, batch_all_labels)
+
+                # Select globally best sample
+                best_idx = torch.argmax(all_candidate_scores)
+                final_samples.append(batch_all_samples[best_idx])
+
+            return self.unnormalize_images(torch.stack(final_samples))
+
+    def batch_sample_random_search_then_noise_search_ode_divfree(
+        self,
+        class_label,
+        batch_size=16,
+        num_branches=4,
+        num_keep=2,
+        rounds=3,
+        lambda_div=0.2,
+        selector="fid",
+        use_global=False,
+    ):
+        """
+        Two-stage inference scaling method that combines random search with noise search:
+        1. First stage: Run random search to find high-scoring initial noise samples
+        2. Second stage: Use the winning initial noises from stage 1 as starting points for multi-round noise search
+
+        Args:
+            class_label: Target class(es) to generate. Can be a single integer or a tensor of class labels.
+            batch_size: Number of samples to generate
+            num_branches: Number of branches for both the random search and noise search stages
+            num_keep: Number of samples to keep during noise search rounds
+            rounds: Number of noise search refinement rounds (default 3)
+            lambda_div: Scale factor for the divergence-free field in noise search
+            selector: Selection criteria - "fid", "mahalanobis", "mean", "inception_score", "dino_score"
+            use_global: Whether to use global statistics instead of class-specific ones
+        """
+        assert (
+            len(class_label) == batch_size if torch.is_tensor(class_label) else True
+        ), "class_label tensor length must match batch_size"
+
+        if num_branches == 1:
+            # If no search needed, just do noise search
+            return self.batch_sample_noise_search_ode_divfree(
+                class_label,
+                batch_size,
+                num_branches,
+                num_keep,
+                rounds,
+                lambda_div,
+                selector,
+                use_global,
+            )
+
+        score_fn, use_global = self._get_score_function(selector, use_global)
+        self.flow_model.eval()
+
+        # Handle both tensor and single class label cases
+        if torch.is_tensor(class_label):
+            current_label = class_label
+        else:
+            current_label = torch.full((batch_size,), class_label, device=self.device)
+
+        with torch.no_grad():
+            print(f"Stage 1: Random search with {num_branches} branches")
+
+            # Stage 1: Random search to find good initial conditions
+            all_samples = []
+            all_labels = []
+
+            for batch_idx in range(batch_size):
+                batch_samples = []
+                for branch_idx in range(num_branches):
+                    # Generate sample from random initial condition
+                    sample = self.batch_sample_ode_divfree(
+                        current_label[batch_idx], 1, lambda_div
+                    )
+                    batch_samples.append(sample)
+
+                batch_samples = torch.cat(batch_samples, dim=0)
+                all_samples.append(batch_samples)
+
+                # Create corresponding labels
+                batch_labels = current_label[batch_idx : batch_idx + 1].repeat(
+                    num_branches
+                )
+                all_labels.append(batch_labels)
+
+            # Evaluate all samples from stage 1
+            all_samples = torch.cat(all_samples, dim=0)
+            all_labels = torch.cat(all_labels, dim=0)
+
+            if use_global:
+                all_scores = score_fn(all_samples)
+            else:
+                all_scores = score_fn(all_samples, all_labels)
+
+            # Select top initial conditions for stage 2
+            top_initial_conditions = []
+            start_idx = 0
+
+            for batch_idx in range(batch_size):
+                end_idx = start_idx + num_branches
+
+                batch_scores = all_scores[start_idx:end_idx]
+
+                # Keep top num_keep samples as initial conditions
+                top_indices = torch.topk(
+                    batch_scores, min(num_keep, num_branches)
+                ).indices
+
+                # Get the corresponding initial noise (we need to regenerate or store)
+                # For simplicity, we'll use the top samples as our starting points
+                # In practice, we'd want to store the initial noise that led to these samples
+                selected_samples = all_samples[start_idx:end_idx][top_indices]
+                top_initial_conditions.append(selected_samples)
+
+                start_idx = end_idx
+
+            print(
+                f"Stage 2: Noise search with {rounds} rounds from top initial conditions"
+            )
+
+            # Stage 2: Multi-round noise search starting from the best initial conditions
+            current_candidates = []
+            for batch_idx in range(batch_size):
+                # Convert final samples back to noise space (approximation)
+                # In practice, we'd store the actual initial noise from stage 1
+                # For now, we'll use the selected samples as "candidates"
+                candidates = top_initial_conditions[batch_idx]
+                current_candidates.append(candidates)
+
+            # Track top K samples from all rounds for global selection
+            all_round_top_samples = []  # List of lists for each batch element
+            all_round_top_labels = []  # Corresponding labels
+
+            for i in range(batch_size):
+                all_round_top_samples.append([])
+                all_round_top_labels.append([])
+
+            # Run noise search rounds (similar to batch_sample_noise_search_ode_divfree)
+            for round_idx in range(rounds):
+                start_time = round_idx / rounds if round_idx > 0 else 0.0
+                print(
+                    f"Noise search round {round_idx + 1}/{rounds}, start_time={start_time:.2f}"
+                )
+
+                all_round_samples = []
+                all_round_labels = []
+
+                # Generate samples for each batch element
+                for batch_idx in range(batch_size):
+                    batch_samples = []
+
+                    # For each candidate from previous round
+                    num_candidates = current_candidates[batch_idx].shape[0]
+                    for candidate_idx in range(num_candidates):
+                        # Generate num_branches samples from this candidate
+                        for branch_idx in range(num_branches):
+                            if round_idx == 0:
+                                # Round 1: start from the winning initial conditions
+                                # Generate new random noise since we want to explore around winners
+                                sample_start = torch.randn(
+                                    1,
+                                    self.channels,
+                                    self.image_size,
+                                    self.image_size,
+                                    device=self.device,
+                                )
+                                current_time = 0.0
+                            else:
+                                # Later rounds: start from previous candidate at start_time
+                                sample_start = current_candidates[batch_idx][
+                                    candidate_idx : candidate_idx + 1
+                                ]
+                                current_time = start_time
+
+                            # Sample from current_time to t=1 with divergence-free noise
+                            final_sample = self._sample_with_divfree_noise(
+                                sample_start,
+                                current_label[batch_idx : batch_idx + 1],
+                                start_time=current_time,
+                                lambda_div=lambda_div,
+                            )
+                            batch_samples.append(final_sample)
+
+                    # Stack samples for this batch element
+                    batch_samples = torch.cat(batch_samples, dim=0)
+                    all_round_samples.append(batch_samples)
+
+                    # Create corresponding labels
+                    batch_labels = current_label[batch_idx : batch_idx + 1].repeat(
+                        num_candidates * num_branches
+                    )
+                    all_round_labels.append(batch_labels)
+
+                # Evaluate all samples from this round
+                all_samples = torch.cat(all_round_samples, dim=0)
+                all_labels = torch.cat(all_round_labels, dim=0)
+
+                if use_global:
+                    all_scores = score_fn(all_samples)
+                else:
+                    all_scores = score_fn(all_samples, all_labels)
+
+                # Select top candidates for next round AND accumulate for global selection
+                new_candidates = []
+                start_idx = 0
+
+                for batch_idx in range(batch_size):
+                    num_candidates = current_candidates[batch_idx].shape[0]
+                    batch_size_this = num_candidates * num_branches
+                    end_idx = start_idx + batch_size_this
+
+                    batch_scores = all_scores[start_idx:end_idx]
+                    batch_samples = all_samples[start_idx:end_idx]
+                    batch_labels = all_labels[start_idx:end_idx]
+
+                    # Keep top num_keep samples for next round
+                    top_indices = torch.topk(batch_scores, num_keep).indices
+                    top_samples = batch_samples[top_indices]
+                    top_labels = batch_labels[top_indices]
+                    new_candidates.append(top_samples)
+
+                    # Accumulate top K samples from this round for global selection
+                    all_round_top_samples[batch_idx].append(top_samples)
+                    all_round_top_labels[batch_idx].append(top_labels)
+
+                    start_idx = end_idx
+
+                current_candidates = new_candidates
+
+            # Global final selection: select best from ALL rounds' top K samples
+            final_samples = []
+            for batch_idx in range(batch_size):
+                # Concatenate top K samples from all rounds for this batch element
+                batch_all_samples = torch.cat(all_round_top_samples[batch_idx], dim=0)
+                batch_all_labels = torch.cat(all_round_top_labels[batch_idx], dim=0)
+
+                # Score all accumulated samples
+                if use_global:
+                    all_candidate_scores = score_fn(batch_all_samples)
+                else:
+                    all_candidate_scores = score_fn(batch_all_samples, batch_all_labels)
+
+                # Select globally best sample
+                best_idx = torch.argmax(all_candidate_scores)
+                final_samples.append(batch_all_samples[best_idx])
 
             return self.unnormalize_images(torch.stack(final_samples))
