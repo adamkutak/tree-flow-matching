@@ -148,6 +148,9 @@ INPUT /opt/homebrew/Cellar/texlive/20240312_3/share/texmf-dist/tex/latex/algorit
 INPUT /opt/homebrew/Cellar/texlive/20240312_3/share/texmf-dist/tex/latex/algorithmicx/algorithmicx.sty
 INPUT /opt/homebrew/Cellar/texlive/20240312_3/share/texmf-dist/tex/latex/l3backend/l3backend-pdftex.def
 INPUT /opt/homebrew/Cellar/texlive/20240312_3/share/texmf-dist/tex/latex/l3backend/l3backend-pdftex.def
+INPUT ./arxiv_paper.aux
+INPUT ./arxiv_paper.aux
+INPUT arxiv_paper.aux
 OUTPUT arxiv_paper.aux
 INPUT /opt/homebrew/Cellar/texlive/20240312_3/share/texmf-dist/tex/context/base/mkii/supp-pdf.mkii
 INPUT /opt/homebrew/Cellar/texlive/20240312_3/share/texmf-dist/tex/context/base/mkii/supp-pdf.mkii
