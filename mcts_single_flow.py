@@ -3197,6 +3197,8 @@ class MCTSFlowSampler:
         else:
             current_label = torch.full((batch_size,), class_label, device=self.device)
 
+        round_start_times = [0.0, 0.5, 0.75]
+
         with torch.no_grad():
             # Initialize candidates: start with random noise for round 1
             current_candidates = []
@@ -3221,9 +3223,7 @@ class MCTSFlowSampler:
 
             # Multi-round noise search
             for round_idx in range(rounds):
-                # Time point for this round: t_i = round_idx / rounds
-                # Round 1: t=0, Round 2: t=0.5, Round 3: t=0.75
-                start_time = round_idx / rounds if round_idx > 0 else 0.0
+                start_time = round_start_times[round_idx]
                 print(
                     f"Noise search round {round_idx + 1}/{rounds}, start_time={start_time:.2f}"
                 )
@@ -3372,6 +3372,8 @@ class MCTSFlowSampler:
         else:
             current_label = torch.full((batch_size,), class_label, device=self.device)
 
+        round_start_times = [0.0, 0.5, 0.75]
+
         with torch.no_grad():
             # Initialize candidates: start with random noise for round 1
             current_candidates = []
@@ -3396,9 +3398,7 @@ class MCTSFlowSampler:
 
             # Multi-round noise search
             for round_idx in range(rounds):
-                # Time point for this round: t_i = round_idx / rounds
-                # Round 1: t=0, Round 2: t=0.5, Round 3: t=0.75
-                start_time = round_idx / rounds if round_idx > 0 else 0.0
+                start_time = round_start_times[round_idx]
                 print(
                     f"Noise search round {round_idx + 1}/{rounds}, start_time={start_time:.2f}"
                 )
