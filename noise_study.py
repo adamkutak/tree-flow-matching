@@ -986,7 +986,7 @@ if __name__ == "__main__":
         "--noise_scales",
         type=float,
         nargs="+",
-        default=[0.1, 0.13, 0.16, 0.2, 0.4, 0.6],
+        default=[0.1, 0.13, 0.16, 0.2],
         help="Noise scale values to test for SDE sampling",
     )
     parser.add_argument(
@@ -994,7 +994,7 @@ if __name__ == "__main__":
         type=float,
         nargs="+",
         # default=[0.1, 0.35, 0.4, 0.45, 0.5, 0.6, 2.0],
-        default=[0.1, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0],
+        default=[0.1, 0.4, 0.5, 0.6],
         help="Lambda values for divergence-free flow to test",
     )
     parser.add_argument(
