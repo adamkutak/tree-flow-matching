@@ -77,9 +77,12 @@ def _rbf_repulsive_forces(x_batch, x_flat, alpha_t):
     # RBF kernel bandwidth (median heuristic)
     with torch.no_grad():
         median_dist = torch.median(distances[distances > 0])
-        h_t = median_dist**2 / torch.log(
-            torch.tensor(float(batch_size), device=x_batch.device)
-        )
+        # h_t = median_dist**2 / torch.log(
+        #     torch.tensor(float(batch_size), device=x_batch.device)
+        # )  # Original (too large for high dimensions)
+        h_t = (
+            median_dist**2 * 0.01
+        )  # Much smaller bandwidth = stronger, more localized repulsion
 
     # # DEBUG: Print RBF kernel information
     print(f"  RBF Debug - batch_size: {batch_size}")
