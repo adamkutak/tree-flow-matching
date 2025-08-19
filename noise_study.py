@@ -583,6 +583,8 @@ def run_sampling_experiment(
         class_labels = torch.full((current_batch_size,), batch_class, device=device)
         class_labels_all.append(class_labels.cpu())
 
+        breakpoint()
+
         batch_results = sampling_func(
             sampler, class_labels, current_batch_size, **sampling_params
         )
