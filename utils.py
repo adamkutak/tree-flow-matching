@@ -36,7 +36,7 @@ def divfree_swirl_si(x, t_batch, y, u_t, eps=1e-8):
     return make_divergence_free(eps_raw, x, t_batch, u_t, eps)
 
 
-def particle_guidance_forces(x_batch, t, alpha_t=1.0, kernel_type="rbf"):
+def particle_guidance_forces(x_batch, t, alpha_t=1.0, kernel_type="euclidean"):
     """
     Extract repulsive forces from particle guidance potential.
     Only operates within same-class batches.
@@ -77,12 +77,9 @@ def _rbf_repulsive_forces(x_batch, x_flat, alpha_t):
     # RBF kernel bandwidth (median heuristic)
     with torch.no_grad():
         median_dist = torch.median(distances[distances > 0])
-        # h_t = median_dist**2 / torch.log(
-        #     torch.tensor(float(batch_size), device=x_batch.device)
-        # )  # Original (too large for high dimensions)
-        h_t = (
-            median_dist**2 * 0.01
-        )  # Much smaller bandwidth = stronger, more localized repulsion
+        h_t = median_dist**2 / torch.log(
+            torch.tensor(float(batch_size), device=x_batch.device)
+        )
 
     # # DEBUG: Print RBF kernel information
     print(f"  RBF Debug - batch_size: {batch_size}")
@@ -176,7 +173,7 @@ def get_alpha_schedule_flow_matching(
 
 
 def divergence_free_particle_guidance(
-    x_batch, t_batch, y, u_t, alpha_t=1.0, kernel_type="rbf"
+    x_batch, t_batch, y, u_t, alpha_t=1.0, kernel_type="euclidean"
 ):
     """
     Combine particle guidance with divergence-free constraint.

@@ -244,7 +244,7 @@ def batch_sample_particle_guidance_identical_start(
     batch_size,
     alpha_0=2.0,
     alpha_1=0.1,
-    kernel_type="rbf",
+    kernel_type="euclidean",
     schedule_type="linear",
 ):
     """

@@ -458,7 +458,7 @@ def batch_sample_particle_guidance_with_metrics(
     batch_size=16,
     alpha_0=2.0,
     alpha_1=0.1,
-    kernel_type="rbf",
+    kernel_type="euclidean",
     schedule_type="linear",
     sub_batch_size=16,
 ):
@@ -793,7 +793,7 @@ def run_experiment(args):
             {
                 "alpha_0": alpha_0,  # HIGH guidance at t=0 (start, noise)
                 "alpha_1": alpha_1,  # LOW guidance at t=1 (end, data)
-                "kernel_type": "rbf",
+                "kernel_type": "euclidean",
                 "schedule_type": "linear",
                 "sub_batch_size": 4,  # Match the sub_batch_size used in class label generation
             },
@@ -805,7 +805,7 @@ def run_experiment(args):
                 "type": "particle_guidance",
                 "alpha_0": alpha_0,
                 "alpha_1": alpha_1,
-                "kernel_type": "rbf",
+                "kernel_type": "euclidean",
                 "schedule_type": "linear",
                 "metrics": pg_metrics,
             }
