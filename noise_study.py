@@ -98,16 +98,19 @@ def batch_sample_sde_with_metrics(
             # Flow step with SDE noise term
             velocity = sampler.flow_model(t_batch, current_samples, current_label)
 
-            # Track velocity magnitude
-            dims = tuple(range(1, velocity.ndim))
-            vel_mag = torch.linalg.vector_norm(velocity, dim=dims).mean().item()
-            velocity_magnitudes.append(vel_mag)
-
             # Add noise scaled by dt and noise_scale
             noise = torch.randn_like(current_samples) * torch.sqrt(dt) * noise_scale
 
-            # Track noise magnitude
-            noise_mag = torch.linalg.vector_norm(noise, dim=dims).mean().item()
+            # Calculate what actually gets applied
+            applied_velocity = velocity * dt
+            applied_noise = noise
+
+            # Track magnitudes of what's actually applied
+            dims = tuple(range(1, velocity.ndim))
+            vel_mag = torch.linalg.vector_norm(applied_velocity, dim=dims).mean().item()
+            velocity_magnitudes.append(vel_mag)
+
+            noise_mag = torch.linalg.vector_norm(applied_noise, dim=dims).mean().item()
             noise_magnitudes.append(noise_mag)
 
             # Track ratio
@@ -115,7 +118,7 @@ def batch_sample_sde_with_metrics(
             noise_to_velocity_ratios.append(ratio)
 
             # Euler-Maruyama update
-            current_samples = current_samples + velocity * dt + noise
+            current_samples = current_samples + applied_velocity + applied_noise
 
         avg_velocity_magnitude = sum(velocity_magnitudes) / len(velocity_magnitudes)
         avg_noise_magnitude = sum(noise_magnitudes) / len(noise_magnitudes)
@@ -177,12 +180,16 @@ def batch_sample_sde_divfree_with_metrics(
             # Use divergence-free field as noise term in Euler-Maruyama scheme
             divfree_noise = w_unscaled * torch.sqrt(dt) * lambda_div
 
-            # Track magnitudes
+            # Calculate what actually gets applied
+            applied_velocity = u_t * dt
+            applied_divfree = divfree_noise
+
+            # Track magnitudes of what's actually applied
             dims = tuple(range(1, u_t.ndim))
-            vel_mag = torch.linalg.vector_norm(u_t, dim=dims).mean().item()
+            vel_mag = torch.linalg.vector_norm(applied_velocity, dim=dims).mean().item()
             velocity_magnitudes.append(vel_mag)
 
-            div_mag = torch.linalg.vector_norm(divfree_noise, dim=dims).mean().item()
+            div_mag = torch.linalg.vector_norm(applied_divfree, dim=dims).mean().item()
             divfree_magnitudes.append(div_mag)
 
             # Track ratio
@@ -190,7 +197,7 @@ def batch_sample_sde_divfree_with_metrics(
             divfree_to_velocity_ratios.append(ratio)
 
             # Euler-Maruyama update: drift + noise
-            x = x + u_t * dt + divfree_noise
+            x = x + applied_velocity + applied_divfree
 
         avg_velocity_magnitude = sum(velocity_magnitudes) / len(velocity_magnitudes)
         avg_divfree_magnitude = sum(divfree_magnitudes) / len(divfree_magnitudes)
@@ -249,19 +256,23 @@ def batch_sample_ode_divfree_with_metrics(
             w_unscaled = divfree_swirl_si(x, t_batch, y, u_t)
             w = lambda_div * w_unscaled
 
-            # Track magnitudes
+            # Calculate what actually gets applied
+            applied_velocity = u_t * dt
+            applied_divfree = w * dt
+
+            # Track magnitudes of what's actually applied
             dims = tuple(range(1, u_t.ndim))
-            vel_mag = torch.linalg.vector_norm(u_t, dim=dims).mean().item()
+            vel_mag = torch.linalg.vector_norm(applied_velocity, dim=dims).mean().item()
             velocity_magnitudes.append(vel_mag)
 
-            div_mag = torch.linalg.vector_norm(w, dim=dims).mean().item()
+            div_mag = torch.linalg.vector_norm(applied_divfree, dim=dims).mean().item()
             divfree_magnitudes.append(div_mag)
 
             # Track ratio
             ratio = div_mag / vel_mag if vel_mag > 0 else 0
             divfree_to_velocity_ratios.append(ratio)
 
-            x = x + (u_t + w) * dt  # Euler ODE step
+            x = x + applied_velocity + applied_divfree  # Euler ODE step
 
         avg_velocity_magnitude = sum(velocity_magnitudes) / len(velocity_magnitudes)
         avg_divfree_magnitude = sum(divfree_magnitudes) / len(divfree_magnitudes)
@@ -650,56 +661,6 @@ def run_experiment(args):
     print(
         f"Baseline ODE - FID: {ode_metrics['fid_score']:.4f}, IS: {ode_metrics['inception_score']:.4f}±{ode_metrics['inception_std']:.4f}, DINO Top-1: {ode_metrics['dino_top1_accuracy']:.2f}%, Top-5: {ode_metrics['dino_top5_accuracy']:.2f}%"
     )
-
-    print("\n\n===== Running EDM SDE experiments =====")
-    for beta in args.beta_values:
-        print(f"\nTesting EDM SDE with beta={beta}")
-        edm_sde_metrics = run_sampling_experiment(
-            sampler,
-            device,
-            fid,
-            args.num_samples,
-            args.batch_size,
-            batch_sample_edm_sde_with_metrics,
-            {"beta": beta},
-            f"EDM SDE sampling with beta={beta}",
-        )
-
-        results["experiments"].append(
-            {"type": "edm_sde", "beta": beta, "metrics": edm_sde_metrics}
-        )
-
-        print(
-            f"EDM SDE (beta={beta}) - FID: {edm_sde_metrics['fid_score']:.4f}, IS: {edm_sde_metrics['inception_score']:.4f}±{edm_sde_metrics['inception_std']:.4f}, DINO Top-1: {edm_sde_metrics['dino_top1_accuracy']:.2f}%, Top-5: {edm_sde_metrics['dino_top5_accuracy']:.2f}%"
-        )
-        print(f"Average noise/velocity ratio: {edm_sde_metrics['avg_ratio']:.4f}")
-
-    print("\n\n===== Running score SDE experiments =====")
-    for noise_scale_factor in args.score_sde_factors:
-        print(f"\nTesting Score SDE with noise_scale_factor={noise_scale_factor}")
-        inference_sde_metrics = run_sampling_experiment(
-            sampler,
-            device,
-            fid,
-            args.num_samples,
-            args.batch_size,
-            batch_sample_score_sde_with_metrics,
-            {"noise_scale_factor": noise_scale_factor},
-            f"Score SDE sampling with noise_scale_factor={noise_scale_factor}",
-        )
-
-        results["experiments"].append(
-            {
-                "type": "score_sde",
-                "noise_scale_factor": noise_scale_factor,
-                "metrics": inference_sde_metrics,
-            }
-        )
-
-        print(
-            f"Score SDE (factor={noise_scale_factor}) - FID: {inference_sde_metrics['fid_score']:.4f}, IS: {inference_sde_metrics['inception_score']:.4f}±{inference_sde_metrics['inception_std']:.4f}, DINO Top-1: {inference_sde_metrics['dino_top1_accuracy']:.2f}%, Top-5: {inference_sde_metrics['dino_top5_accuracy']:.2f}%"
-        )
-        print(f"Average noise/velocity ratio: {inference_sde_metrics['avg_ratio']:.4f}")
 
     print("\n\n===== Running SDE experiments =====")
     for noise_scale in args.noise_scales:
