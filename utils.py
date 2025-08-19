@@ -82,18 +82,18 @@ def _rbf_repulsive_forces(x_batch, x_flat, alpha_t):
         )
 
     # # DEBUG: Print RBF kernel information
-    # print(f"  RBF Debug - batch_size: {batch_size}")
-    # print(
-    #     f"  Distances - min: {distances.min():.6f}, max: {distances.max():.6f}, median: {median_dist:.6f}"
-    # )
-    # print(f"  Bandwidth h_t: {h_t:.6f}")
+    print(f"  RBF Debug - batch_size: {batch_size}")
+    print(
+        f"  Distances - min: {distances.min():.6f}, max: {distances.max():.6f}, median: {median_dist:.6f}"
+    )
+    print(f"  Bandwidth h_t: {h_t:.6f}")
 
     # Compute RBF kernel values k(xᵢ, xⱼ) = exp(-||xᵢ - xⱼ||² / h_t)
     kernel_values = torch.exp(-(distances**2) / h_t)  # [batch_size, batch_size]
-    # print(
-    #     f"  Kernel values - min: {kernel_values.min():.6f}, max: {kernel_values.max():.6f}"
-    # )
-    # print(f"  Kernel diagonal should be 1.0: {kernel_values.diag().mean():.6f}")
+    print(
+        f"  Kernel values - min: {kernel_values.min():.6f}, max: {kernel_values.max():.6f}"
+    )
+    print(f"  Kernel diagonal should be 1.0: {kernel_values.diag().mean():.6f}")
 
     # Vectorized computation of pairwise differences
     # x_flat: [batch_size, features] -> [batch_size, 1, features] - [1, batch_size, features]
@@ -117,14 +117,14 @@ def _rbf_repulsive_forces(x_batch, x_flat, alpha_t):
     forces = forces_flat.view_as(x_batch)
 
     # # DEBUG: Print force statistics before alpha scaling
-    # print(f"  Forces before alpha - min: {forces.min():.6f}, max: {forces.max():.6f}")
-    # print(f"  Forces before alpha - mean: {forces.mean():.6f}, std: {forces.std():.6f}")
-    # print(f"  Alpha_t being applied: {alpha_t:.6f}")
+    print(f"  Forces before alpha - min: {forces.min():.6f}, max: {forces.max():.6f}")
+    print(f"  Forces before alpha - mean: {forces.mean():.6f}, std: {forces.std():.6f}")
+    print(f"  Alpha_t being applied: {alpha_t:.6f}")
 
     final_forces = -alpha_t * forces  # Negative for repulsion
-    # print(
-    #     f"  Final forces - min: {final_forces.min():.6f}, max: {final_forces.max():.6f}"
-    # )
+    print(
+        f"  Final forces - min: {final_forces.min():.6f}, max: {final_forces.max():.6f}"
+    )
 
     return final_forces
 
@@ -200,24 +200,24 @@ def divergence_free_particle_guidance(
     force_magnitude = torch.linalg.vector_norm(raw_repulsive_forces, dim=dims).mean()
 
     # # DEBUG: Print detailed information about the forces
-    # print(f"\n=== PARTICLE GUIDANCE DEBUG (t={t_scalar:.3f}) ===")
-    # print(f"Batch shape: {x_batch.shape}")
-    # print(f"Velocity magnitude: {velocity_magnitude:.6f}")
-    # print(f"Raw force magnitude: {force_magnitude:.6f}")
-    #
+    print(f"\n=== PARTICLE GUIDANCE DEBUG (t={t_scalar:.3f}) ===")
+    print(f"Batch shape: {x_batch.shape}")
+    print(f"Velocity magnitude: {velocity_magnitude:.6f}")
+    print(f"Raw force magnitude: {force_magnitude:.6f}")
+
     # # Check for NaN/inf values
-    # if torch.isnan(raw_repulsive_forces).any():
-    #     print("WARNING: NaN values in raw_repulsive_forces!")
-    # if torch.isinf(raw_repulsive_forces).any():
-    #     print("WARNING: Inf values in raw_repulsive_forces!")
-    #
-    # # Print some statistics about the raw forces
-    # print(
-    #     f"Raw forces - min: {raw_repulsive_forces.min():.6f}, max: {raw_repulsive_forces.max():.6f}"
-    # )
-    # print(
-    #     f"Raw forces - mean: {raw_repulsive_forces.mean():.6f}, std: {raw_repulsive_forces.std():.6f}"
-    # )
+    if torch.isnan(raw_repulsive_forces).any():
+        print("WARNING: NaN values in raw_repulsive_forces!")
+    if torch.isinf(raw_repulsive_forces).any():
+        print("WARNING: Inf values in raw_repulsive_forces!")
+
+    # Print some statistics about the raw forces
+    print(
+        f"Raw forces - min: {raw_repulsive_forces.min():.6f}, max: {raw_repulsive_forces.max():.6f}"
+    )
+    print(
+        f"Raw forces - mean: {raw_repulsive_forces.mean():.6f}, std: {raw_repulsive_forces.std():.6f}"
+    )
 
     if force_magnitude > 1e-8:  # Avoid division by zero
         # Scale forces so their average magnitude equals velocity magnitude
@@ -231,13 +231,13 @@ def divergence_free_particle_guidance(
     # Apply user-specified alpha scaling AFTER regularization
     scaled_forces = regularized_forces * alpha_t
     scaled_magnitude = torch.linalg.vector_norm(scaled_forces, dim=dims).mean()
-    # print(f"Alpha: {alpha_t:.3f}")
-    # print(f"Scaled force magnitude: {scaled_magnitude:.6f}")
-    # print(
-    #     f"Velocity/scaled_force ratio: {velocity_magnitude/scaled_magnitude:.3f}"
-    #     if scaled_magnitude > 1e-8
-    #     else "inf"
-    # )
+    print(f"Alpha: {alpha_t:.3f}")
+    print(f"Scaled force magnitude: {scaled_magnitude:.6f}")
+    print(
+        f"Velocity/scaled_force ratio: {velocity_magnitude/scaled_magnitude:.3f}"
+        if scaled_magnitude > 1e-8
+        else "inf"
+    )
 
     # Apply divergence-free projection
     divergence_free_repulsion = make_divergence_free(
@@ -245,15 +245,15 @@ def divergence_free_particle_guidance(
     )
 
     # # DEBUG: Compare before and after divergence-free projection
-    # divfree_magnitude = torch.linalg.vector_norm(
-    #     divergence_free_repulsion, dim=dims
-    # ).mean()
-    # print(f"Divergence-free force magnitude: {divfree_magnitude:.6f}")
-    # print(
-    #     f"Projection preservation ratio: {divfree_magnitude/scaled_magnitude:.3f}"
-    #     if scaled_magnitude > 1e-8
-    #     else "inf"
-    # )
-    # print("=" * 50)
+    divfree_magnitude = torch.linalg.vector_norm(
+        divergence_free_repulsion, dim=dims
+    ).mean()
+    print(f"Divergence-free force magnitude: {divfree_magnitude:.6f}")
+    print(
+        f"Projection preservation ratio: {divfree_magnitude/scaled_magnitude:.3f}"
+        if scaled_magnitude > 1e-8
+        else "inf"
+    )
+    print("=" * 50)
 
     return divergence_free_repulsion
