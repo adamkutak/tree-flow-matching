@@ -793,6 +793,44 @@ def run_experiment(args):
         f"Baseline ODE - FID: {ode_metrics['fid_score']:.4f}, IS: {ode_metrics['inception_score']:.4f}±{ode_metrics['inception_std']:.4f}, DINO Top-1: {ode_metrics['dino_top1_accuracy']:.2f}%, Top-5: {ode_metrics['dino_top5_accuracy']:.2f}%"
     )
 
+    print("\n\n===== Running Particle Guidance experiments =====")
+    # Test different alpha ranges for particle guidance (HIGH at t=0 → LOW at t=1)
+    alpha_ranges = [(0.3, 0.1), (0.1, 0.1), (0.05, 0.025), (0.025, 0.0125)]
+
+    for alpha_0, alpha_1 in alpha_ranges:
+        print(f"\nTesting Particle Guidance with alpha_0={alpha_0}, alpha_1={alpha_1}")
+        pg_metrics = run_sampling_experiment(
+            sampler,
+            device,
+            fid,
+            args.num_samples,
+            args.batch_size,
+            batch_sample_particle_guidance_with_metrics,
+            {
+                "alpha_0": alpha_0,  # HIGH guidance at t=0 (start, noise)
+                "alpha_1": alpha_1,  # LOW guidance at t=1 (end, data)
+                "kernel_type": "rbf",
+                "schedule_type": "linear",
+            },
+            f"Particle Guidance sampling with α₀={alpha_0} (t=0, high) → α₁={alpha_1} (t=1, low)",
+        )
+
+        results["experiments"].append(
+            {
+                "type": "particle_guidance",
+                "alpha_0": alpha_0,
+                "alpha_1": alpha_1,
+                "kernel_type": "rbf",
+                "schedule_type": "linear",
+                "metrics": pg_metrics,
+            }
+        )
+
+        print(
+            f"Particle Guidance (α₀={alpha_0}, α₁={alpha_1}) - FID: {pg_metrics['fid_score']:.4f}, IS: {pg_metrics['inception_score']:.4f}±{pg_metrics['inception_std']:.4f}, DINO Top-1: {pg_metrics['dino_top1_accuracy']:.2f}%, Top-5: {pg_metrics['dino_top5_accuracy']:.2f}%"
+        )
+        print(f"Average guidance/velocity ratio: {pg_metrics['avg_ratio']:.4f}")
+
     print("\n\n===== Running ODE-divfree experiments =====")
     for lambda_div in args.lambda_divs:
         print(f"\nTesting ODE-divfree with lambda_div={lambda_div}")
@@ -842,44 +880,6 @@ def run_experiment(args):
             f"SDE (noise_scale={noise_scale}) - FID: {sde_metrics['fid_score']:.4f}, IS: {sde_metrics['inception_score']:.4f}±{sde_metrics['inception_std']:.4f}, DINO Top-1: {sde_metrics['dino_top1_accuracy']:.2f}%, Top-5: {sde_metrics['dino_top5_accuracy']:.2f}%"
         )
         print(f"Average noise/velocity ratio: {sde_metrics['avg_ratio']:.4f}")
-
-    print("\n\n===== Running Particle Guidance experiments =====")
-    # Test different alpha ranges for particle guidance (HIGH at t=0 → LOW at t=1)
-    alpha_ranges = [(0.3, 0.1), (0.1, 0.1), (0.05, 0.025), (0.025, 0.0125)]
-
-    for alpha_0, alpha_1 in alpha_ranges:
-        print(f"\nTesting Particle Guidance with alpha_0={alpha_0}, alpha_1={alpha_1}")
-        pg_metrics = run_sampling_experiment(
-            sampler,
-            device,
-            fid,
-            args.num_samples,
-            args.batch_size,
-            batch_sample_particle_guidance_with_metrics,
-            {
-                "alpha_0": alpha_0,  # HIGH guidance at t=0 (start, noise)
-                "alpha_1": alpha_1,  # LOW guidance at t=1 (end, data)
-                "kernel_type": "rbf",
-                "schedule_type": "linear",
-            },
-            f"Particle Guidance sampling with α₀={alpha_0} (t=0, high) → α₁={alpha_1} (t=1, low)",
-        )
-
-        results["experiments"].append(
-            {
-                "type": "particle_guidance",
-                "alpha_0": alpha_0,
-                "alpha_1": alpha_1,
-                "kernel_type": "rbf",
-                "schedule_type": "linear",
-                "metrics": pg_metrics,
-            }
-        )
-
-        print(
-            f"Particle Guidance (α₀={alpha_0}, α₁={alpha_1}) - FID: {pg_metrics['fid_score']:.4f}, IS: {pg_metrics['inception_score']:.4f}±{pg_metrics['inception_std']:.4f}, DINO Top-1: {pg_metrics['dino_top1_accuracy']:.2f}%, Top-5: {pg_metrics['dino_top5_accuracy']:.2f}%"
-        )
-        print(f"Average guidance/velocity ratio: {pg_metrics['avg_ratio']:.4f}")
 
     print("\n\n===== Running SDE-divfree experiments =====")
     for lambda_div in args.lambda_divs:
