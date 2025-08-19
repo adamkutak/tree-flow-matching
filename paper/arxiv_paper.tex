@@ -107,7 +107,7 @@ Our work establishes inference-time scaling as a viable and principled approach 
 
 \subsection{Flow Matching}
 
-Flow Matching (FM)~\cite{lipman2023fm} defines a continuous bridge between a reference distribution \(\pi_{\mathrm{ref}}\), typically a standard Gaussian, and a data distribution \(\pi_{\mathrm{data}}\), by modeling trajectories \(x_t\) that interpolate between samples \(x_0 \sim \pi_{\mathrm{ref}}\) and \(x_1 \sim \pi_{\mathrm{data}}\). A common choice is the linear path $x_t = (1-t)x_0 + tx_1$, though other conditional paths are possible and lead to generalized or conditional flow matching \cite{tong2024otfm, song2021score, ma2024sit}. This is done via a learned velocity field \(v_\theta(x, t)\) that satisfies the probability-flow ODE:
+Flow Matching (FM)~\cite{lipman2023fm} defines a continuous bridge between a reference distribution \(\pi_{\mathrm{ref}}\), typically a standard Gaussian, and a data distribution \(\pi_{\mathrm{data}}\), by modeling trajectories \(x_t\) that interpolate between samples \(x_0 \sim \pi_{\mathrm{ref}}\) and \(x_1 \sim \pi_{\mathrm{data}}\). A common choice is the linear path $x_t = (1-t)x_0 + tx_1$, though other conditional paths are possible and lead to generalized or conditional flow matching \cite{tong2024otfm, song2021score, albergo2023stochastic_interpolants}. This is done via a learned velocity field \(v_\theta(x, t)\) that satisfies the probability-flow ODE:
 \[
 \frac{dx_t}{dt} = v_\theta(x_t, t), \quad t \in [0,1].
 \]
@@ -125,20 +125,32 @@ Unlike diffusion models that rely on stochastic sampling from SDEs or discrete M
 
 While FM defines its objective using i.i.d. sample pairs \((x_0, x_1)\), such pairs are typically poorly coupled in high-dimensional space. Minibatch OT-FM~\cite{tong2024otfm} addresses this by using an optimal transport (OT) plan computed within each minibatch to generate more meaningful pairs. That is, given batches \(\{x_{0,i}\}_{i=1}^B\) from \(\pi_{\mathrm{ref}}\) and \(\{x_{1,j}\}_{j=1}^B\) from \(\pi_{\mathrm{data}}\), an optimal permutation matrix \(\pi^\star \in \Pi_B\) is computed to minimize a transport cost:
 \[
-\pi^\star = \arg\min_{\pi \in \Pi_B} \sum_{i,j} \pi_{ij} \cdot c(x_{0,i}, x_{1,j}), \quad c(\cdot,\cdot) = || x_{0,i} - x_{1,j} ||^2
+\pi^\star = \arg\min_{\pi \in \Pi_B} \sum_{i,j} \pi_{ij} \cdot c(x_{0,i}, x_{1,j}), \quad c(\cdot,\cdot) = \| x_{0,i} - x_{1,j} \|^2
 \]
-Computing exact OT scales cubically in batch size and quadratically in memory, so minibatch approximations are necessary for large datasets. Although such plans only approximate the global coupling, prior work has shown minibatch OT to be effective in practice for generative modeling and domain adaptation \cite{tong2024otfm}. These better-aligned pairs shorten transport paths, stabilize training, and improve generalization.
+Computing exact OT scales cubically in batch size and quadratically in memory \cite{cuturi2013sinkhorn}, so minibatch approximations are necessry for large datasets. Although such plans only approximate the global coupling, prior work has shown minibatch OT to be effective in practice for generative modeling and domain adaptation \cite{genevay2018learning, damodaran2018deepjdot, fatras2021minibatch, pooladian2023minibatch}. These better-aligned pairs shorten transport paths, stabilize training, and improve generalization.
 % where \(c(\cdot, \cdot)\) is typically Euclidean distance. This plan yields better-aligned pairs that shorten transport paths, stabilize training, and improve generalization.
 
 \subsection{Stochastic Interpolants: A Unifying Framework}
 
-The stochastic interpolants framework~\cite{ma2024sit} shows that both FM and diffusion models can be described using the same general family of interpolations. A stochastic interpolant is defined by
+The stochastic interpolants framework~\cite{ma2024sit, albergo2023stochastic_interpolants} shows that both FM and diffusion models can be described using the same general family of interpolations. A stochastic interpolant is defined by
 \[
 x_t = a(t) x_0 + b(t) x_1 + \sigma(t) \epsilon, \quad \epsilon \sim \mathcal{N}(0, I),
 \]
-where \(a(t), b(t)\), and \(\sigma(t)\) are schedule functions satisfying boundary conditions: \(a(0) = 1\), \(b(1) = 1\), \(a(1) = b(0) = 0\), and \(\sigma(0) = \sigma(1) = 0\). This framework can express linear FM, denoising diffusion models, and their hybrids.
+with boundary conditions $a(0)=1,\ b(0)=0,\ \sigma(0)=0$ and $a(1)=0,\ b(1)=1,\ \sigma(1)=0$,
+and with $a,b,\sigma$ smooth in $t$. FM is the deterministic special case $a(t)=1-t$, $b(t)=t$, $\sigma(t)\equiv 0$.
 
-Crucially, this allows inference-time reinterpretation of trained models by simply modifying the interpolant schedule. For example, a model trained using FM with linear schedules \((a(t), b(t)) = (1 - t, t)\) and \(\sigma(t) = 0\) can be reinterpreted at test time as a VP diffusion model by using \((a(t), b(t)) = (\cos(\alpha t), \sin(\alpha t))\) and \(\sigma(t) \neq 0\). This reveals a continuum of models and motivates inference-time strategies that leverage the same learned model parameters.
+Crucially, the stochastic interpolants framework allows inference-time reinterpretation of trained
+models by simply modifying the schedule $(a,b,\sigma)$. For instance, a model trained with linear FM
+($a(t)=1-t,\ b(t)=t,\ \sigma(t)\equiv 0$) can, at test time, be sampled using a different valid
+schedule. One example is the rotational path
+$a(t)=\cos(\tfrac{\pi t}{2}),\ b(t)=\sin(\tfrac{\pi t}{2}),\ \sigma(t)\equiv 0$,
+which still interpolates smoothly between endpoints.
+Another is the variance-preserving (VP) diffusion schedule, usually written in the two-coefficient
+form $x_t=\alpha_t x_{\mathrm{data}}+\sigma_t \epsilon$ with $\alpha_t^2+\sigma_t^2=1$.
+This is a special case of the three-coefficient interpolant by reinterpreting $(x_0,x_1)=(\epsilon,
+x_{\mathrm{data}})$ and setting $a(t)=\sigma_t,\ b(t)=\alpha_t,\ \sigma(t)=0$.
+In both cases, the learned parameters can be reused without retraining, revealing a continuum of
+models and motivating inference-time strategies that use the same velocity or score network.
 
 \subsection{Inference-Time Compute Scaling in Generative AI}
 
@@ -153,6 +165,20 @@ These developments motivate the need for inference-time scaling in **continuous-
 
 \section{Related Work}
 \label{sec:related}
+
+\subsection{Inference-Time Scaling for Diffusion Models}
+
+Inference-time scaling in diffusion models has recently been advanced through optimization in the latent noise space~\cite{ma2025diffits}. The core idea is to treat the initial noise vector \( z \sim \mathcal{N}(0, I) \) as a controllable input, and to iteratively refine it using a verifier score \( r(\cdot) \) that evaluates the final generated sample. The method begins with a population of candidate noise vectors \( \{z_i\} \), denoises each to obtain \( x_0^{(i)} \), scores them, and retains high-scoring candidates. New proposals are then generated by applying small perturbations to the best \( z_i \), repeating the procedure over multiple rounds.
+
+In addition to this search in noise space, the method proposes a "search over paths" strategy, in which denoised samples are partially re-noised and then denoised again. That is, after reaching an intermediate timestep \( t \), the top samples are re-noised forward to \( t' > t \), and denoising resumes from \( t' \) to \( t = 0 \). This is intended to explore local perturbations in trajectory space around high-scoring samples.
+
+However, the actual implementation uses hyperparameters such that the search begins at \( t = 0.11 \), and each re-noising step applies a forward process to \( t' = 0.89 \). This implies that 89\% of the diffusion process is re-applied after a brief denoising. Because most of the signal is lost at this noise level, the re-noised samples are nearly indistinguishable from fresh random samples from the prior. Consequently, while this method technically performs a limited search over paths, in practice it behaves similarly to a best-of-\( N \) strategy (often termed random search) conducted over initial noise vectors.
+
+These strategies are highly effective in the diffusion setting, but they rely fundamentally on starting generation from a known distribution, typically \( \mathcal{N}(0, I) \). In contrast, our approach applies to flow matching models trained with arbitrary or learned base distributions \( \pi_{\mathrm{ref}} \), which may not admit tractable sampling via random search.
+
+\subsection{Particle Sampling Approaches}
+
+In addition to search in noise and path space, diffusion models greatly benefit from particle sampling strategies. The simplest is Best-of-N (BoN) \cite{fan2023bon, holtzman2020curious}, which generates multiple samples and retains the highest scoring one. More sophisticated methods integrate the selection into the denoising process: SVDD \cite{ma2025diffits} selects the top particles at every step, CoDe \cite{singh2025code} performs selection at fixed intervals, and Sequential Monte Carlo (SMC) samplers \cite{song2024smc, xu2024smc} resample particles proportionally to their reward-weighted importance scores. These approaches have proven highly effective in using additional inference-time compute but have not been directly applied to flow matching models due to their deterministic ODE sampling process: given the same initial condition, all particles collapse to a single trajectory. 
 
 \subsection{Inference-Time Scaling for Flow Matching Models}
 
@@ -174,7 +200,7 @@ where \(c_s = \bar{\sigma}_s / \sigma_{t_s}\) and \(t_s = \rho^{-1}(\bar{\rho}(s
 
 This approach enables the use of particle sampling strategies originally developed for diffusion models, which benefit from diverse sample paths and stochastic exploration. However, by transforming both the dynamics and the interpolant, the method loses the key benefits of flow matching: fast sampling via few deterministic steps and linear interpolants.
 
-While this work is concurrent to our own, we still differentiate ourselves as our method preserves the original FM structure. We maintain the ODE form of the sampler and the linear interpolant, and introduce diversity solely by injecting divergence-free velocity perturbations during sampling. This guarantees that probability mass is conserved through the continuity equation, while allowing geometrically distinct trajectories for verifier-guided search.
+While this work is concurrent to our own, we differentiate ourselves as \textbf{our method preserves the original FM structure. We maintain the ODE form of the sampler and the linear interpolant, and introduce diversity solely by injecting divergence-free velocity perturbations during sampling.} This guarantees that probability mass is conserved through the continuity equation, while allowing geometrically distinct trajectories for verifier-guided search.
 
 \subsection{Noise Injection while Preserving the Continuity Equation}
 
@@ -190,27 +216,13 @@ Unlike our method, which satisfies the continuity equation path-wise by ensuring
 
 We include this method as a strong baseline in our experiments for its conceptual proximity to our work.
 
-\subsection{Inference-Time Scaling for Diffusion Models}
-
-Inference-time scaling in diffusion models has recently been advanced through optimization in the latent noise space~\cite{ma2025diffits}. The core idea is to treat the initial noise vector \( z \sim \mathcal{N}(0, I) \) as a controllable input, and to iteratively refine it using a verifier score \( r(\cdot) \) that evaluates the final generated sample. The method begins with a population of candidate noise vectors \( \{z_i\} \), denoises each to obtain \( x_0^{(i)} \), scores them, and retains high-scoring candidates. New proposals are then generated by applying small perturbations to the best \( z_i \), repeating the procedure over multiple rounds.
-
-In addition to this search in noise space, the method proposes a "search over paths" strategy, in which denoised samples are partially re-noised and then denoised again. That is, after reaching an intermediate timestep \( t \), the top samples are re-noised forward to \( t' > t \), and denoising resumes from \( t' \) to \( t = 0 \). This is intended to explore local perturbations in trajectory space around high-scoring samples.
-
-However, the actual implementation uses hyperparameters such that the search begins at \( t = 0.11 \), and each re-noising step applies a forward process to \( t' = 0.89 \). This implies that 89\% of the diffusion process is re-applied after a brief denoising. Because most of the signal is lost at this noise level, the re-noised samples are nearly indistinguishable from fresh random samples from the prior. Consequently, while this method technically performs a limited search over paths, in practice it behaves similarly to a best-of-\( N \) strategy (often termed random search) conducted over initial noise vectors.
-
-These strategies are highly effective in the diffusion setting, but they rely fundamentally on starting generation from a known distribution, typically \( \mathcal{N}(0, I) \). In contrast, our approach applies to flow matching models trained with arbitrary or learned base distributions \( \pi_{\mathrm{ref}} \), which may not admit tractable sampling via random search.
-
-\subsection{Other Approaches to Efficient or Accurate Continuous Generative Models}
-
-Several approaches aim to improve the efficiency or quality of continuous-time generative models. Second-order ODE solvers~\cite{zhang2023secondorder} accelerate sampling by reducing discretization error. Curvature-controlled interpolants~\cite{dockhorn2023stochastic} introduce smoothness constraints on the sampling path. These methods are complementary to inference-time compute scaling and can be combined with divergence-free branching strategies for further performance improvements.
-
 \section{Inference Time Scaling for Flow Matching while Preserving the ODE}
 
-Our approach to inference-time scaling for flow matching models operates along two independent axes: \textbf{noise injection methods} (Sections 4.1-4.3) that introduce stochasticity during sampling, and \textbf{inference algorithms} (Section 4.4) that leverage this stochasticity for verifier-guided search. This separation allows for flexible combinations of noise types with different search strategies, enabling principled exploration of the compute-quality tradeoff space.
+Our investigation of inference-time scaling for flow matching models operates along two independent axes: \textbf{noise injection methods} (Sections 4.1-4.3) that introduce stochasticity during sampling, and \textbf{inference algorithms} (Section 4.4) that leverage this stochasticity for reward-guided search. This separation allows for flexible combinations of noise types with different search strategies, enabling exploration of the compute-quality tradeoff space.
 
 \subsection{Divergence-Free Noise}
 
-To enhance sample diversity without altering the trained density path \(p_t(x)\), we inject a small, divergence-free perturbation \(w_t(x)\) into the learned velocity field \(u_t(x)\). This preserves the ODE-based nature of the sampler and avoids departing from the continuity equation satisfied during training. We control the influence of the perturbation using a scalar hyperparameter \(\lambda\), which scales the amount of injected noise.
+To enhance sample diversity without altering the trained density path \(p_t(x)\), we inject a divergence-free perturbation \(w_t(x)\) into the learned velocity field \(u_t(x)\) at inference time when simulating the ODE. Specifically, we modify the velocity field to \(u_t(x) + \lambda w_t(x)\), where \(\lambda\) is a scalar hyperparameter controlling the perturbation magnitude. Crucially, from the flow matching formulation, each modified vector field \(u_t(x) + \lambda w_t(x)\) represents an equally valid "randomized" ODE as defined by the continuity equation, since the divergence-free property ensures that \(\nabla_x \cdot (p_t(x) w_t(x)) = 0\). This theoretical foundation allows us to introduce stochasticity for improved sample diversity while preserving the mathematical structure of the original flow.
 
 \subsection{Proof: Adding Divergence-Free Noise at Inference Preserves the Continuity Equation and the Probability Flow ODE}
 
@@ -282,40 +294,6 @@ While our primary contribution focuses on divergence-free noise injection, we al
 
 These baseline methods enable us to demonstrate the advantages of our divergence-free approach in maintaining sample quality while introducing beneficial stochasticity.
 
-\subsection{Inference Algorithms}
-
-Given any of the above noise injection methods, we can employ different search strategies to leverage the introduced stochasticity for improved sample quality. We present five inference algorithms that operate independently of the chosen noise injection method, enabling flexible combinations for different computational budgets and quality requirements.
-
-\subsubsection{Best-of-N Sampling}
-
-The simplest inference scaling approach generates $N$ independent samples from different initial conditions and selects the top-$K$ samples based on a verifier function $r(\cdot)$. This method provides broad exploration of the initial condition space and scales linearly with computational budget. See Algorithm~\ref{alg:best-of-n} for implementation details.
-
-\subsubsection{Path Exploration}
-
-Path exploration generates multiple trajectories from the same initial condition by introducing stochastic branching during the integration process. At predetermined timesteps, we create multiple branches by applying different noise realizations, simulate each branch to completion, score the final samples, and continue with the highest-scoring branches. This enables focused exploration around promising trajectories.
-
-\textbf{Computational Consideration:} Path exploration requires simulating intermediate samples forward to completion ($t=1$) for scoring, which adds significant computational overhead beyond the reported compute budgets. This look-ahead scoring ensures accurate quality assessment but substantially increases the actual computational cost compared to other methods. See Algorithm~\ref{alg:path-exploration} for implementation details.
-
-\subsubsection{Best-of-N + Path Exploration}
-
-This two-stage approach combines the benefits of initial condition search with trajectory-level exploration. Stage 1 performs Best-of-N sampling to identify promising initial conditions. Stage 2 applies path exploration starting from the top-$K$ initial conditions identified in Stage 1. This mirrors the exploration-exploitation tradeoff in reinforcement learning. See Algorithm~\ref{alg:best-of-n-path-exploration} for implementation details.
-
-\subsubsection{Noise Search}
-
-Noise search generates multiple samples from the same initial condition by applying different noise realizations throughout the entire sampling process. Unlike path exploration, this method does not require intermediate scoring and branching, making it computationally efficient while still enabling local exploration around a given starting point. See Algorithm~\ref{alg:noise-search} for implementation details.
-
-\subsubsection{Best-of-N + Noise Search}
-
-Similar to the path exploration variant, this two-stage method first identifies promising initial conditions via Best-of-N sampling, then applies noise search around each selected starting point. This approach provides both broad initial exploration and focused local search while maintaining computational efficiency. See Algorithm~\ref{alg:best-of-n-noise-search} for implementation details.
-
-\subsubsection{Multi-Round Noise Search}
-
-The noise search algorithms can be extended to multiple rounds of progressively focused exploration. In Round 1, we apply noise search starting from $t=0$ and select the top-$K$ samples. In Round 2, we continue noise search from these $K$ samples at an intermediate timestep (e.g., $t=0.5$), enabling further exploration around high-scoring regions. Round 3 continues from $t=0.75$ with the best samples from Round 2. This progressive refinement allows for increasingly targeted search while maintaining computational tractability.
-
-\subsubsection{Connection to Particle Sampling}
-
-Our inference algorithms share conceptual similarities with particle sampling methods, where multiple "particles" (sample trajectories) evolve through the state space and are periodically reweighted or resampled based on fitness criteria. The path exploration method particularly resembles particle filtering approaches, where particles branch and are selected based on likelihood estimates. However, our methods operate specifically within the flow matching framework and leverage verifier functions rather than likelihood-based reweighting.
-
 \subsection{Empirical Demonstration of Diversity Without Reducing Quality}
 \label{sec:noise_study}
 
@@ -370,8 +348,21 @@ The $x$-axis in all figures represents the average magnitude of injected noise p
 \paragraph{Results.}
 As shown in the figures, our divergence-free ODE approach allows substantially higher levels of noise to be injected without degrading sample quality. Sample diversity increases smoothly with noise level (Fig.~\ref{fig:div-noise}), while FID remains stable across a wide noise range (Fig.~\ref{fig:fid-noise}). The Pareto frontier analysis (Fig.~\ref{fig:pareto-fid}) demonstrates that our method achieves superior trade-offs between diversity and quality compared to alternative stochastic approaches. In contrast, standard SDE sampling degrades rapidly as noise increases. EDM sampling performs better than the naïve SDE—consistent with its theoretical guarantee of preserving \(p_t(x)\) in expectation—but still deteriorates earlier than our method. Similar analysis for Inception Score shows comparable results (see Appendix). This suggests that satisfying the continuity equation per trajectory, as our approach does, offers stronger robustness to stochasticity during sampling.
 
+\subsection{Inference Algorithms}
 
+Given any of the above noise injection methods, we employ different search strategies to leverage the introduced stochasticity for improved sample quality. We present multiple inference algorithms that operate independently of the chosen noise injection method, enabling us to flexibly comine noise strategies with these sampling strategies. Each algorithm requires a verifier function $r(\cdot)$, which scores complete samples at $t=1$. See Appendix A for implementation details for each algorithm
 
+\textbf{Best-of-N Sampling:} The simplest inference scaling approach generates $N$ independent samples from different initial conditions and take the top-$K$ samples. This method provides broad exploration of the initial condition space and scales linearly with computational budget.
+
+\textbf{Path Exploration:} Path exploration generates multiple trajectories from the same initial condition by introducing stochastic branching during the integration process. At predetermined timesteps, we create multiple branches by applying different noise realizations, simulate each branch to completion, score the final samples, and continue with the highest-scoring branches. This enables focused exploration around promising trajectories. \textbf{Computational Consideration:} Path exploration requires simulating intermediate samples forward to completion ($t=1$) for scoring, which adds significant computational overhead beyond the reported compute budgets. This look-ahead scoring ensures accurate quality assessment but substantially increases the actual computational cost compared to other methods.
+
+\textbf{Best-of-N + Path Exploration:} This two-stage approach combines the benefits of initial condition search with trajectory-level exploration. Stage 1 performs Best-of-N sampling to identify promising initial conditions. Stage 2 applies path exploration starting from the top-$K$ initial conditions identified in Stage 1. This mirrors the exploration-exploitation tradeoff in reinforcement learning.
+
+\textbf{Noise Search:} Noise search generates multiple samples from the same initial condition by applying different noise realizations throughout the entire sampling process. Unlike path exploration, this method does not require intermediate scoring and branching, making it computationally efficient while still enabling local exploration around a given starting point. In practice we extend Noise search to multiple rounds, where each round starts progressively closer to $t=1$ using intermediate samples that correspond to the $k$ top samples from the previous round, allowing us to further explore high-scoring regions.
+
+\textbf{Best-of-N + Noise Search:} Similar to the path exploration variant, this two-stage method first identifies promising initial conditions via Best-of-N sampling, then applies noise search around each selected starting point. This approach provides both broad initial exploration and focused local search while maintaining computational efficiency.
+
+\textbf{Connection to Particle Sampling:} Our inference algorithms share conceptual similarities with particle sampling methods, where multiple "particles" (sample trajectories) evolve through the state space and are periodically reweighted or resampled based on fitness criteria. The path exploration method particularly resembles particle filtering approaches, where particles branch and are selected based on likelihood estimates. However, our methods operate specifically within the flow matching framework and leverage verifier functions rather than likelihood-based reweighting.
 
 \section{Experiments}
 
@@ -454,35 +445,17 @@ Under DINO-guided selection, the RS → Divfree explore method again shows super
 
 \subsection{FoldFlow: Protein Design}
 
-We evaluate our inference-time scaling methods on protein structure generation using the pretrained FoldFlow model~\cite{foldflow2}. FoldFlow is a continuous normalizing flow model that generates protein backbone structures by learning the conditional distribution of protein coordinates given sequence information. This provides an important validation of our approach in a different scientific domain with distinct evaluation metrics.
+We evaluate our inference-time scaling methods on the task of unconditional protein backbone generation using the pretrained FoldFlow2 model~\cite{foldflow2} . FoldFlow is a flow matching model that generates protein backbone structures by learning the conditional distribution of protein coordinates given sequence information. This provides an important validation of our approach in a scientific domain with distinct evaluation metrics.
 
 \subsubsection{Experimental Setup}
 
-We apply the same inference-time scaling framework from our ImageNet experiments to protein generation, evaluating all seven method combinations described in Section 5.1. We generate 64 protein samples of length 100 residues per configuration across compute budgets of 1×, 2×, 4×, and 8×. All methods are compared against the standard deterministic ODE sampling baseline (1× compute).
+We apply the same inference-time scaling framework from our ImageNet experiments to protein generation, evaluating all seven method combinations described in Section 5.1. We generate 64 protein samples of length 100 residues per configuration across compute budgets of 2×, 4×, and 8×. All methods are compared against the standard deterministic ODE sampling baseline (1× compute). During inference, we use self-consistency template modeling score (scTM-score) as the verifier function for sample selection.
 
-During inference-time scaling, we use self-consistency TM-score as the verifier function for sample selection, while our evaluation employs multiple metrics to comprehensively assess protein quality and designability.
+\subsubsection{Evaluation}
 
-\subsubsection{Self-Consistency Evaluation}
+Following the FoldFlow evaluation framework, the self-consistency framework measures protein designability by testing structural integrity through a complete folding-refolding cycle: FoldFlow generates a backbone structure, ProteinMPNN~\cite{proteinmpnn} predicts 8 amino acid sequences for that structure, ESMFold~\cite{esmfold} refolds these sequences into 3D structures, and structural alignment metrics (self-consistency Root Mean Square Deviation, scRMSD, and scTM-score) compare the refolded structures to the original. This tests whether generated structures represent realistic, foldable proteins that follow natural sequence-structure relationships~\cite{foldflow2}. For both scRMSD and scTM-score, we report both the average scores across the set of sampled proteins per method as well as the designability criteria from the FoldFlow framework.
 
-The self-consistency evaluation framework measures the designability of generated protein structures by testing whether they maintain structural integrity through a complete folding-refolding cycle. This process, following the FoldFlow methodology~\cite{foldflow2}, consists of four key steps:
-
-\textbf{Structure Generation:} FoldFlow generates a protein backbone structure from noise, producing 3D coordinates for the protein chain.
-
-\textbf{Inverse Folding:} The generated structure is fed to ProteinMPNN~\cite{proteinmpnn}, an inverse folding model that predicts amino acid sequences likely to fold into the given backbone structure. ProteinMPNN generates 8 different sequence candidates for each structure.
-
-\textbf{Refolding:} Each of the 8 predicted sequences is then processed by ESMFold~\cite{esmfold}, a structure prediction model that generates 3D structures from amino acid sequences.
-
-\textbf{Structural Comparison:} The refolded structures are compared to the original generated structure using structural alignment metrics, specifically self-consistency RMSD (scRMSD) and self-consistency TM-score (scTM-score).
-
-The self-consistency framework essentially asks: "If I generate a structure, predict sequences that should fold into it, and then fold those sequences, do I get back something similar to what I started with?" This tests whether the generated structure represents a realistic, foldable protein that follows the sequence-structure relationships observed in nature.
-
-\subsubsection{Evaluation Metrics}
-
-We evaluate protein generation quality using both continuous metrics and threshold-based designability measures:
-
-\textbf{Continuous Metrics:} We report the average self-consistency RMSD (scRMSD) and self-consistency TM-score (scTM-score) across all generated proteins. For each protein, we take the best score among the 8 refolded structures. Lower scRMSD values indicate better structural preservation, while higher scTM-score values indicate better structural similarity.
-
-\textbf{Designability Thresholds:} Following the FoldFlow evaluation framework, we measure the percentage of generated proteins that achieve specific self-consistency thresholds. We report the fraction of structures with scRMSD < 2.0Å, scRMSD < 1.5Å, and scRMSD < 1.0Å, representing increasingly stringent designability criteria. A protein is considered designable at a given threshold if at least one of its 8 refolded structures meets the criterion.
+\textbf{Designability Thresholds:} We measure the percentage of samples with scRMSD below the threshold of 2.0Å, as described in FoldFlow's evaluation. We additionally use 1.5Å and 1.0Å as thresholds, representing increasingly stringent designability criteria
 
 \subsubsection{Results}
 
