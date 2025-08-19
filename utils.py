@@ -13,53 +13,167 @@ def score_si_linear(x, t_batch, u_t):
         return -((one_minus_t * u_t + x) / t)
 
 
-def divfree_swirl_si(x, t_batch, y, u_t, eps=1e-8):
-    eps_raw = torch.randn_like(x)
+def make_divergence_free(noise, x, t_batch, u_t, eps=1e-8):
+    """
+    Project noise to be divergence-free using score projection method.
+    """
     score = score_si_linear(x, t_batch, u_t)
 
-    dims = tuple(range(1, x.ndim))
-    dot = (eps_raw * score).sum(dim=dims, keepdim=True)
-    s_norm = torch.linalg.vector_norm(score, dim=dims, keepdim=True) + eps
-    s_norm2 = s_norm.pow(2)
+    # Project out component parallel to score
+    dims = tuple(range(1, len(noise.shape)))  # All dims except batch
+    dot = (noise * score).sum(dim=dims, keepdim=True)
+    s_norm2 = torch.linalg.vector_norm(score, dim=dims, keepdim=True).pow(2) + eps
     proj = dot / s_norm2
-    w = eps_raw - proj * score
 
-    return w
+    divergence_free_noise = noise - proj * score
+
+    return divergence_free_noise
 
 
-def score_vp_converted(x, t_batch, u_t, use_vp=True, beta_min=0.1, beta_max=20.0):
+def divfree_swirl_si(x, t_batch, y, u_t, eps=1e-8):
+    """Generate divergence-free noise by projecting Gaussian noise."""
+    eps_raw = torch.randn_like(x)
+    return make_divergence_free(eps_raw, x, t_batch, u_t, eps)
+
+
+def particle_guidance_forces(x_batch, t, alpha_t=1.0, kernel_type="rbf"):
     """
-    Convert velocity to score using either linear or VP scheduler coefficients
-    Assumes t_batch is already in [0,1] range
+    Extract repulsive forces from particle guidance potential.
+    Only operates within same-class batches.
+
+    Args:
+        x_batch: [batch_size, channels, height, width] - current samples at time t
+        t: current time step (scalar)
+        alpha_t: guidance strength (time-dependent)
+        kernel_type: 'rbf' or 'euclidean'
+
+    Returns:
+        forces: [batch_size, channels, height, width] - repulsive forces for each sample
     """
-    t_normalized = t_batch  # Already in [0,1] - no normalization needed
+    batch_size = x_batch.shape[0]
+    if batch_size == 1:
+        return torch.zeros_like(x_batch)
 
-    if use_vp:
-        # VP scheduler coefficients (like repository)
-        b = beta_min
-        B = beta_max
-        T = 0.5 * t_normalized**2 * (B - b) + t_normalized * b
-        dT = t_normalized * (B - b) + b
+    # Flatten spatial dimensions for distance computation
+    x_flat = x_batch.flatten(1)  # [batch_size, flattened_dims]
 
-        alpha_t = torch.exp(-0.5 * T)
-        sigma_t = torch.sqrt(1 - torch.exp(-T))
-        d_alpha_t = -0.5 * dT * torch.exp(-0.5 * T)
-        d_sigma_t = 0.5 * dT * torch.exp(-T) / torch.sqrt(1 - torch.exp(-T))
+    if kernel_type == "rbf":
+        forces = _rbf_repulsive_forces(x_batch, x_flat, alpha_t)
+    elif kernel_type == "euclidean":
+        forces = _euclidean_repulsive_forces(x_batch, x_flat, alpha_t)
     else:
-        # Linear interpolant coefficients
-        alpha_t = 1 - t_normalized
-        sigma_t = t_normalized
-        d_alpha_t = -torch.ones_like(t_normalized)
-        d_sigma_t = torch.ones_like(t_normalized)
+        raise ValueError(f"Unknown kernel type: {kernel_type}")
 
-    # Repository's general formula
-    alpha_t = alpha_t.view(-1, *([1] * (x.ndim - 1)))
-    sigma_t = sigma_t.view(-1, *([1] * (x.ndim - 1)))
-    d_alpha_t = d_alpha_t.view(-1, *([1] * (x.ndim - 1)))
-    d_sigma_t = d_sigma_t.view(-1, *([1] * (x.ndim - 1)))
+    return forces
 
-    reverse_alpha_ratio = alpha_t / d_alpha_t
-    var = sigma_t**2 - reverse_alpha_ratio * d_sigma_t * sigma_t
-    score = (reverse_alpha_ratio * u_t - x) / var
 
-    return score
+def _rbf_repulsive_forces(x_batch, x_flat, alpha_t):
+    """RBF kernel implementation from particle guidance paper - vectorized."""
+    batch_size = x_batch.shape[0]
+
+    # Compute pairwise distances
+    distances = torch.cdist(x_flat, x_flat)  # [batch_size, batch_size]
+
+    # RBF kernel bandwidth (median heuristic)
+    with torch.no_grad():
+        median_dist = torch.median(distances[distances > 0])
+        h_t = median_dist**2 / torch.log(
+            torch.tensor(float(batch_size), device=x_batch.device)
+        )
+
+    # Compute RBF kernel values k(xᵢ, xⱼ) = exp(-||xᵢ - xⱼ||² / h_t)
+    kernel_values = torch.exp(-(distances**2) / h_t)  # [batch_size, batch_size]
+
+    # Vectorized computation of pairwise differences
+    # x_flat: [batch_size, features] -> [batch_size, 1, features] - [1, batch_size, features]
+    diff = x_flat.unsqueeze(1) - x_flat.unsqueeze(
+        0
+    )  # [batch_size, batch_size, features]
+
+    # Compute gradients: ∇ᵢ k(xᵢ, xⱼ) = -2(xᵢ - xⱼ) * k(xᵢ, xⱼ) / h_t
+    # kernel_values: [batch_size, batch_size] -> [batch_size, batch_size, 1]
+    kernel_grad = -2 * diff * kernel_values.unsqueeze(2) / h_t
+
+    # Sum over j for each i, excluding diagonal (i=j)
+    # Create mask to exclude diagonal elements
+    mask = ~torch.eye(batch_size, dtype=torch.bool, device=x_batch.device).unsqueeze(2)
+    kernel_grad = kernel_grad * mask
+
+    # Sum forces for each particle
+    forces_flat = kernel_grad.sum(dim=1)  # [batch_size, features]
+
+    # Reshape back to original dimensions and apply guidance strength
+    forces = forces_flat.view_as(x_batch)
+    return -alpha_t * forces  # Negative for repulsion
+
+
+def _euclidean_repulsive_forces(x_batch, x_flat, alpha_t):
+    """Simple Euclidean distance repulsion - vectorized."""
+    batch_size = x_batch.shape[0]
+
+    # Vectorized computation of pairwise differences
+    # x_flat: [batch_size, features] -> [batch_size, 1, features] - [1, batch_size, features]
+    diff = x_flat.unsqueeze(1) - x_flat.unsqueeze(
+        0
+    )  # [batch_size, batch_size, features]
+
+    # Compute pairwise distances
+    distances = (
+        torch.norm(diff, dim=2, keepdim=True) + 1e-8
+    )  # [batch_size, batch_size, 1]
+
+    # Force proportional to 1/distance³ (since force = diff/distance³)
+    forces = diff / (distances**3)  # [batch_size, batch_size, features]
+
+    # Exclude diagonal elements (i=j) by setting them to zero
+    mask = ~torch.eye(batch_size, dtype=torch.bool, device=x_batch.device).unsqueeze(2)
+    forces = forces * mask
+
+    # Sum forces for each particle
+    forces_flat = forces.sum(dim=1)  # [batch_size, features]
+
+    forces = forces_flat.view_as(x_batch)
+    return alpha_t * forces
+
+
+def get_alpha_schedule_flow_matching(
+    t, alpha_0=2.0, alpha_1=0.1, schedule_type="linear"
+):
+    if schedule_type == "linear":
+        return alpha_0 + (alpha_1 - alpha_0) * t
+    elif schedule_type == "exponential":
+        return torch.exp(
+            t * torch.log(torch.tensor(alpha_1))
+            + (1 - t) * torch.log(torch.tensor(alpha_0))
+        )
+    else:
+        return alpha_0  # constant
+
+
+def divergence_free_particle_guidance(
+    x_batch, t_batch, y, u_t, alpha_t=1.0, kernel_type="rbf"
+):
+    """
+    Combine particle guidance with divergence-free constraint.
+
+    Args:
+        x_batch: current samples
+        t_batch: time batch
+        y: conditioning (if any)
+        u_t: velocity field from flow model
+        alpha_t: particle guidance strength
+        kernel_type: kernel for repulsion
+
+    Returns:
+        divergence_free_repulsion: clean repulsive forces that preserve continuity equation
+    """
+    # Get repulsive forces from particle guidance
+    t_scalar = t_batch[0].item() if torch.is_tensor(t_batch) else t_batch
+    repulsive_forces = particle_guidance_forces(x_batch, t_scalar, alpha_t, kernel_type)
+
+    # Apply divergence-free projection
+    divergence_free_repulsion = make_divergence_free(
+        repulsive_forces, x_batch, t_batch, u_t
+    )
+
+    return divergence_free_repulsion
