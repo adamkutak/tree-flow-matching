@@ -456,22 +456,25 @@ def batch_sample_particle_guidance_with_metrics(
     sampler,
     class_label,
     batch_size=16,
-    alpha_0=0.1,
-    alpha_1=2.0,
+    alpha_0=2.0,
+    alpha_1=0.1,
     kernel_type="rbf",
     schedule_type="linear",
+    sub_batch_size=16,
 ):
     """
     Flow matching with divergence-free particle guidance for diversity.
+    Handles large batches by splitting into sub-batches for particle guidance.
 
     Args:
         sampler: Flow sampler object
         class_label: Class label(s) for conditioning
-        batch_size: Number of samples to generate
-        alpha_0: Guidance strength at t=0 (end of sampling)
-        alpha_1: Guidance strength at t=1 (start of sampling)
+        batch_size: Total number of samples to generate
+        alpha_0: HIGH guidance strength at t=0 (start of sampling, noise)
+        alpha_1: LOW guidance strength at t=1 (end of sampling, data)
         kernel_type: 'rbf' or 'euclidean' for repulsive forces
         schedule_type: 'linear', 'exponential' for time-dependent guidance
+        sub_batch_size: Size of sub-batches for particle guidance (default 16)
     """
     is_tensor = torch.is_tensor(class_label)
     sampler.flow_model.eval()
@@ -508,10 +511,25 @@ def batch_sample_particle_guidance_with_metrics(
                 t.item(), alpha_0, alpha_1, schedule_type
             )
 
-            # Get divergence-free particle guidance
-            guidance_forces = divergence_free_particle_guidance(
-                x, t_batch, y, u_t, alpha_t, kernel_type
-            )
+            # Apply particle guidance in sub-batches
+            guidance_forces = torch.zeros_like(x)
+            num_sub_batches = (batch_size + sub_batch_size - 1) // sub_batch_size
+
+            for sb in range(num_sub_batches):
+                start_idx = sb * sub_batch_size
+                end_idx = min((sb + 1) * sub_batch_size, batch_size)
+
+                if end_idx - start_idx > 1:  # Need at least 2 samples for repulsion
+                    sub_x = x[start_idx:end_idx]
+                    sub_t = t_batch[start_idx:end_idx]
+                    sub_y = y[start_idx:end_idx]
+                    sub_u_t = u_t[start_idx:end_idx]
+
+                    # Get divergence-free particle guidance for this sub-batch
+                    sub_guidance = divergence_free_particle_guidance(
+                        sub_x, sub_t, sub_y, sub_u_t, alpha_t, kernel_type
+                    )
+                    guidance_forces[start_idx:end_idx] = sub_guidance
 
             # Calculate what actually gets applied
             applied_velocity = u_t * dt
@@ -578,12 +596,19 @@ def run_sampling_experiment(
     for i in tqdm(range(num_batches)):
         current_batch_size = min(batch_size, n_samples - i * batch_size)
 
-        # Use same class for entire batch for fair comparison across methods
-        batch_class = torch.randint(0, sampler.num_classes, (1,), device=device).item()
-        class_labels = torch.full((current_batch_size,), batch_class, device=device)
-        class_labels_all.append(class_labels.cpu())
+        # Generate diverse classes but in groups of 16 for particle guidance
+        # For batch_size=256, this creates 16 groups of 16 samples each with same class
+        sub_batch_size = 16
+        num_sub_batches = (current_batch_size + sub_batch_size - 1) // sub_batch_size
 
-        breakpoint()
+        # Generate random class for each sub-batch, then expand each to sub_batch_size
+        sub_batch_classes = torch.randint(
+            0, sampler.num_classes, (num_sub_batches,), device=device
+        )
+        class_labels = sub_batch_classes.repeat_interleave(sub_batch_size)[
+            :current_batch_size
+        ]
+        class_labels_all.append(class_labels.cpu())
 
         batch_results = sampling_func(
             sampler, class_labels, current_batch_size, **sampling_params
