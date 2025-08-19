@@ -598,7 +598,7 @@ def run_sampling_experiment(
 
         # Generate diverse classes but in groups of 16 for particle guidance
         # For batch_size=256, this creates 16 groups of 16 samples each with same class
-        sub_batch_size = 16
+        sub_batch_size = 8
         num_sub_batches = (current_batch_size + sub_batch_size - 1) // sub_batch_size
 
         # Generate random class for each sub-batch, then expand each to sub_batch_size
