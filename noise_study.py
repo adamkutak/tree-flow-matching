@@ -795,6 +795,7 @@ def run_experiment(args):
                 "alpha_1": alpha_1,  # LOW guidance at t=1 (end, data)
                 "kernel_type": "rbf",
                 "schedule_type": "linear",
+                "sub_batch_size": 4,  # Match the sub_batch_size used in class label generation
             },
             f"Particle Guidance sampling with α₀={alpha_0} (t=0, high) → α₁={alpha_1} (t=1, low)",
         )
