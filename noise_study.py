@@ -662,29 +662,6 @@ def run_experiment(args):
         f"Baseline ODE - FID: {ode_metrics['fid_score']:.4f}, IS: {ode_metrics['inception_score']:.4f}±{ode_metrics['inception_std']:.4f}, DINO Top-1: {ode_metrics['dino_top1_accuracy']:.2f}%, Top-5: {ode_metrics['dino_top5_accuracy']:.2f}%"
     )
 
-    print("\n\n===== Running SDE experiments =====")
-    for noise_scale in args.noise_scales:
-        print(f"\nTesting SDE with noise_scale={noise_scale}")
-        sde_metrics = run_sampling_experiment(
-            sampler,
-            device,
-            fid,
-            args.num_samples,
-            args.batch_size,
-            batch_sample_sde_with_metrics,
-            {"noise_scale": noise_scale},
-            f"SDE sampling with noise_scale={noise_scale}",
-        )
-
-        results["experiments"].append(
-            {"type": "sde", "noise_scale": noise_scale, "metrics": sde_metrics}
-        )
-
-        print(
-            f"SDE (noise_scale={noise_scale}) - FID: {sde_metrics['fid_score']:.4f}, IS: {sde_metrics['inception_score']:.4f}±{sde_metrics['inception_std']:.4f}, DINO Top-1: {sde_metrics['dino_top1_accuracy']:.2f}%, Top-5: {sde_metrics['dino_top5_accuracy']:.2f}%"
-        )
-        print(f"Average noise/velocity ratio: {sde_metrics['avg_ratio']:.4f}")
-
     print("\n\n===== Running ODE-divfree experiments =====")
     for lambda_div in args.lambda_divs:
         print(f"\nTesting ODE-divfree with lambda_div={lambda_div}")
@@ -711,6 +688,29 @@ def run_experiment(args):
             f"ODE-divfree (lambda_div={lambda_div}) - FID: {divfree_metrics['fid_score']:.4f}, IS: {divfree_metrics['inception_score']:.4f}±{divfree_metrics['inception_std']:.4f}, DINO Top-1: {divfree_metrics['dino_top1_accuracy']:.2f}%, Top-5: {divfree_metrics['dino_top5_accuracy']:.2f}%"
         )
         print(f"Average divfree/velocity ratio: {divfree_metrics['avg_ratio']:.4f}")
+
+    print("\n\n===== Running SDE experiments =====")
+    for noise_scale in args.noise_scales:
+        print(f"\nTesting SDE with noise_scale={noise_scale}")
+        sde_metrics = run_sampling_experiment(
+            sampler,
+            device,
+            fid,
+            args.num_samples,
+            args.batch_size,
+            batch_sample_sde_with_metrics,
+            {"noise_scale": noise_scale},
+            f"SDE sampling with noise_scale={noise_scale}",
+        )
+
+        results["experiments"].append(
+            {"type": "sde", "noise_scale": noise_scale, "metrics": sde_metrics}
+        )
+
+        print(
+            f"SDE (noise_scale={noise_scale}) - FID: {sde_metrics['fid_score']:.4f}, IS: {sde_metrics['inception_score']:.4f}±{sde_metrics['inception_std']:.4f}, DINO Top-1: {sde_metrics['dino_top1_accuracy']:.2f}%, Top-5: {sde_metrics['dino_top5_accuracy']:.2f}%"
+        )
+        print(f"Average noise/velocity ratio: {sde_metrics['avg_ratio']:.4f}")
 
     print("\n\n===== Running SDE-divfree experiments =====")
     for lambda_div in args.lambda_divs:
@@ -824,7 +824,8 @@ if __name__ == "__main__":
         "--lambda_divs",
         type=float,
         nargs="+",
-        default=[0.1, 0.35, 0.4, 0.45, 0.5, 0.6, 2.0],
+        # default=[0.1, 0.35, 0.4, 0.45, 0.5, 0.6, 2.0],
+        default=[0.1, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0],
         help="Lambda values for divergence-free flow to test",
     )
     parser.add_argument(
