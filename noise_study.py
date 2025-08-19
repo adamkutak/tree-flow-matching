@@ -845,7 +845,7 @@ def run_experiment(args):
 
     print("\n\n===== Running Particle Guidance experiments =====")
     # Test different alpha ranges for particle guidance (HIGH at t=0 → LOW at t=1)
-    alpha_ranges = [(1024.0, 256.0), (512.0, 128.0), (256.0, 64.0), (128.0, 32.0)]
+    alpha_ranges = [(0.3, 0.1), (0.1, 0.1), (0.05, 0.025), (0.025, 0.0125)]
 
     for alpha_0, alpha_1 in alpha_ranges:
         print(f"\nTesting Particle Guidance with alpha_0={alpha_0}, alpha_1={alpha_1}")

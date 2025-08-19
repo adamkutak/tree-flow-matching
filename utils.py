@@ -155,27 +155,43 @@ def divergence_free_particle_guidance(
 ):
     """
     Combine particle guidance with divergence-free constraint.
+    Forces are automatically regularized to match velocity field magnitude.
 
     Args:
         x_batch: current samples
         t_batch: time batch
         y: conditioning (if any)
         u_t: velocity field from flow model
-        alpha_t: particle guidance strength
+        alpha_t: particle guidance strength (relative to velocity magnitude)
         kernel_type: kernel for repulsion
 
     Returns:
         divergence_free_repulsion: clean repulsive forces that preserve continuity equation
     """
-    # Get repulsive forces from particle guidance
+    # Get raw repulsive forces from particle guidance (without alpha scaling)
     t_scalar = t_batch[0].item() if torch.is_tensor(t_batch) else t_batch
-    repulsive_forces = particle_guidance_forces(x_batch, t_scalar, alpha_t, kernel_type)
+    raw_repulsive_forces = particle_guidance_forces(
+        x_batch, t_scalar, 1.0, kernel_type
+    )  # Use alpha=1.0 for raw forces
 
-    # return repulsive_forces
+    # Regularize forces to match velocity field magnitude
+    dims = tuple(range(1, u_t.ndim))
+    velocity_magnitude = torch.linalg.vector_norm(u_t, dim=dims).mean()
+    force_magnitude = torch.linalg.vector_norm(raw_repulsive_forces, dim=dims).mean()
+
+    if force_magnitude > 1e-8:  # Avoid division by zero
+        # Scale forces so their average magnitude equals velocity magnitude
+        regularization_factor = velocity_magnitude / force_magnitude
+        regularized_forces = raw_repulsive_forces * regularization_factor
+    else:
+        regularized_forces = raw_repulsive_forces
+
+    # Apply user-specified alpha scaling AFTER regularization
+    scaled_forces = regularized_forces * alpha_t
 
     # Apply divergence-free projection
     divergence_free_repulsion = make_divergence_free(
-        repulsive_forces, x_batch, t_batch, u_t
+        scaled_forces, x_batch, t_batch, u_t
     )
 
     return divergence_free_repulsion
