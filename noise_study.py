@@ -777,22 +777,6 @@ def run_experiment(args):
         "experiments": [],
     }
 
-    print("\n\n===== Running baseline ODE experiment =====")
-    ode_metrics = run_sampling_experiment(
-        sampler,
-        device,
-        fid,
-        args.num_samples,
-        args.batch_size,
-        batch_sample_ode_with_metrics,
-        {},
-        "regular ODE sampling",
-    )
-    results["ode_baseline"] = ode_metrics
-    print(
-        f"Baseline ODE - FID: {ode_metrics['fid_score']:.4f}, IS: {ode_metrics['inception_score']:.4f}±{ode_metrics['inception_std']:.4f}, DINO Top-1: {ode_metrics['dino_top1_accuracy']:.2f}%, Top-5: {ode_metrics['dino_top5_accuracy']:.2f}%"
-    )
-
     print("\n\n===== Running Particle Guidance experiments =====")
     # Test different alpha ranges for particle guidance (HIGH at t=0 → LOW at t=1)
     alpha_ranges = [(0.3, 0.1), (0.1, 0.1), (0.05, 0.025), (0.025, 0.0125)]
@@ -830,6 +814,22 @@ def run_experiment(args):
             f"Particle Guidance (α₀={alpha_0}, α₁={alpha_1}) - FID: {pg_metrics['fid_score']:.4f}, IS: {pg_metrics['inception_score']:.4f}±{pg_metrics['inception_std']:.4f}, DINO Top-1: {pg_metrics['dino_top1_accuracy']:.2f}%, Top-5: {pg_metrics['dino_top5_accuracy']:.2f}%"
         )
         print(f"Average guidance/velocity ratio: {pg_metrics['avg_ratio']:.4f}")
+
+    print("\n\n===== Running baseline ODE experiment =====")
+    ode_metrics = run_sampling_experiment(
+        sampler,
+        device,
+        fid,
+        args.num_samples,
+        args.batch_size,
+        batch_sample_ode_with_metrics,
+        {},
+        "regular ODE sampling",
+    )
+    results["ode_baseline"] = ode_metrics
+    print(
+        f"Baseline ODE - FID: {ode_metrics['fid_score']:.4f}, IS: {ode_metrics['inception_score']:.4f}±{ode_metrics['inception_std']:.4f}, DINO Top-1: {ode_metrics['dino_top1_accuracy']:.2f}%, Top-5: {ode_metrics['dino_top5_accuracy']:.2f}%"
+    )
 
     print("\n\n===== Running ODE-divfree experiments =====")
     for lambda_div in args.lambda_divs:
