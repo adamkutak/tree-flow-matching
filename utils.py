@@ -171,6 +171,8 @@ def divergence_free_particle_guidance(
     t_scalar = t_batch[0].item() if torch.is_tensor(t_batch) else t_batch
     repulsive_forces = particle_guidance_forces(x_batch, t_scalar, alpha_t, kernel_type)
 
+    return repulsive_forces
+
     # Apply divergence-free projection
     divergence_free_repulsion = make_divergence_free(
         repulsive_forces, x_batch, t_batch, u_t
