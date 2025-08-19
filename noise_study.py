@@ -13,7 +13,12 @@ from tqdm import tqdm
 from mcts_single_flow import MCTSFlowSampler
 from imagenet_dataset import ImageNet32Dataset
 from run_mcts_flow import calculate_inception_score, compute_dino_accuracy
-from utils import divfree_swirl_si, score_si_linear
+from utils import (
+    divfree_swirl_si,
+    score_si_linear,
+    divergence_free_particle_guidance,
+    get_alpha_schedule_flow_matching,
+)
 
 
 def batch_sample_ode_with_metrics(sampler, class_label, batch_size=16):
@@ -447,6 +452,105 @@ def batch_sample_score_sde_with_metrics(
         )
 
 
+def batch_sample_particle_guidance_with_metrics(
+    sampler,
+    class_label,
+    batch_size=16,
+    alpha_0=0.1,
+    alpha_1=2.0,
+    kernel_type="rbf",
+    schedule_type="linear",
+):
+    """
+    Flow matching with divergence-free particle guidance for diversity.
+
+    Args:
+        sampler: Flow sampler object
+        class_label: Class label(s) for conditioning
+        batch_size: Number of samples to generate
+        alpha_0: Guidance strength at t=0 (end of sampling)
+        alpha_1: Guidance strength at t=1 (start of sampling)
+        kernel_type: 'rbf' or 'euclidean' for repulsive forces
+        schedule_type: 'linear', 'exponential' for time-dependent guidance
+    """
+    is_tensor = torch.is_tensor(class_label)
+    sampler.flow_model.eval()
+
+    velocity_magnitudes = []
+    guidance_magnitudes = []
+    guidance_to_velocity_ratios = []
+
+    with torch.no_grad():
+        x = torch.randn(
+            batch_size,
+            sampler.channels,
+            sampler.image_size,
+            sampler.image_size,
+            device=sampler.device,
+        )
+
+        if is_tensor:
+            y = class_label
+        else:
+            y = torch.full(
+                (batch_size,), class_label, device=sampler.device, dtype=torch.long
+            )
+
+        for step, t in enumerate(sampler.timesteps[:-1]):
+            dt = sampler.timesteps[step + 1] - t
+            t_batch = torch.full((batch_size,), t.item(), device=sampler.device)
+
+            # Get velocity field from flow model
+            u_t = sampler.flow_model(t_batch, x, y)
+
+            # Get time-dependent guidance strength
+            alpha_t = get_alpha_schedule_flow_matching(
+                t.item(), alpha_0, alpha_1, schedule_type
+            )
+
+            # Get divergence-free particle guidance
+            guidance_forces = divergence_free_particle_guidance(
+                x, t_batch, y, u_t, alpha_t, kernel_type
+            )
+
+            # Calculate what actually gets applied
+            applied_velocity = u_t * dt
+            applied_guidance = guidance_forces * dt
+
+            # Track magnitudes of what's actually applied
+            dims = tuple(range(1, u_t.ndim))
+            vel_mag = torch.linalg.vector_norm(applied_velocity, dim=dims).mean().item()
+            velocity_magnitudes.append(vel_mag)
+
+            guidance_mag = (
+                torch.linalg.vector_norm(applied_guidance, dim=dims).mean().item()
+            )
+            guidance_magnitudes.append(guidance_mag)
+
+            # Track ratio
+            ratio = guidance_mag / vel_mag if vel_mag > 0 else 0
+            guidance_to_velocity_ratios.append(ratio)
+
+            # ODE update with particle guidance
+            x = x + applied_velocity + applied_guidance
+
+        avg_velocity_magnitude = sum(velocity_magnitudes) / len(velocity_magnitudes)
+        avg_guidance_magnitude = sum(guidance_magnitudes) / len(guidance_magnitudes)
+        avg_guidance_to_velocity_ratio = sum(guidance_to_velocity_ratios) / len(
+            guidance_to_velocity_ratios
+        )
+
+        return (
+            sampler.unnormalize_images(x),
+            avg_velocity_magnitude,
+            avg_guidance_magnitude,
+            avg_guidance_to_velocity_ratio,
+            velocity_magnitudes,
+            guidance_magnitudes,
+            guidance_to_velocity_ratios,
+        )
+
+
 def run_sampling_experiment(
     sampler,
     device,
@@ -474,9 +578,9 @@ def run_sampling_experiment(
     for i in tqdm(range(num_batches)):
         current_batch_size = min(batch_size, n_samples - i * batch_size)
 
-        class_labels = torch.randint(
-            0, sampler.num_classes, (current_batch_size,), device=device
-        )
+        # Use same class for entire batch for fair comparison across methods
+        batch_class = torch.randint(0, sampler.num_classes, (1,), device=device).item()
+        class_labels = torch.full((current_batch_size,), batch_class, device=device)
         class_labels_all.append(class_labels.cpu())
 
         batch_results = sampling_func(
@@ -661,6 +765,44 @@ def run_experiment(args):
     print(
         f"Baseline ODE - FID: {ode_metrics['fid_score']:.4f}, IS: {ode_metrics['inception_score']:.4f}±{ode_metrics['inception_std']:.4f}, DINO Top-1: {ode_metrics['dino_top1_accuracy']:.2f}%, Top-5: {ode_metrics['dino_top5_accuracy']:.2f}%"
     )
+
+    print("\n\n===== Running Particle Guidance experiments =====")
+    # Test different alpha ranges for particle guidance (HIGH at t=0 → LOW at t=1)
+    alpha_ranges = [(2.0, 0.5), (1.0, 0.25), (0.5, 0.125)]
+
+    for alpha_0, alpha_1 in alpha_ranges:
+        print(f"\nTesting Particle Guidance with alpha_0={alpha_0}, alpha_1={alpha_1}")
+        pg_metrics = run_sampling_experiment(
+            sampler,
+            device,
+            fid,
+            args.num_samples,
+            args.batch_size,
+            batch_sample_particle_guidance_with_metrics,
+            {
+                "alpha_0": alpha_0,  # HIGH guidance at t=0 (start, noise)
+                "alpha_1": alpha_1,  # LOW guidance at t=1 (end, data)
+                "kernel_type": "rbf",
+                "schedule_type": "linear",
+            },
+            f"Particle Guidance sampling with α₀={alpha_0} (t=0, high) → α₁={alpha_1} (t=1, low)",
+        )
+
+        results["experiments"].append(
+            {
+                "type": "particle_guidance",
+                "alpha_0": alpha_0,
+                "alpha_1": alpha_1,
+                "kernel_type": "rbf",
+                "schedule_type": "linear",
+                "metrics": pg_metrics,
+            }
+        )
+
+        print(
+            f"Particle Guidance (α₀={alpha_0}, α₁={alpha_1}) - FID: {pg_metrics['fid_score']:.4f}, IS: {pg_metrics['inception_score']:.4f}±{pg_metrics['inception_std']:.4f}, DINO Top-1: {pg_metrics['dino_top1_accuracy']:.2f}%, Top-5: {pg_metrics['dino_top5_accuracy']:.2f}%"
+        )
+        print(f"Average guidance/velocity ratio: {pg_metrics['avg_ratio']:.4f}")
 
     print("\n\n===== Running ODE-divfree experiments =====")
     for lambda_div in args.lambda_divs:
