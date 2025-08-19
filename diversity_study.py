@@ -458,7 +458,7 @@ def run_diversity_experiment(args):
             }
 
         # Test Particle Guidance with different alpha ranges (all starting from same noise)
-        alpha_ranges = [(2.0, 0.1), (1.0, 0.1), (0.5, 0.1), (1.0, 0.2)]
+        alpha_ranges = [(0.3, 0.1), (0.1, 0.1), (0.05, 0.025), (0.025, 0.0125)]
         for alpha_0, alpha_1 in alpha_ranges:
             pg_samples = batch_sample_particle_guidance_identical_start(
                 sampler,
