@@ -168,26 +168,39 @@ def divergence_free_particle_guidance(
     Returns:
         divergence_free_repulsion: clean repulsive forces that preserve continuity equation
     """
-    # Get raw repulsive forces from particle guidance (without alpha scaling)
-    t_scalar = t_batch[0].item() if torch.is_tensor(t_batch) else t_batch
-    raw_repulsive_forces = particle_guidance_forces(
-        x_batch, t_scalar, 1.0, kernel_type
-    )  # Use alpha=1.0 for raw forces
+    # DEBUG: Use normal Gaussian noise instead of particle guidance
+    # This helps isolate whether the issue is with particle guidance or the pipeline
 
-    # Regularize forces to match velocity field magnitude
+    # Generate normal Gaussian noise
+    gaussian_noise = torch.randn_like(x_batch)
+
+    # Regularize noise to match velocity field magnitude (same process as before)
     dims = tuple(range(1, u_t.ndim))
     velocity_magnitude = torch.linalg.vector_norm(u_t, dim=dims).mean()
-    force_magnitude = torch.linalg.vector_norm(raw_repulsive_forces, dim=dims).mean()
+    noise_magnitude = torch.linalg.vector_norm(gaussian_noise, dim=dims).mean()
 
-    if force_magnitude > 1e-8:  # Avoid division by zero
-        # Scale forces so their average magnitude equals velocity magnitude
-        regularization_factor = velocity_magnitude / force_magnitude
-        regularized_forces = raw_repulsive_forces * regularization_factor
+    if noise_magnitude > 1e-8:  # Avoid division by zero
+        # Scale noise so its average magnitude equals velocity magnitude
+        regularization_factor = velocity_magnitude / noise_magnitude
+        regularized_noise = gaussian_noise * regularization_factor
     else:
-        regularized_forces = raw_repulsive_forces
+        regularized_noise = gaussian_noise
 
     # Apply user-specified alpha scaling AFTER regularization
-    scaled_forces = regularized_forces * alpha_t
+    scaled_forces = regularized_noise * alpha_t
+
+    # ORIGINAL PARTICLE GUIDANCE CODE (commented out for debugging):
+    # t_scalar = t_batch[0].item() if torch.is_tensor(t_batch) else t_batch
+    # raw_repulsive_forces = particle_guidance_forces(x_batch, t_scalar, 1.0, kernel_type)
+    # dims = tuple(range(1, u_t.ndim))
+    # velocity_magnitude = torch.linalg.vector_norm(u_t, dim=dims).mean()
+    # force_magnitude = torch.linalg.vector_norm(raw_repulsive_forces, dim=dims).mean()
+    # if force_magnitude > 1e-8:
+    #     regularization_factor = velocity_magnitude / force_magnitude
+    #     regularized_forces = raw_repulsive_forces * regularization_factor
+    # else:
+    #     regularized_forces = raw_repulsive_forces
+    # scaled_forces = regularized_forces * alpha_t
 
     # Apply divergence-free projection
     divergence_free_repulsion = make_divergence_free(
