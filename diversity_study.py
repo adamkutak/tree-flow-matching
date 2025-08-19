@@ -12,7 +12,12 @@ import itertools
 
 from mcts_single_flow import MCTSFlowSampler
 from imagenet_dataset import ImageNet32Dataset
-from utils import divfree_swirl_si, score_si_linear
+from utils import (
+    divfree_swirl_si,
+    score_si_linear,
+    divergence_free_particle_guidance,
+    get_alpha_schedule_flow_matching,
+)
 
 
 def convert_to_serializable(obj):
@@ -232,6 +237,50 @@ def batch_sample_sde_divfree_identical_start(
         return sampler.unnormalize_images(current_samples)
 
 
+def batch_sample_particle_guidance_identical_start(
+    sampler,
+    class_label,
+    single_noise,
+    batch_size,
+    alpha_0=2.0,
+    alpha_1=0.1,
+    kernel_type="rbf",
+    schedule_type="linear",
+):
+    """
+    Particle guidance sampling where all samples start from identical noise.
+    Should produce diverse outputs due to repulsive forces between particles.
+    """
+    sampler.flow_model.eval()
+
+    with torch.no_grad():
+        # All samples start identical
+        current_samples = single_noise.unsqueeze(0).repeat(batch_size, 1, 1, 1)
+        current_label = torch.full((batch_size,), class_label, device=sampler.device)
+
+        for step, t in enumerate(sampler.timesteps[:-1]):
+            dt = sampler.timesteps[step + 1] - t
+            t_batch = torch.full((batch_size,), t.item(), device=sampler.device)
+
+            # Get velocity field from flow model
+            velocity = sampler.flow_model(t_batch, current_samples, current_label)
+
+            # Get time-dependent guidance strength
+            alpha_t = get_alpha_schedule_flow_matching(
+                t.item(), alpha_0, alpha_1, schedule_type
+            )
+
+            # Get divergence-free particle guidance
+            guidance_forces = divergence_free_particle_guidance(
+                current_samples, t_batch, current_label, velocity, alpha_t, kernel_type
+            )
+
+            # ODE update with particle guidance
+            current_samples = current_samples + velocity * dt + guidance_forces * dt
+
+        return sampler.unnormalize_images(current_samples)
+
+
 def calculate_batch_diversity(features):
     """
     Calculate average pairwise distance between features in a batch.
@@ -406,6 +455,25 @@ def run_diversity_experiment(args):
             sde_divfree_diversity = calculate_batch_diversity(sde_divfree_features)
             trial_results["methods"][f"sde_divfree_{lambda_div}"] = {
                 "diversity": sde_divfree_diversity
+            }
+
+        # Test Particle Guidance with different alpha ranges (all starting from same noise)
+        alpha_ranges = [(2.0, 0.1), (1.0, 0.1), (0.5, 0.1), (1.0, 0.2)]
+        for alpha_0, alpha_1 in alpha_ranges:
+            pg_samples = batch_sample_particle_guidance_identical_start(
+                sampler,
+                class_label,
+                single_noise,
+                args.batch_size,
+                alpha_0,
+                alpha_1,
+                "rbf",
+                "linear",
+            )
+            pg_features = sampler.extract_inception_features(pg_samples)
+            pg_diversity = calculate_batch_diversity(pg_features)
+            trial_results["methods"][f"particle_guidance_{alpha_0}_{alpha_1}"] = {
+                "diversity": pg_diversity
             }
 
         results["experiments"].append(trial_results)
