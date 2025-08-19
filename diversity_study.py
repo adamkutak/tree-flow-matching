@@ -551,7 +551,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--num_trials",
         type=int,
-        default=100,
+        default=20,
         help="Number of trials to test",
     )
 
