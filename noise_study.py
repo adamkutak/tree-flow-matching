@@ -598,7 +598,7 @@ def run_sampling_experiment(
 
         # Generate diverse classes but in groups of 16 for particle guidance
         # For batch_size=256, this creates 16 groups of 16 samples each with same class
-        sub_batch_size = 8
+        sub_batch_size = 4
         num_sub_batches = (current_batch_size + sub_batch_size - 1) // sub_batch_size
 
         # Generate random class for each sub-batch, then expand each to sub_batch_size
@@ -795,7 +795,7 @@ def run_experiment(args):
 
     print("\n\n===== Running Particle Guidance experiments =====")
     # Test different alpha ranges for particle guidance (HIGH at t=0 → LOW at t=1)
-    alpha_ranges = [(2.0, 0.5), (1.0, 0.25), (0.5, 0.125)]
+    alpha_ranges = [(4.0, 1.0), (2.0, 0.5), (1.0, 0.25), (0.5, 0.125)]
 
     for alpha_0, alpha_1 in alpha_ranges:
         print(f"\nTesting Particle Guidance with alpha_0={alpha_0}, alpha_1={alpha_1}")
