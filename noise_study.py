@@ -18,6 +18,8 @@ from utils import (
     score_si_linear,
     divergence_free_particle_guidance,
     get_alpha_schedule_flow_matching,
+    sample_spherical_simplex_gaussian,
+    make_divergence_free,
 )
 
 
@@ -452,6 +454,113 @@ def batch_sample_score_sde_with_metrics(
         )
 
 
+def batch_sample_ode_divfree_max_with_metrics(
+    sampler,
+    class_label,
+    batch_size=16,
+    lambda_div=0.2,
+    sub_batch_size=4,
+):
+    """
+    ODE sampling with divergence-free term using maximally separated Gaussian noise
+    within virtual batches, with divergence-free field magnitude tracking.
+    """
+    is_tensor = torch.is_tensor(class_label)
+    sampler.flow_model.eval()
+
+    velocity_magnitudes = []
+    divfree_magnitudes = []
+    divfree_to_velocity_ratios = []
+
+    with torch.no_grad():
+        x = torch.randn(
+            batch_size,
+            sampler.channels,
+            sampler.image_size,
+            sampler.image_size,
+            device=sampler.device,
+        )
+
+        if is_tensor:
+            y = class_label
+        else:
+            y = torch.full(
+                (batch_size,), class_label, device=sampler.device, dtype=torch.long
+            )
+
+        for step, t in enumerate(sampler.timesteps[:-1]):
+            dt = sampler.timesteps[step + 1] - t
+            t_batch = torch.full((batch_size,), t.item(), device=sampler.device)
+
+            u_t = sampler.flow_model(t_batch, x, y)  # drift
+
+            # Apply divergence-free field in sub-batches with maximally separated noise
+            w_total = torch.zeros_like(x)
+            num_sub_batches = (batch_size + sub_batch_size - 1) // sub_batch_size
+
+            for sb in range(num_sub_batches):
+                start_idx = sb * sub_batch_size
+                end_idx = min((sb + 1) * sub_batch_size, batch_size)
+                current_sub_batch_size = end_idx - start_idx
+
+                # Get maximally separated Gaussian noise for this sub-batch
+                max_separated_noise = sample_spherical_simplex_gaussian(
+                    current_sub_batch_size,
+                    sampler.channels,
+                    sampler.image_size,
+                    sampler.image_size,
+                    sampler.device,
+                )
+
+                # Make it divergence-free for this sub-batch
+                sub_x = x[start_idx:end_idx]
+                sub_t = t_batch[start_idx:end_idx]
+                sub_y = y[start_idx:end_idx]
+                sub_u_t = u_t[start_idx:end_idx]
+
+                # Project the maximally separated noise to be divergence-free
+                w_divfree = make_divergence_free(
+                    max_separated_noise, sub_x, sub_t, sub_u_t
+                )
+                w_total[start_idx:end_idx] = w_divfree
+
+            w = lambda_div * w_total
+
+            # Calculate what actually gets applied
+            applied_velocity = u_t * dt
+            applied_divfree = w * dt
+
+            # Track magnitudes of what's actually applied
+            dims = tuple(range(1, u_t.ndim))
+            vel_mag = torch.linalg.vector_norm(applied_velocity, dim=dims).mean().item()
+            velocity_magnitudes.append(vel_mag)
+
+            div_mag = torch.linalg.vector_norm(applied_divfree, dim=dims).mean().item()
+            divfree_magnitudes.append(div_mag)
+
+            # Track ratio
+            ratio = div_mag / vel_mag if vel_mag > 0 else 0
+            divfree_to_velocity_ratios.append(ratio)
+
+            x = x + applied_velocity + applied_divfree  # Euler ODE step
+
+        avg_velocity_magnitude = sum(velocity_magnitudes) / len(velocity_magnitudes)
+        avg_divfree_magnitude = sum(divfree_magnitudes) / len(divfree_magnitudes)
+        avg_divfree_to_velocity_ratio = sum(divfree_to_velocity_ratios) / len(
+            divfree_to_velocity_ratios
+        )
+
+        return (
+            sampler.unnormalize_images(x),
+            avg_velocity_magnitude,
+            avg_divfree_magnitude,
+            avg_divfree_to_velocity_ratio,
+            velocity_magnitudes,
+            divfree_magnitudes,
+            divfree_to_velocity_ratios,
+        )
+
+
 def batch_sample_particle_guidance_with_metrics(
     sampler,
     class_label,
@@ -668,6 +777,29 @@ def run_sampling_experiment(
     return metrics
 
 
+def get_methods_to_run(args):
+    """
+    Determine which methods to run based on user input.
+
+    Args:
+        args: Command line arguments
+
+    Returns:
+        set: Set of method names to run
+    """
+    if "all" in args.methods:
+        return {
+            "ode_baseline",
+            "particle_guidance",
+            "ode_divfree",
+            "ode_divfree_max",
+            "sde",
+            "sde_divfree",
+        }
+    else:
+        return set(args.methods)
+
+
 def run_experiment(args):
     """
     Run experiments to measure the effect of different noise levels on sampling quality.
@@ -777,137 +909,180 @@ def run_experiment(args):
         "experiments": [],
     }
 
-    print("\n\n===== Running Particle Guidance experiments =====")
-    # Test different alpha ranges for particle guidance (HIGH at t=0 → LOW at t=1)
-    alpha_ranges = [(0.3, 0.1), (0.1, 0.1), (0.05, 0.025), (0.025, 0.0125)]
+    # Get methods to run
+    methods_to_run = get_methods_to_run(args)
+    print(f"Methods to test: {', '.join(sorted(methods_to_run))}")
 
-    for alpha_0, alpha_1 in alpha_ranges:
-        print(f"\nTesting Particle Guidance with alpha_0={alpha_0}, alpha_1={alpha_1}")
-        pg_metrics = run_sampling_experiment(
+    if "particle_guidance" in methods_to_run:
+        print("\n\n===== Running Particle Guidance experiments =====")
+        # Test different alpha ranges for particle guidance (HIGH at t=0 → LOW at t=1)
+        alpha_ranges = [(0.3, 0.1), (0.1, 0.1), (0.05, 0.025), (0.025, 0.0125)]
+
+        for alpha_0, alpha_1 in alpha_ranges:
+            print(
+                f"\nTesting Particle Guidance with alpha_0={alpha_0}, alpha_1={alpha_1}"
+            )
+            pg_metrics = run_sampling_experiment(
+                sampler,
+                device,
+                fid,
+                args.num_samples,
+                args.batch_size,
+                batch_sample_particle_guidance_with_metrics,
+                {
+                    "alpha_0": alpha_0,  # HIGH guidance at t=0 (start, noise)
+                    "alpha_1": alpha_1,  # LOW guidance at t=1 (end, data)
+                    "kernel_type": "euclidean",
+                    "schedule_type": "linear",
+                    "sub_batch_size": 4,  # Match the sub_batch_size used in class label generation
+                },
+                f"Particle Guidance sampling with α₀={alpha_0} (t=0, high) → α₁={alpha_1} (t=1, low)",
+            )
+
+            results["experiments"].append(
+                {
+                    "type": "particle_guidance",
+                    "alpha_0": alpha_0,
+                    "alpha_1": alpha_1,
+                    "kernel_type": "euclidean",
+                    "schedule_type": "linear",
+                    "metrics": pg_metrics,
+                }
+            )
+
+            print(
+                f"Particle Guidance (α₀={alpha_0}, α₁={alpha_1}) - FID: {pg_metrics['fid_score']:.4f}, IS: {pg_metrics['inception_score']:.4f}±{pg_metrics['inception_std']:.4f}, DINO Top-1: {pg_metrics['dino_top1_accuracy']:.2f}%, Top-5: {pg_metrics['dino_top5_accuracy']:.2f}%"
+            )
+            print(f"Average guidance/velocity ratio: {pg_metrics['avg_ratio']:.4f}")
+
+    if "ode_baseline" in methods_to_run:
+        print("\n\n===== Running baseline ODE experiment =====")
+        ode_metrics = run_sampling_experiment(
             sampler,
             device,
             fid,
             args.num_samples,
             args.batch_size,
-            batch_sample_particle_guidance_with_metrics,
-            {
-                "alpha_0": alpha_0,  # HIGH guidance at t=0 (start, noise)
-                "alpha_1": alpha_1,  # LOW guidance at t=1 (end, data)
-                "kernel_type": "euclidean",
-                "schedule_type": "linear",
-                "sub_batch_size": 4,  # Match the sub_batch_size used in class label generation
-            },
-            f"Particle Guidance sampling with α₀={alpha_0} (t=0, high) → α₁={alpha_1} (t=1, low)",
+            batch_sample_ode_with_metrics,
+            {},
+            "regular ODE sampling",
         )
-
-        results["experiments"].append(
-            {
-                "type": "particle_guidance",
-                "alpha_0": alpha_0,
-                "alpha_1": alpha_1,
-                "kernel_type": "euclidean",
-                "schedule_type": "linear",
-                "metrics": pg_metrics,
-            }
-        )
-
+        results["ode_baseline"] = ode_metrics
         print(
-            f"Particle Guidance (α₀={alpha_0}, α₁={alpha_1}) - FID: {pg_metrics['fid_score']:.4f}, IS: {pg_metrics['inception_score']:.4f}±{pg_metrics['inception_std']:.4f}, DINO Top-1: {pg_metrics['dino_top1_accuracy']:.2f}%, Top-5: {pg_metrics['dino_top5_accuracy']:.2f}%"
-        )
-        print(f"Average guidance/velocity ratio: {pg_metrics['avg_ratio']:.4f}")
-
-    print("\n\n===== Running baseline ODE experiment =====")
-    ode_metrics = run_sampling_experiment(
-        sampler,
-        device,
-        fid,
-        args.num_samples,
-        args.batch_size,
-        batch_sample_ode_with_metrics,
-        {},
-        "regular ODE sampling",
-    )
-    results["ode_baseline"] = ode_metrics
-    print(
-        f"Baseline ODE - FID: {ode_metrics['fid_score']:.4f}, IS: {ode_metrics['inception_score']:.4f}±{ode_metrics['inception_std']:.4f}, DINO Top-1: {ode_metrics['dino_top1_accuracy']:.2f}%, Top-5: {ode_metrics['dino_top5_accuracy']:.2f}%"
-    )
-
-    print("\n\n===== Running ODE-divfree experiments =====")
-    for lambda_div in args.lambda_divs:
-        print(f"\nTesting ODE-divfree with lambda_div={lambda_div}")
-        divfree_metrics = run_sampling_experiment(
-            sampler,
-            device,
-            fid,
-            args.num_samples,
-            args.batch_size,
-            batch_sample_ode_divfree_with_metrics,
-            {"lambda_div": lambda_div},
-            f"ODE-divfree sampling with lambda_div={lambda_div}",
+            f"Baseline ODE - FID: {ode_metrics['fid_score']:.4f}, IS: {ode_metrics['inception_score']:.4f}±{ode_metrics['inception_std']:.4f}, DINO Top-1: {ode_metrics['dino_top1_accuracy']:.2f}%, Top-5: {ode_metrics['dino_top5_accuracy']:.2f}%"
         )
 
-        results["experiments"].append(
-            {
-                "type": "ode_divfree",
-                "lambda_div": lambda_div,
-                "metrics": divfree_metrics,
-            }
-        )
+    if "ode_divfree" in methods_to_run:
+        print("\n\n===== Running ODE-divfree experiments =====")
+        for lambda_div in args.lambda_divs:
+            print(f"\nTesting ODE-divfree with lambda_div={lambda_div}")
+            divfree_metrics = run_sampling_experiment(
+                sampler,
+                device,
+                fid,
+                args.num_samples,
+                args.batch_size,
+                batch_sample_ode_divfree_with_metrics,
+                {"lambda_div": lambda_div},
+                f"ODE-divfree sampling with lambda_div={lambda_div}",
+            )
 
-        print(
-            f"ODE-divfree (lambda_div={lambda_div}) - FID: {divfree_metrics['fid_score']:.4f}, IS: {divfree_metrics['inception_score']:.4f}±{divfree_metrics['inception_std']:.4f}, DINO Top-1: {divfree_metrics['dino_top1_accuracy']:.2f}%, Top-5: {divfree_metrics['dino_top5_accuracy']:.2f}%"
-        )
-        print(f"Average divfree/velocity ratio: {divfree_metrics['avg_ratio']:.4f}")
+            results["experiments"].append(
+                {
+                    "type": "ode_divfree",
+                    "lambda_div": lambda_div,
+                    "metrics": divfree_metrics,
+                }
+            )
 
-    print("\n\n===== Running SDE experiments =====")
-    for noise_scale in args.noise_scales:
-        print(f"\nTesting SDE with noise_scale={noise_scale}")
-        sde_metrics = run_sampling_experiment(
-            sampler,
-            device,
-            fid,
-            args.num_samples,
-            args.batch_size,
-            batch_sample_sde_with_metrics,
-            {"noise_scale": noise_scale},
-            f"SDE sampling with noise_scale={noise_scale}",
-        )
+            print(
+                f"ODE-divfree (lambda_div={lambda_div}) - FID: {divfree_metrics['fid_score']:.4f}, IS: {divfree_metrics['inception_score']:.4f}±{divfree_metrics['inception_std']:.4f}, DINO Top-1: {divfree_metrics['dino_top1_accuracy']:.2f}%, Top-5: {divfree_metrics['dino_top5_accuracy']:.2f}%"
+            )
+            print(f"Average divfree/velocity ratio: {divfree_metrics['avg_ratio']:.4f}")
 
-        results["experiments"].append(
-            {"type": "sde", "noise_scale": noise_scale, "metrics": sde_metrics}
-        )
+    if "ode_divfree_max" in methods_to_run:
+        print("\n\n===== Running ODE-divfree-max experiments =====")
+        for lambda_div in args.lambda_divs:
+            print(f"\nTesting ODE-divfree-max with lambda_div={lambda_div}")
+            divfree_max_metrics = run_sampling_experiment(
+                sampler,
+                device,
+                fid,
+                args.num_samples,
+                args.batch_size,
+                batch_sample_ode_divfree_max_with_metrics,
+                {"lambda_div": lambda_div, "sub_batch_size": 4},
+                f"ODE-divfree-max sampling with lambda_div={lambda_div}",
+            )
 
-        print(
-            f"SDE (noise_scale={noise_scale}) - FID: {sde_metrics['fid_score']:.4f}, IS: {sde_metrics['inception_score']:.4f}±{sde_metrics['inception_std']:.4f}, DINO Top-1: {sde_metrics['dino_top1_accuracy']:.2f}%, Top-5: {sde_metrics['dino_top5_accuracy']:.2f}%"
-        )
-        print(f"Average noise/velocity ratio: {sde_metrics['avg_ratio']:.4f}")
+            results["experiments"].append(
+                {
+                    "type": "ode_divfree_max",
+                    "lambda_div": lambda_div,
+                    "metrics": divfree_max_metrics,
+                }
+            )
 
-    print("\n\n===== Running SDE-divfree experiments =====")
-    for lambda_div in args.lambda_divs:
-        print(f"\nTesting SDE-divfree with lambda_div={lambda_div}")
-        sde_divfree_metrics = run_sampling_experiment(
-            sampler,
-            device,
-            fid,
-            args.num_samples,
-            args.batch_size,
-            batch_sample_sde_divfree_with_metrics,
-            {"lambda_div": lambda_div},
-            f"SDE-divfree sampling with lambda_div={lambda_div}",
-        )
+            print(
+                f"ODE-divfree-max (lambda_div={lambda_div}) - FID: {divfree_max_metrics['fid_score']:.4f}, IS: {divfree_max_metrics['inception_score']:.4f}±{divfree_max_metrics['inception_std']:.4f}, DINO Top-1: {divfree_max_metrics['dino_top1_accuracy']:.2f}%, Top-5: {divfree_max_metrics['dino_top5_accuracy']:.2f}%"
+            )
+            print(
+                f"Average divfree/velocity ratio: {divfree_max_metrics['avg_ratio']:.4f}"
+            )
 
-        results["experiments"].append(
-            {
-                "type": "sde_divfree",
-                "lambda_div": lambda_div,
-                "metrics": sde_divfree_metrics,
-            }
-        )
+    if "sde" in methods_to_run:
+        print("\n\n===== Running SDE experiments =====")
+        for noise_scale in args.noise_scales:
+            print(f"\nTesting SDE with noise_scale={noise_scale}")
+            sde_metrics = run_sampling_experiment(
+                sampler,
+                device,
+                fid,
+                args.num_samples,
+                args.batch_size,
+                batch_sample_sde_with_metrics,
+                {"noise_scale": noise_scale},
+                f"SDE sampling with noise_scale={noise_scale}",
+            )
 
-        print(
-            f"SDE-divfree (lambda_div={lambda_div}) - FID: {sde_divfree_metrics['fid_score']:.4f}, IS: {sde_divfree_metrics['inception_score']:.4f}±{sde_divfree_metrics['inception_std']:.4f}, DINO Top-1: {sde_divfree_metrics['dino_top1_accuracy']:.2f}%, Top-5: {sde_divfree_metrics['dino_top5_accuracy']:.2f}%"
-        )
-        print(f"Average divfree/velocity ratio: {sde_divfree_metrics['avg_ratio']:.4f}")
+            results["experiments"].append(
+                {"type": "sde", "noise_scale": noise_scale, "metrics": sde_metrics}
+            )
+
+            print(
+                f"SDE (noise_scale={noise_scale}) - FID: {sde_metrics['fid_score']:.4f}, IS: {sde_metrics['inception_score']:.4f}±{sde_metrics['inception_std']:.4f}, DINO Top-1: {sde_metrics['dino_top1_accuracy']:.2f}%, Top-5: {sde_metrics['dino_top5_accuracy']:.2f}%"
+            )
+            print(f"Average noise/velocity ratio: {sde_metrics['avg_ratio']:.4f}")
+
+    if "sde_divfree" in methods_to_run:
+        print("\n\n===== Running SDE-divfree experiments =====")
+        for lambda_div in args.lambda_divs:
+            print(f"\nTesting SDE-divfree with lambda_div={lambda_div}")
+            sde_divfree_metrics = run_sampling_experiment(
+                sampler,
+                device,
+                fid,
+                args.num_samples,
+                args.batch_size,
+                batch_sample_sde_divfree_with_metrics,
+                {"lambda_div": lambda_div},
+                f"SDE-divfree sampling with lambda_div={lambda_div}",
+            )
+
+            results["experiments"].append(
+                {
+                    "type": "sde_divfree",
+                    "lambda_div": lambda_div,
+                    "metrics": sde_divfree_metrics,
+                }
+            )
+
+            print(
+                f"SDE-divfree (lambda_div={lambda_div}) - FID: {sde_divfree_metrics['fid_score']:.4f}, IS: {sde_divfree_metrics['inception_score']:.4f}±{sde_divfree_metrics['inception_std']:.4f}, DINO Top-1: {sde_divfree_metrics['dino_top1_accuracy']:.2f}%, Top-5: {sde_divfree_metrics['dino_top5_accuracy']:.2f}%"
+            )
+            print(
+                f"Average divfree/velocity ratio: {sde_divfree_metrics['avg_ratio']:.4f}"
+            )
 
     # Save results
     result_file = os.path.join(results_dir, f"noise_study_results_{timestamp}.json")
@@ -972,6 +1147,24 @@ if __name__ == "__main__":
         type=int,
         default=50000,
         help="Number of real samples to use for FID calculation",
+    )
+
+    # Method selection parameters
+    parser.add_argument(
+        "--methods",
+        type=str,
+        nargs="+",
+        default=["all"],
+        choices=[
+            "all",
+            "ode_baseline",
+            "particle_guidance",
+            "ode_divfree",
+            "ode_divfree_max",
+            "sde",
+            "sde_divfree",
+        ],
+        help="Methods to test (default: all methods)",
     )
 
     # Output parameters

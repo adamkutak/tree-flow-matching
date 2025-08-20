@@ -17,6 +17,7 @@ from utils import (
     score_si_linear,
     divergence_free_particle_guidance,
     get_alpha_schedule_flow_matching,
+    sample_spherical_simplex_gaussian,
 )
 
 
@@ -237,6 +238,48 @@ def batch_sample_sde_divfree_identical_start(
         return sampler.unnormalize_images(current_samples)
 
 
+def batch_sample_ode_divfree_max_identical_start(
+    sampler, class_label, single_noise, batch_size, lambda_div=0.2
+):
+    """
+    ODE-divfree sampling where samples start from identical noise but the entire batch
+    uses maximally separated Gaussian noise for the divergence-free field.
+    Should produce different outputs due to maximally separated divergence-free fields.
+    """
+    sampler.flow_model.eval()
+
+    with torch.no_grad():
+        # All samples start identical
+        x = single_noise.unsqueeze(0).repeat(batch_size, 1, 1, 1)
+        y = torch.full(
+            (batch_size,), class_label, device=sampler.device, dtype=torch.long
+        )
+
+        for step, t in enumerate(sampler.timesteps[:-1]):
+            dt = sampler.timesteps[step + 1] - t
+            t_batch = torch.full((batch_size,), t.item(), device=sampler.device)
+
+            u_t = sampler.flow_model(t_batch, x, y)
+
+            # Get maximally separated Gaussian noise for the entire batch
+            max_separated_noise = sample_spherical_simplex_gaussian(
+                batch_size,
+                sampler.channels,
+                sampler.image_size,
+                sampler.image_size,
+                sampler.device,
+            )
+
+            # Project the maximally separated noise to be divergence-free
+            from utils import make_divergence_free
+
+            w_unscaled = make_divergence_free(max_separated_noise, x, t_batch, u_t)
+            w = lambda_div * w_unscaled
+            x = x + (u_t + w) * dt
+
+        return sampler.unnormalize_images(x)
+
+
 def batch_sample_particle_guidance_identical_start(
     sampler,
     class_label,
@@ -310,6 +353,31 @@ def calculate_batch_diversity(features):
     return total_distance / num_pairs
 
 
+def get_methods_to_run(args):
+    """
+    Determine which methods to run based on user input.
+
+    Args:
+        args: Command line arguments
+
+    Returns:
+        set: Set of method names to run
+    """
+    if "all" in args.methods:
+        return {
+            "ode_random",
+            "sde",
+            "edm_sde",
+            "score_sde",
+            "divfree",
+            "divfree_max",
+            "sde_divfree",
+            "particle_guidance",
+        }
+    else:
+        return set(args.methods)
+
+
 def run_diversity_experiment(args):
     """
     Run diversity experiments testing how much samples diverge when starting from identical initial noise.
@@ -381,7 +449,11 @@ def run_diversity_experiment(args):
         "Testing how much samples diverge when starting from IDENTICAL initial noise..."
     )
 
-    # For each trial, test all methods starting from the same single noise sample
+    # Get methods to run
+    methods_to_run = get_methods_to_run(args)
+    print(f"Methods to test: {', '.join(sorted(methods_to_run))}")
+
+    # For each trial, test selected methods starting from the same single noise sample
     for trial_idx in tqdm(range(args.num_trials), desc="Processing trials"):
         # Generate a single noise sample that all batch samples will start from
         single_noise = torch.randn(channels, image_size, image_size, device=device)
@@ -396,88 +468,115 @@ def run_diversity_experiment(args):
         }
 
         # Test ODE baseline with random different starting noises (maximum diversity baseline)
-        ode_samples = batch_sample_ode_random_start(
-            sampler, class_label, args.batch_size
-        )
-        ode_features = sampler.extract_inception_features(ode_samples)
-        ode_diversity = calculate_batch_diversity(ode_features)
-        trial_results["methods"]["ode_random"] = {"diversity": ode_diversity}
+        if "ode_random" in methods_to_run:
+            ode_samples = batch_sample_ode_random_start(
+                sampler, class_label, args.batch_size
+            )
+            ode_features = sampler.extract_inception_features(ode_samples)
+            ode_diversity = calculate_batch_diversity(ode_features)
+            trial_results["methods"]["ode_random"] = {"diversity": ode_diversity}
 
         # Test SDE with different noise scales (all starting from same noise)
-        for noise_scale in args.noise_scales:
-            sde_samples = batch_sample_sde_identical_start(
-                sampler, class_label, single_noise, args.batch_size, noise_scale
-            )
-            sde_features = sampler.extract_inception_features(sde_samples)
-            sde_diversity = calculate_batch_diversity(sde_features)
-            trial_results["methods"][f"sde_{noise_scale}"] = {
-                "diversity": sde_diversity
-            }
+        if "sde" in methods_to_run:
+            for noise_scale in args.noise_scales:
+                sde_samples = batch_sample_sde_identical_start(
+                    sampler, class_label, single_noise, args.batch_size, noise_scale
+                )
+                sde_features = sampler.extract_inception_features(sde_samples)
+                sde_diversity = calculate_batch_diversity(sde_features)
+                trial_results["methods"][f"sde_{noise_scale}"] = {
+                    "diversity": sde_diversity
+                }
 
         # Test EDM SDE with different beta values (all starting from same noise)
-        for beta in args.beta_values:
-            edm_sde_samples = batch_sample_edm_sde_identical_start(
-                sampler, class_label, single_noise, args.batch_size, beta
-            )
-            edm_sde_features = sampler.extract_inception_features(edm_sde_samples)
-            edm_sde_diversity = calculate_batch_diversity(edm_sde_features)
-            trial_results["methods"][f"edm_sde_{beta}"] = {
-                "diversity": edm_sde_diversity
-            }
+        if "edm_sde" in methods_to_run:
+            for beta in args.beta_values:
+                edm_sde_samples = batch_sample_edm_sde_identical_start(
+                    sampler, class_label, single_noise, args.batch_size, beta
+                )
+                edm_sde_features = sampler.extract_inception_features(edm_sde_samples)
+                edm_sde_diversity = calculate_batch_diversity(edm_sde_features)
+                trial_results["methods"][f"edm_sde_{beta}"] = {
+                    "diversity": edm_sde_diversity
+                }
 
         # Test Score SDE with different noise scale factors (all starting from same noise)
-        for noise_scale_factor in args.score_sde_factors:
-            score_sde_samples = batch_sample_score_sde_identical_start(
-                sampler, class_label, single_noise, args.batch_size, noise_scale_factor
-            )
-            score_sde_features = sampler.extract_inception_features(score_sde_samples)
-            score_sde_diversity = calculate_batch_diversity(score_sde_features)
-            trial_results["methods"][f"score_sde_{noise_scale_factor}"] = {
-                "diversity": score_sde_diversity
-            }
+        if "score_sde" in methods_to_run:
+            for noise_scale_factor in args.score_sde_factors:
+                score_sde_samples = batch_sample_score_sde_identical_start(
+                    sampler,
+                    class_label,
+                    single_noise,
+                    args.batch_size,
+                    noise_scale_factor,
+                )
+                score_sde_features = sampler.extract_inception_features(
+                    score_sde_samples
+                )
+                score_sde_diversity = calculate_batch_diversity(score_sde_features)
+                trial_results["methods"][f"score_sde_{noise_scale_factor}"] = {
+                    "diversity": score_sde_diversity
+                }
 
         # Test ODE-divfree with different lambda values (all starting from same noise)
-        for lambda_div in args.lambda_divs:
-            divfree_samples = batch_sample_ode_divfree_identical_start(
-                sampler, class_label, single_noise, args.batch_size, lambda_div
-            )
-            divfree_features = sampler.extract_inception_features(divfree_samples)
-            divfree_diversity = calculate_batch_diversity(divfree_features)
-            trial_results["methods"][f"divfree_{lambda_div}"] = {
-                "diversity": divfree_diversity
-            }
+        if "divfree" in methods_to_run:
+            for lambda_div in args.lambda_divs:
+                divfree_samples = batch_sample_ode_divfree_identical_start(
+                    sampler, class_label, single_noise, args.batch_size, lambda_div
+                )
+                divfree_features = sampler.extract_inception_features(divfree_samples)
+                divfree_diversity = calculate_batch_diversity(divfree_features)
+                trial_results["methods"][f"divfree_{lambda_div}"] = {
+                    "diversity": divfree_diversity
+                }
+
+        # Test ODE-divfree-max with different lambda values (all starting from same noise)
+        if "divfree_max" in methods_to_run:
+            for lambda_div in args.lambda_divs:
+                divfree_max_samples = batch_sample_ode_divfree_max_identical_start(
+                    sampler, class_label, single_noise, args.batch_size, lambda_div
+                )
+                divfree_max_features = sampler.extract_inception_features(
+                    divfree_max_samples
+                )
+                divfree_max_diversity = calculate_batch_diversity(divfree_max_features)
+                trial_results["methods"][f"divfree_max_{lambda_div}"] = {
+                    "diversity": divfree_max_diversity
+                }
 
         # Test SDE-divfree with different lambda values (all starting from same noise)
-        for lambda_div in args.lambda_divs:
-            sde_divfree_samples = batch_sample_sde_divfree_identical_start(
-                sampler, class_label, single_noise, args.batch_size, lambda_div
-            )
-            sde_divfree_features = sampler.extract_inception_features(
-                sde_divfree_samples
-            )
-            sde_divfree_diversity = calculate_batch_diversity(sde_divfree_features)
-            trial_results["methods"][f"sde_divfree_{lambda_div}"] = {
-                "diversity": sde_divfree_diversity
-            }
+        if "sde_divfree" in methods_to_run:
+            for lambda_div in args.lambda_divs:
+                sde_divfree_samples = batch_sample_sde_divfree_identical_start(
+                    sampler, class_label, single_noise, args.batch_size, lambda_div
+                )
+                sde_divfree_features = sampler.extract_inception_features(
+                    sde_divfree_samples
+                )
+                sde_divfree_diversity = calculate_batch_diversity(sde_divfree_features)
+                trial_results["methods"][f"sde_divfree_{lambda_div}"] = {
+                    "diversity": sde_divfree_diversity
+                }
 
         # Test Particle Guidance with different alpha ranges (all starting from same noise)
-        alpha_ranges = [(0.1, 0.05), (0.05, 0.05), (0.05, 0.025), (0.025, 0.0125)]
-        for alpha_0, alpha_1 in alpha_ranges:
-            pg_samples = batch_sample_particle_guidance_identical_start(
-                sampler,
-                class_label,
-                single_noise,
-                args.batch_size,
-                alpha_0,
-                alpha_1,
-                "rbf",
-                "linear",
-            )
-            pg_features = sampler.extract_inception_features(pg_samples)
-            pg_diversity = calculate_batch_diversity(pg_features)
-            trial_results["methods"][f"particle_guidance_{alpha_0}_{alpha_1}"] = {
-                "diversity": pg_diversity
-            }
+        if "particle_guidance" in methods_to_run:
+            alpha_ranges = [(0.1, 0.05), (0.05, 0.05), (0.05, 0.025), (0.025, 0.0125)]
+            for alpha_0, alpha_1 in alpha_ranges:
+                pg_samples = batch_sample_particle_guidance_identical_start(
+                    sampler,
+                    class_label,
+                    single_noise,
+                    args.batch_size,
+                    alpha_0,
+                    alpha_1,
+                    "rbf",
+                    "linear",
+                )
+                pg_features = sampler.extract_inception_features(pg_samples)
+                pg_diversity = calculate_batch_diversity(pg_features)
+                trial_results["methods"][f"particle_guidance_{alpha_0}_{alpha_1}"] = {
+                    "diversity": pg_diversity
+                }
 
         results["experiments"].append(trial_results)
 
@@ -570,7 +669,7 @@ if __name__ == "__main__":
         "--lambda_divs",
         type=float,
         nargs="+",
-        default=[0.1, 0.35, 0.4, 0.45, 0.5, 0.6, 2.0],
+        default=[0.1, 0.35, 0.4, 0.45, 0.5, 0.6],
         help="Lambda values for divergence-free flow to test",
     )
     parser.add_argument(
@@ -586,6 +685,26 @@ if __name__ == "__main__":
         nargs="+",
         default=[0.1, 0.2, 0.3],
         help="Noise scale factors for Score SDE sampling",
+    )
+
+    # Method selection parameters
+    parser.add_argument(
+        "--methods",
+        type=str,
+        nargs="+",
+        default=["divfree_max"],
+        choices=[
+            "all",
+            "ode_random",
+            "sde",
+            "edm_sde",
+            "score_sde",
+            "divfree",
+            "divfree_max",
+            "sde_divfree",
+            "particle_guidance",
+        ],
+        help="Methods to test (default: all methods)",
     )
 
     # Output parameters
