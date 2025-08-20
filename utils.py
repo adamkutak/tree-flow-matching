@@ -141,8 +141,8 @@ def _euclidean_repulsive_forces(x_batch, x_flat, alpha_t):
 
     # Compute pairwise distances
     distances = (
-        torch.norm(diff, dim=2, keepdim=True) + 1e-8
-    )  # [batch_size, batch_size, 1]
+        torch.norm(diff, dim=2, keepdim=True) + 1e-6
+    )  # [batch_size, batch_size, 1] - larger epsilon for identical starts
 
     # Force proportional to 1/distance³ (since force = diff/distance³)
     forces = diff / (distances**3)  # [batch_size, batch_size, features]

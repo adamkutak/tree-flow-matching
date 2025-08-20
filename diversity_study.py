@@ -254,8 +254,11 @@ def batch_sample_particle_guidance_identical_start(
     sampler.flow_model.eval()
 
     with torch.no_grad():
-        # All samples start identical
+        # All samples start identical with tiny random perturbation to break symmetry
         current_samples = single_noise.unsqueeze(0).repeat(batch_size, 1, 1, 1)
+        # Add tiny random perturbation to break initial symmetry for particle guidance
+        perturbation = torch.randn_like(current_samples) * 1e-4
+        current_samples = current_samples + perturbation
         current_label = torch.full((batch_size,), class_label, device=sampler.device)
 
         for step, t in enumerate(sampler.timesteps[:-1]):
