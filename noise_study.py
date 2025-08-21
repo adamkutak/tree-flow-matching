@@ -346,16 +346,20 @@ def batch_sample_edm_sde_with_metrics(sampler, class_label, batch_size=16, beta=
                 * sigma_t
             )
 
+            # Calculate what actually gets applied
+            applied_velocity = total_velocity * dt
+            applied_noise = brownian
+
             dims = tuple(range(1, velocity.ndim))
-            # Track the magnitude of the total effective velocity, not just the raw velocity
-            vel_mag = torch.linalg.vector_norm(total_velocity, dim=dims).mean().item()
-            noise_mag = torch.linalg.vector_norm(brownian, dim=dims).mean().item()
+            # Track magnitudes of what's actually applied
+            vel_mag = torch.linalg.vector_norm(applied_velocity, dim=dims).mean().item()
+            noise_mag = torch.linalg.vector_norm(applied_noise, dim=dims).mean().item()
 
             velocity_magnitudes.append(vel_mag)
             noise_magnitudes.append(noise_mag)
             noise_to_velocity_ratios.append(noise_mag / vel_mag if vel_mag > 0 else 0)
 
-            current_samples = current_samples + total_velocity * dt + brownian
+            current_samples = current_samples + applied_velocity + applied_noise
 
         avg_velocity_magnitude = sum(velocity_magnitudes) / len(velocity_magnitudes)
         avg_noise_magnitude = sum(noise_magnitudes) / len(noise_magnitudes)
@@ -425,17 +429,21 @@ def batch_sample_score_sde_with_metrics(
             # Generate noise term: g_t * dW
             noise = torch.randn_like(current_samples) * g_t * torch.sqrt(dt)
 
-            # Track magnitudes
+            # Calculate what actually gets applied
+            applied_velocity = drift * dt
+            applied_noise = noise
+
+            # Track magnitudes of what's actually applied
             dims = tuple(range(1, velocity.ndim))
-            vel_mag = torch.linalg.vector_norm(drift, dim=dims).mean().item()
-            noise_mag = torch.linalg.vector_norm(noise, dim=dims).mean().item()
+            vel_mag = torch.linalg.vector_norm(applied_velocity, dim=dims).mean().item()
+            noise_mag = torch.linalg.vector_norm(applied_noise, dim=dims).mean().item()
 
             velocity_magnitudes.append(vel_mag)
             noise_magnitudes.append(noise_mag)
             noise_to_velocity_ratios.append(noise_mag / vel_mag if vel_mag > 0 else 0)
 
             # Euler-Maruyama update
-            current_samples = current_samples + drift * dt + noise
+            current_samples = current_samples + applied_velocity + applied_noise
 
         avg_velocity_magnitude = sum(velocity_magnitudes) / len(velocity_magnitudes)
         avg_noise_magnitude = sum(noise_magnitudes) / len(noise_magnitudes)
@@ -827,6 +835,8 @@ def get_methods_to_run(args):
             "ode_divfree_max",
             "sde",
             "sde_divfree",
+            "edm_sde",
+            "score_sde",
         }
     else:
         return set(args.methods)
@@ -1121,6 +1131,58 @@ def run_experiment(args):
                 f"Average divfree/velocity ratio: {sde_divfree_metrics['avg_ratio']:.4f}"
             )
 
+    if "edm_sde" in methods_to_run:
+        print("\n\n===== Running EDM SDE experiments =====")
+        for beta in args.beta_values:
+            print(f"\nTesting EDM SDE with beta={beta}")
+            edm_sde_metrics = run_sampling_experiment(
+                sampler,
+                device,
+                fid,
+                args.num_samples,
+                args.batch_size,
+                batch_sample_edm_sde_with_metrics,
+                {"beta": beta},
+                f"EDM SDE sampling with beta={beta}",
+            )
+
+            results["experiments"].append(
+                {"type": "edm_sde", "beta": beta, "metrics": edm_sde_metrics}
+            )
+
+            print(
+                f"EDM SDE (beta={beta}) - FID: {edm_sde_metrics['fid_score']:.4f}, IS: {edm_sde_metrics['inception_score']:.4f}±{edm_sde_metrics['inception_std']:.4f}, DINO Top-1: {edm_sde_metrics['dino_top1_accuracy']:.2f}%, Top-5: {edm_sde_metrics['dino_top5_accuracy']:.2f}%"
+            )
+            print(f"Average noise/velocity ratio: {edm_sde_metrics['avg_ratio']:.4f}")
+
+    if "score_sde" in methods_to_run:
+        print("\n\n===== Running Score SDE experiments =====")
+        for noise_scale_factor in args.score_sde_factors:
+            print(f"\nTesting Score SDE with noise_scale_factor={noise_scale_factor}")
+            score_sde_metrics = run_sampling_experiment(
+                sampler,
+                device,
+                fid,
+                args.num_samples,
+                args.batch_size,
+                batch_sample_score_sde_with_metrics,
+                {"noise_scale_factor": noise_scale_factor},
+                f"Score SDE sampling with noise_scale_factor={noise_scale_factor}",
+            )
+
+            results["experiments"].append(
+                {
+                    "type": "score_sde",
+                    "noise_scale_factor": noise_scale_factor,
+                    "metrics": score_sde_metrics,
+                }
+            )
+
+            print(
+                f"Score SDE (noise_scale_factor={noise_scale_factor}) - FID: {score_sde_metrics['fid_score']:.4f}, IS: {score_sde_metrics['inception_score']:.4f}±{score_sde_metrics['inception_std']:.4f}, DINO Top-1: {score_sde_metrics['dino_top1_accuracy']:.2f}%, Top-5: {score_sde_metrics['dino_top5_accuracy']:.2f}%"
+            )
+            print(f"Average noise/velocity ratio: {score_sde_metrics['avg_ratio']:.4f}")
+
     # Save results
     result_file = os.path.join(results_dir, f"noise_study_results_{timestamp}.json")
     with open(result_file, "w") as f:
@@ -1191,7 +1253,14 @@ if __name__ == "__main__":
         "--methods",
         type=str,
         nargs="+",
-        default=["ode_divfree_max", "ode_baseline", "ode_divfree"],
+        default=[
+            # "ode_divfree_max",
+            # "ode_baseline",
+            # "ode_divfree",
+            "sde",
+            "edm_sde",
+            "score_sde",
+        ],
         choices=[
             "all",
             "ode_baseline",
@@ -1200,6 +1269,8 @@ if __name__ == "__main__":
             "ode_divfree_max",
             "sde",
             "sde_divfree",
+            "edm_sde",
+            "score_sde",
         ],
         help="Methods to test (default: all methods)",
     )
@@ -1217,7 +1288,7 @@ if __name__ == "__main__":
         "--noise_scales",
         type=float,
         nargs="+",
-        default=[0.1, 0.13, 0.16, 0.2],
+        default=[0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0, 1.5, 2.0],
         help="Noise scale values to test for SDE sampling",
     )
     parser.add_argument(
@@ -1232,14 +1303,14 @@ if __name__ == "__main__":
         "--beta_values",
         type=float,
         nargs="+",
-        default=[0.05, 0.1, 0.2, 0.3, 0.4],
+        default=[0.05, 0.1, 0.2, 0.3, 0.4, 0.6, 0.8, 1.0],
         help="Beta values for EDM SDE sampling",
     )
     parser.add_argument(
         "--score_sde_factors",
         type=float,
         nargs="+",
-        default=[0.1, 0.2, 0.3],
+        default=[0.1, 0.2, 0.3, 0.5, 0.7, 0.9, 1.0],
         help="Noise scale factors for Score SDE sampling",
     )
 
