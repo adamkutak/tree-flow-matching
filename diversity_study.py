@@ -245,7 +245,7 @@ def batch_sample_ode_divfree_max_identical_start(
     batch_size,
     lambda_div=0.2,
     repulsion_strength=0.02,
-    noise_schedule_end_factor=0.3,
+    noise_schedule_end_factor=0.5,
 ):
     """
     ODE-divfree sampling where samples start from identical noise. Uses normal divfree
@@ -689,7 +689,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--num_trials",
         type=int,
-        default=20,
+        default=50,
         help="Number of trials to test",
     )
 
@@ -705,7 +705,7 @@ if __name__ == "__main__":
         "--lambda_divs",
         type=float,
         nargs="+",
-        default=[0.1, 0.35, 0.4, 0.45, 0.5, 0.6],
+        default=[0.1, 0.2, 0.35, 0.4, 0.45, 0.5, 0.6, 0.8, 1.0],
         help="Lambda values for divergence-free flow to test",
     )
     parser.add_argument(
