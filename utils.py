@@ -157,7 +157,6 @@ def _euclidean_repulsive_forces(x_batch, x_flat, alpha_t):
 
     forces = forces_flat.view_as(x_batch)
 
-    breakpoint()
     return alpha_t * forces
 
 
