@@ -1225,7 +1225,7 @@ if __name__ == "__main__":
         type=float,
         nargs="+",
         # default=[0.1, 0.35, 0.4, 0.45, 0.5, 0.6, 2.0],
-        default=[0.7, 0.8, 0.9, 1.0, 1.1, 1.2, 2.0],
+        default=[1.3, 1.4, 1.5],
         help="Lambda values for divergence-free flow to test",
     )
     parser.add_argument(
