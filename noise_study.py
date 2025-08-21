@@ -1180,7 +1180,7 @@ if __name__ == "__main__":
         "--methods",
         type=str,
         nargs="+",
-        default=["all"],
+        default=["ode_divfree_max"],
         choices=[
             "all",
             "ode_baseline",
