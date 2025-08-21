@@ -1258,8 +1258,8 @@ if __name__ == "__main__":
             # "ode_baseline",
             # "ode_divfree",
             "sde",
-            "edm_sde",
-            "score_sde",
+            # "edm_sde",
+            # "score_sde",
         ],
         choices=[
             "all",
