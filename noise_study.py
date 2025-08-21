@@ -460,7 +460,8 @@ def batch_sample_ode_divfree_max_with_metrics(
     batch_size=16,
     lambda_div=0.2,
     sub_batch_size=4,
-    repulsion_strength=0.1,
+    repulsion_strength=0.05,
+    noise_schedule_end_factor=0.1,
 ):
     """
     ODE sampling with divergence-free term using normal Gaussian noise plus repulsion
@@ -546,7 +547,16 @@ def batch_sample_ode_divfree_max_with_metrics(
                 )
 
                 # Combine divfree and repulsion
-                w_total[start_idx:end_idx] = w_divfree + repulsion_divfree
+                combined_perturbation = w_divfree + repulsion_divfree
+
+                # Apply time-dependent scaling to combined perturbation
+                t_scalar = t_batch[0].item()
+                noise_scale_factor = (
+                    1.0 + (noise_schedule_end_factor - 1.0) * t_scalar
+                )  # Linear interpolation
+                scaled_perturbation = combined_perturbation * noise_scale_factor
+
+                w_total[start_idx:end_idx] = scaled_perturbation
 
             # Calculate what actually gets applied
             applied_velocity = u_t * dt
@@ -1036,7 +1046,8 @@ def run_experiment(args):
                 {
                     "lambda_div": lambda_div,
                     "sub_batch_size": 4,
-                    "repulsion_strength": 0.1,
+                    "repulsion_strength": 0.05,
+                    "noise_schedule_end_factor": 0.1,
                 },
                 f"ODE-divfree-max sampling with lambda_div={lambda_div}",
             )
@@ -1180,7 +1191,7 @@ if __name__ == "__main__":
         "--methods",
         type=str,
         nargs="+",
-        default=["ode_divfree_max"],
+        default=["ode_baseline", "ode_divfree_max", "ode_divfree"],
         choices=[
             "all",
             "ode_baseline",
