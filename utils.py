@@ -65,7 +65,6 @@ def particle_guidance_forces(x_batch, t, alpha_t=1.0, kernel_type="euclidean"):
     else:
         raise ValueError(f"Unknown kernel type: {kernel_type}")
 
-    breakpoint()
     return forces
 
 
@@ -157,6 +156,8 @@ def _euclidean_repulsive_forces(x_batch, x_flat, alpha_t):
     forces_flat = forces.sum(dim=1)  # [batch_size, features]
 
     forces = forces_flat.view_as(x_batch)
+
+    breakpoint()
     return alpha_t * forces
 
 
