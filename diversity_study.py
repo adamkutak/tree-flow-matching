@@ -239,12 +239,17 @@ def batch_sample_sde_divfree_identical_start(
 
 
 def batch_sample_ode_divfree_max_identical_start(
-    sampler, class_label, single_noise, batch_size, lambda_div=0.2
+    sampler,
+    class_label,
+    single_noise,
+    batch_size,
+    lambda_div=0.2,
+    repulsion_strength=0.1,
 ):
     """
-    ODE-divfree sampling where samples start from identical noise but the entire batch
-    uses maximally separated Gaussian noise for the divergence-free field.
-    Should produce different outputs due to maximally separated divergence-free fields.
+    ODE-divfree sampling where samples start from identical noise. Uses normal divfree
+    Gaussian sampling but adds a small repulsion term to push samples away from each other.
+    Should produce different outputs due to repulsive forces while maintaining Gaussian-like properties.
     """
     sampler.flow_model.eval()
 
@@ -261,21 +266,44 @@ def batch_sample_ode_divfree_max_identical_start(
 
             u_t = sampler.flow_model(t_batch, x, y)
 
-            # Get maximally separated Gaussian noise for the entire batch
-            max_separated_noise = sample_spherical_simplex_gaussian(
-                batch_size,
-                sampler.channels,
-                sampler.image_size,
-                sampler.image_size,
-                sampler.device,
+            # Standard divfree term - normal Gaussian noise projected to be divergence-free
+            w_unscaled = divfree_swirl_si(x, t_batch, y, u_t)
+            w_divfree = lambda_div * w_unscaled
+
+            # Add repulsion term to push samples away from each other
+            # Calculate raw repulsive forces using vectorized approach (no user scaling yet)
+            from utils import particle_guidance_forces
+
+            raw_repulsion_forces = particle_guidance_forces(
+                x, 0.0, alpha_t=1.0, kernel_type="euclidean"
             )
 
-            # Project the maximally separated noise to be divergence-free
+            # Regularize repulsion magnitude to match Gaussian magnitude
+            dims = tuple(range(1, w_unscaled.ndim))
+            gaussian_magnitude = torch.linalg.vector_norm(w_unscaled, dim=dims).mean()
+            repulsion_magnitude = torch.linalg.vector_norm(
+                raw_repulsion_forces, dim=dims
+            ).mean()
+
+            if repulsion_magnitude > 1e-8:  # Avoid division by zero
+                # Scale forces so their average magnitude equals gaussian magnitude
+                regularization_factor = gaussian_magnitude / repulsion_magnitude
+                regularized_repulsion = raw_repulsion_forces * regularization_factor
+            else:
+                regularized_repulsion = raw_repulsion_forces
+
+            # Apply user-specified repulsion strength AFTER regularization
+            scaled_repulsion = regularized_repulsion * repulsion_strength
+
+            # Make repulsion forces divergence-free to maintain mathematical properties
             from utils import make_divergence_free
 
-            w_unscaled = make_divergence_free(max_separated_noise, x, t_batch, u_t)
-            w = lambda_div * w_unscaled
-            x = x + (u_t + w) * dt
+            repulsion_divfree = make_divergence_free(scaled_repulsion, x, t_batch, u_t)
+
+            # Combine divfree term and repulsion term
+            total_perturbation = w_divfree + repulsion_divfree
+
+            x = x + (u_t + total_perturbation) * dt
 
         return sampler.unnormalize_images(x)
 
