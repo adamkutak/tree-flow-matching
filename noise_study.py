@@ -1310,7 +1310,7 @@ if __name__ == "__main__":
         "--score_sde_factors",
         type=float,
         nargs="+",
-        default=[0.05, 0.075, 0.1, 0.12, 0.14, 0.16, 0.18, 0.2, 0.22, 0.24, 0.3],
+        default=[0.4, 0.6, 0.8, 1.0, 1.2, 1.5],
         help="Noise scale factors for Score SDE sampling",
     )
 
