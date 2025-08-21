@@ -1191,7 +1191,7 @@ if __name__ == "__main__":
         "--methods",
         type=str,
         nargs="+",
-        default=["ode_baseline", "ode_divfree_max", "ode_divfree"],
+        default=["ode_baseline", "ode_divfree_max"],
         choices=[
             "all",
             "ode_baseline",
