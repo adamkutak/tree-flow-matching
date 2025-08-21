@@ -3089,7 +3089,7 @@ class MCTSFlowSampler:
             return self.unnormalize_images(torch.stack(final_samples))
 
     def _sample_with_divfree_noise(
-        self, start_sample, label, start_time=0.0, lambda_div=0.2
+        self, start_sample, label, start_time=0.0, lambda_div=0.2, save_at_time=None
     ):
         """
         Helper function to sample from start_time to t=1 with divergence-free noise.
@@ -3099,13 +3099,16 @@ class MCTSFlowSampler:
             label: Class label (shape: [1])
             start_time: Time to start sampling from (0.0 to 1.0)
             lambda_div: Scale factor for divergence-free field
+            save_at_time: Optional time to save intermediate sample (if None, only return final)
 
         Returns:
-            Final sample at t=1
+            If save_at_time is None: Final sample at t=1
+            If save_at_time is given: (intermediate_sample, final_sample)
         """
         current_sample = start_sample.clone()
         base_dt = 1 / self.num_timesteps
         current_time = start_time
+        intermediate_sample = None
 
         while current_time < 1.0:
             dt = min(base_dt, 1.0 - current_time)
@@ -3119,10 +3122,21 @@ class MCTSFlowSampler:
             current_sample = current_sample + (u_t + w) * dt
             current_time += dt
 
-        return current_sample
+            # Save intermediate sample if we've reached the save_at_time
+            if (
+                save_at_time is not None
+                and intermediate_sample is None
+                and np.isclose(current_time, save_at_time, atol=base_dt / 2)
+            ):
+                intermediate_sample = current_sample.clone()
+
+        if save_at_time is not None:
+            return intermediate_sample, current_sample
+        else:
+            return current_sample
 
     def _sample_with_sde_noise(
-        self, start_sample, label, start_time=0.0, noise_scale=0.05
+        self, start_sample, label, start_time=0.0, noise_scale=0.05, save_at_time=None
     ):
         """
         Helper function to sample from start_time to t=1 with SDE noise.
@@ -3132,13 +3146,16 @@ class MCTSFlowSampler:
             label: Class label (shape: [1])
             start_time: Time to start sampling from (0.0 to 1.0)
             noise_scale: Scale of SDE noise
+            save_at_time: Optional time to save intermediate sample (if None, only return final)
 
         Returns:
-            Final sample at t=1
+            If save_at_time is None: Final sample at t=1
+            If save_at_time is given: (intermediate_sample, final_sample)
         """
         current_sample = start_sample.clone()
         base_dt = 1 / self.num_timesteps
         current_time = start_time
+        intermediate_sample = None
 
         while current_time < 1.0:
             dt = min(base_dt, 1.0 - current_time)
@@ -3152,7 +3169,18 @@ class MCTSFlowSampler:
             current_sample = current_sample + velocity * dt + noise
             current_time += dt
 
-        return current_sample
+            # Save intermediate sample if we've reached the save_at_time
+            if (
+                save_at_time is not None
+                and intermediate_sample is None
+                and np.isclose(current_time, save_at_time, atol=base_dt / 2)
+            ):
+                intermediate_sample = current_sample.clone()
+
+        if save_at_time is not None:
+            return intermediate_sample, current_sample
+        else:
+            return current_sample
 
     def batch_sample_noise_search_ode_divfree(
         self,
@@ -3164,6 +3192,7 @@ class MCTSFlowSampler:
         lambda_div=0.2,
         selector="fid",
         use_global=False,
+        use_final_samples_for_restart=False,
     ):
         """
         Multi-round noise search with divergence-free ODE sampling.
@@ -3179,6 +3208,8 @@ class MCTSFlowSampler:
             lambda_div: Scale factor for the divergence-free field
             selector: Selection criteria - "fid", "mahalanobis", "mean", "inception_score", "dino_score"
             use_global: Whether to use global statistics instead of class-specific ones
+            use_final_samples_for_restart: If True, use final samples from t=1.0 as restart points (legacy mode).
+                                         If False, use proper intermediate samples (default, correct behavior).
         """
         assert (
             len(class_label) == batch_size if torch.is_tensor(class_label) else True
@@ -3230,10 +3261,17 @@ class MCTSFlowSampler:
 
                 all_round_samples = []
                 all_round_labels = []
+                all_intermediate_samples = []  # For next round
+
+                # Determine if we need to save intermediate for next round
+                next_start_time = None
+                if round_idx + 1 < len(round_start_times):
+                    next_start_time = round_start_times[round_idx + 1]
 
                 # Generate samples for each batch element
                 for batch_idx in range(batch_size):
                     batch_samples = []
+                    batch_intermediate = []  # For next round
 
                     # For each candidate from previous round
                     for candidate_idx in range(num_keep):
@@ -3248,26 +3286,50 @@ class MCTSFlowSampler:
                                     self.image_size,
                                     device=self.device,
                                 )
-                                current_time = 0.0
                             else:
-                                # Later rounds: start from previous candidate at start_time
+                                # Later rounds: start from intermediate sample at start_time
                                 sample_start = current_candidates[batch_idx][
                                     candidate_idx : candidate_idx + 1
                                 ]
-                                current_time = start_time
 
-                            # Sample from current_time to t=1 with divergence-free noise
-                            final_sample = self._sample_with_divfree_noise(
-                                sample_start,
-                                current_label[batch_idx : batch_idx + 1],
-                                start_time=current_time,
-                                lambda_div=lambda_div,
-                            )
+                            # Sample from start_time to t=1, optionally saving intermediate for next round
+                            if (
+                                next_start_time is not None
+                                and not use_final_samples_for_restart
+                            ):
+                                # Correct mode: save intermediate samples for next round
+                                intermediate_sample, final_sample = (
+                                    self._sample_with_divfree_noise(
+                                        sample_start,
+                                        current_label[batch_idx : batch_idx + 1],
+                                        start_time=start_time,
+                                        lambda_div=lambda_div,
+                                        save_at_time=next_start_time,
+                                    )
+                                )
+                                batch_intermediate.append(intermediate_sample)
+                            else:
+                                # Legacy mode or last round: just sample normally
+                                final_sample = self._sample_with_divfree_noise(
+                                    sample_start,
+                                    current_label[batch_idx : batch_idx + 1],
+                                    start_time=start_time,
+                                    lambda_div=lambda_div,
+                                )
+
                             batch_samples.append(final_sample)
 
                     # Stack samples for this batch element
                     batch_samples = torch.cat(batch_samples, dim=0)
                     all_round_samples.append(batch_samples)
+
+                    # Store intermediate samples for next round candidate selection
+                    if (
+                        next_start_time is not None
+                        and not use_final_samples_for_restart
+                    ):
+                        batch_intermediate = torch.cat(batch_intermediate, dim=0)
+                        all_intermediate_samples.append(batch_intermediate)
 
                     # Create corresponding labels
                     batch_labels = current_label[batch_idx : batch_idx + 1].repeat(
@@ -3300,7 +3362,26 @@ class MCTSFlowSampler:
                     top_indices = torch.topk(batch_scores, num_keep).indices
                     top_samples = batch_samples[top_indices]
                     top_labels = batch_labels[top_indices]
-                    new_candidates.append(top_samples)
+
+                    # For next round: use INTERMEDIATE samples (correct mode) or FINAL samples (legacy mode)
+                    if round_idx + 1 < rounds:
+                        # Check if we have legacy mode enabled (only applies to noise search functions)
+                        use_legacy_mode = (
+                            "use_final_samples_for_restart" in locals()
+                            and use_final_samples_for_restart
+                        )
+
+                        if use_legacy_mode:
+                            # Legacy mode: use final samples as restart points
+                            new_candidates.append(top_samples)
+                        elif all_intermediate_samples:
+                            # Correct mode: use intermediate samples
+                            batch_intermediates = all_intermediate_samples[batch_idx]
+                            top_intermediates = batch_intermediates[top_indices]
+                            new_candidates.append(top_intermediates)
+                        else:
+                            # Fallback: use final samples if no intermediates available
+                            new_candidates.append(top_samples)
 
                     # Accumulate top K samples from this round for global selection
                     all_round_top_samples[batch_idx].append(top_samples)
@@ -3339,6 +3420,7 @@ class MCTSFlowSampler:
         noise_scale=0.05,
         selector="fid",
         use_global=False,
+        use_final_samples_for_restart=False,
     ):
         """
         Multi-round noise search with SDE sampling.
@@ -3354,6 +3436,8 @@ class MCTSFlowSampler:
             noise_scale: Scale of the SDE noise to add during sampling
             selector: Selection criteria - "fid", "mahalanobis", "mean", "inception_score", "dino_score"
             use_global: Whether to use global statistics instead of class-specific ones
+            use_final_samples_for_restart: If True, use final samples from t=1.0 as restart points (legacy mode).
+                                         If False, use proper intermediate samples (default, correct behavior).
         """
         assert (
             len(class_label) == batch_size if torch.is_tensor(class_label) else True
@@ -3405,10 +3489,17 @@ class MCTSFlowSampler:
 
                 all_round_samples = []
                 all_round_labels = []
+                all_intermediate_samples = []  # For next round
+
+                # Determine if we need to save intermediate for next round
+                next_start_time = None
+                if round_idx + 1 < len(round_start_times):
+                    next_start_time = round_start_times[round_idx + 1]
 
                 # Generate samples for each batch element
                 for batch_idx in range(batch_size):
                     batch_samples = []
+                    batch_intermediate = []  # For next round
 
                     # For each candidate from previous round
                     for candidate_idx in range(num_keep):
@@ -3423,22 +3514,46 @@ class MCTSFlowSampler:
                                     self.image_size,
                                     device=self.device,
                                 )
-                                current_time = 0.0
                             else:
-                                # Later rounds: start from previous candidate at start_time
+                                # Later rounds: start from intermediate sample at start_time
                                 sample_start = current_candidates[batch_idx][
                                     candidate_idx : candidate_idx + 1
                                 ]
-                                current_time = start_time
 
-                            # Sample from current_time to t=1 with SDE noise
-                            final_sample = self._sample_with_sde_noise(
-                                sample_start,
-                                current_label[batch_idx : batch_idx + 1],
-                                start_time=current_time,
-                                noise_scale=noise_scale,
-                            )
+                            # Sample from start_time to t=1, optionally saving intermediate for next round
+                            if (
+                                next_start_time is not None
+                                and not use_final_samples_for_restart
+                            ):
+                                # Correct mode: save intermediate samples for next round
+                                intermediate_sample, final_sample = (
+                                    self._sample_with_sde_noise(
+                                        sample_start,
+                                        current_label[batch_idx : batch_idx + 1],
+                                        start_time=start_time,
+                                        noise_scale=noise_scale,
+                                        save_at_time=next_start_time,
+                                    )
+                                )
+                                batch_intermediate.append(intermediate_sample)
+                            else:
+                                # Legacy mode or last round: just sample normally
+                                final_sample = self._sample_with_sde_noise(
+                                    sample_start,
+                                    current_label[batch_idx : batch_idx + 1],
+                                    start_time=start_time,
+                                    noise_scale=noise_scale,
+                                )
+
                             batch_samples.append(final_sample)
+
+                    # Store intermediate samples for next round candidate selection
+                    if (
+                        next_start_time is not None
+                        and not use_final_samples_for_restart
+                    ):
+                        batch_intermediate = torch.cat(batch_intermediate, dim=0)
+                        all_intermediate_samples.append(batch_intermediate)
 
                     # Stack samples for this batch element
                     batch_samples = torch.cat(batch_samples, dim=0)
@@ -3475,7 +3590,26 @@ class MCTSFlowSampler:
                     top_indices = torch.topk(batch_scores, num_keep).indices
                     top_samples = batch_samples[top_indices]
                     top_labels = batch_labels[top_indices]
-                    new_candidates.append(top_samples)
+
+                    # For next round: use INTERMEDIATE samples (correct mode) or FINAL samples (legacy mode)
+                    if round_idx + 1 < rounds:
+                        # Check if we have legacy mode enabled (only applies to noise search functions)
+                        use_legacy_mode = (
+                            "use_final_samples_for_restart" in locals()
+                            and use_final_samples_for_restart
+                        )
+
+                        if use_legacy_mode:
+                            # Legacy mode: use final samples as restart points
+                            new_candidates.append(top_samples)
+                        elif all_intermediate_samples:
+                            # Correct mode: use intermediate samples
+                            batch_intermediates = all_intermediate_samples[batch_idx]
+                            top_intermediates = batch_intermediates[top_indices]
+                            new_candidates.append(top_intermediates)
+                        else:
+                            # Fallback: use final samples if no intermediates available
+                            new_candidates.append(top_samples)
 
                     # Accumulate top K samples from this round for global selection
                     all_round_top_samples[batch_idx].append(top_samples)
@@ -3514,6 +3648,7 @@ class MCTSFlowSampler:
         lambda_div=0.2,
         selector="fid",
         use_global=False,
+        use_final_samples_for_restart=False,
     ):
         """
         Two-stage inference scaling method that combines random search with noise search:
@@ -3529,6 +3664,8 @@ class MCTSFlowSampler:
             lambda_div: Scale factor for the divergence-free field in noise search
             selector: Selection criteria - "fid", "mahalanobis", "mean", "inception_score", "dino_score"
             use_global: Whether to use global statistics instead of class-specific ones
+            use_final_samples_for_restart: If True, use final samples from t=1.0 as restart points (legacy mode).
+                                         If False, use proper intermediate samples (default, correct behavior).
         """
         assert (
             len(class_label) == batch_size if torch.is_tensor(class_label) else True
@@ -3545,6 +3682,7 @@ class MCTSFlowSampler:
                 lambda_div,
                 selector,
                 use_global,
+                use_final_samples_for_restart,
             )
 
         score_fn, use_global = self._get_score_function(selector, use_global)
@@ -3715,7 +3853,26 @@ class MCTSFlowSampler:
                     top_indices = torch.topk(batch_scores, num_keep).indices
                     top_samples = batch_samples[top_indices]
                     top_labels = batch_labels[top_indices]
-                    new_candidates.append(top_samples)
+
+                    # For next round: use INTERMEDIATE samples (correct mode) or FINAL samples (legacy mode)
+                    if round_idx + 1 < rounds:
+                        # Check if we have legacy mode enabled (only applies to noise search functions)
+                        use_legacy_mode = (
+                            "use_final_samples_for_restart" in locals()
+                            and use_final_samples_for_restart
+                        )
+
+                        if use_legacy_mode:
+                            # Legacy mode: use final samples as restart points
+                            new_candidates.append(top_samples)
+                        elif all_intermediate_samples:
+                            # Correct mode: use intermediate samples
+                            batch_intermediates = all_intermediate_samples[batch_idx]
+                            top_intermediates = batch_intermediates[top_indices]
+                            new_candidates.append(top_intermediates)
+                        else:
+                            # Fallback: use final samples if no intermediates available
+                            new_candidates.append(top_samples)
 
                     # Accumulate top K samples from this round for global selection
                     all_round_top_samples[batch_idx].append(top_samples)
