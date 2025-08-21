@@ -1288,7 +1288,7 @@ if __name__ == "__main__":
         "--noise_scales",
         type=float,
         nargs="+",
-        default=[0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0, 1.5, 2.0],
+        default=[0.05, 0.075, 0.1, 0.12, 0.14, 0.16, 0.18, 0.2, 0.3],
         help="Noise scale values to test for SDE sampling",
     )
     parser.add_argument(
