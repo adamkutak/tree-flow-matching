@@ -244,7 +244,8 @@ def batch_sample_ode_divfree_max_identical_start(
     single_noise,
     batch_size,
     lambda_div=0.2,
-    repulsion_strength=0.1,
+    repulsion_strength=0.02,
+    noise_schedule_end_factor=0.3,
 ):
     """
     ODE-divfree sampling where samples start from identical noise. Uses normal divfree
@@ -303,7 +304,14 @@ def batch_sample_ode_divfree_max_identical_start(
             # Combine divfree term and repulsion term
             total_perturbation = w_divfree + repulsion_divfree
 
-            x = x + (u_t + total_perturbation) * dt
+            # Apply time-dependent scaling: full strength at t=0, reduced at t=1
+            t_scalar = t_batch[0].item()
+            noise_scale_factor = (
+                1.0 + (noise_schedule_end_factor - 1.0) * t_scalar
+            )  # Linear interpolation
+            scaled_perturbation = total_perturbation * noise_scale_factor
+
+            x = x + (u_t + scaled_perturbation) * dt
 
         return sampler.unnormalize_images(x)
 
@@ -720,7 +728,7 @@ if __name__ == "__main__":
         "--methods",
         type=str,
         nargs="+",
-        default=["divfree_max"],
+        default=["divfree_max", "ode_random", "divfree"],
         choices=[
             "all",
             "ode_random",

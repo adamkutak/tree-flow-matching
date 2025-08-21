@@ -461,7 +461,7 @@ def batch_sample_ode_divfree_max_with_metrics(
     lambda_div=0.2,
     sub_batch_size=4,
     repulsion_strength=0.05,
-    noise_schedule_end_factor=0.1,
+    noise_schedule_end_factor=0.3,
 ):
     """
     ODE sampling with divergence-free term using normal Gaussian noise plus repulsion
@@ -1191,7 +1191,7 @@ if __name__ == "__main__":
         "--methods",
         type=str,
         nargs="+",
-        default=["ode_divfree_max"],
+        default=["ode_divfree_max", "ode_baseline", "ode_divfree"],
         choices=[
             "all",
             "ode_baseline",
