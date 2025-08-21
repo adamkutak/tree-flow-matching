@@ -698,28 +698,45 @@ if __name__ == "__main__":
         "--noise_scales",
         type=float,
         nargs="+",
-        default=[0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0, 1.5, 2.0],
+        default=[0.05, 0.075, 0.1, 0.12, 0.14, 0.16, 0.18, 0.2, 0.22, 0.24, 0.3],
         help="Noise scale values to test for SDE sampling",
     )
     parser.add_argument(
         "--lambda_divs",
         type=float,
         nargs="+",
-        default=[1.3, 1.4, 1.5],
+        default=[
+            0.1,
+            0.2,
+            0.35,
+            0.4,
+            0.5,
+            0.6,
+            0.7,
+            0.8,
+            0.9,
+            1.0,
+            1.1,
+            1.2,
+            1.3,
+            1.4,
+            1.5,
+            2.0,
+        ],
         help="Lambda values for divergence-free flow to test",
     )
     parser.add_argument(
         "--beta_values",
         type=float,
         nargs="+",
-        default=[0.05, 0.1, 0.2, 0.3, 0.4, 0.6, 0.8, 1.0],
+        default=[0.01, 0.02, 0.04, 0.05, 0.07, 0.08, 0.1],
         help="Beta values for EDM SDE sampling",
     )
     parser.add_argument(
         "--score_sde_factors",
         type=float,
         nargs="+",
-        default=[0.1, 0.2, 0.3, 0.5, 0.7, 0.9, 1.0],
+        default=[0.1, 0.2, 0.3, 0.4, 0.6, 0.8, 1.0, 1.2, 1.5],
         help="Noise scale factors for Score SDE sampling",
     )
 

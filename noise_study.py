@@ -1295,8 +1295,24 @@ if __name__ == "__main__":
         "--lambda_divs",
         type=float,
         nargs="+",
-        # default=[0.1, 0.35, 0.4, 0.45, 0.5, 0.6, 2.0],
-        default=[1.3, 1.4, 1.5],
+        default=[
+            0.1,
+            0.2,
+            0.35,
+            0.4,
+            0.5,
+            0.6,
+            0.7,
+            0.8,
+            0.9,
+            1.0,
+            1.1,
+            1.2,
+            1.3,
+            1.4,
+            1.5,
+            2.0,
+        ],
         help="Lambda values for divergence-free flow to test",
     )
     parser.add_argument(
@@ -1310,7 +1326,7 @@ if __name__ == "__main__":
         "--score_sde_factors",
         type=float,
         nargs="+",
-        default=[0.4, 0.6, 0.8, 1.0, 1.2, 1.5],
+        default=[0.1, 0.2, 0.3, 0.4, 0.6, 0.8, 1.0, 1.2, 1.5],
         help="Noise scale factors for Score SDE sampling",
     )
 
