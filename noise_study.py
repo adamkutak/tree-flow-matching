@@ -460,7 +460,7 @@ def batch_sample_ode_divfree_max_with_metrics(
     batch_size=16,
     lambda_div=0.2,
     sub_batch_size=4,
-    repulsion_strength=0.05,
+    repulsion_strength=0.02,
     noise_schedule_end_factor=0.5,
 ):
     """
@@ -1225,7 +1225,7 @@ if __name__ == "__main__":
         type=float,
         nargs="+",
         # default=[0.1, 0.35, 0.4, 0.45, 0.5, 0.6, 2.0],
-        default=[0.1, 0.2, 0.35, 0.4, 0.45, 0.5, 0.6, 0.8, 1.0],
+        default=[0.7, 0.8, 0.9, 1.0, 1.1, 1.2, 2.0],
         help="Lambda values for divergence-free flow to test",
     )
     parser.add_argument(
