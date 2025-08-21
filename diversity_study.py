@@ -698,28 +698,28 @@ if __name__ == "__main__":
         "--noise_scales",
         type=float,
         nargs="+",
-        default=[0.1, 0.13, 0.16, 0.2, 0.4, 0.6],
+        default=[0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0, 1.5, 2.0],
         help="Noise scale values to test for SDE sampling",
     )
     parser.add_argument(
         "--lambda_divs",
         type=float,
         nargs="+",
-        default=[0.7, 0.8, 0.9, 1.0, 1.1, 1.2, 2.0],
+        default=[1.3, 1.4, 1.5],
         help="Lambda values for divergence-free flow to test",
     )
     parser.add_argument(
         "--beta_values",
         type=float,
         nargs="+",
-        default=[0.05, 0.1, 0.2, 0.3, 0.4],
+        default=[0.05, 0.1, 0.2, 0.3, 0.4, 0.6, 0.8, 1.0],
         help="Beta values for EDM SDE sampling",
     )
     parser.add_argument(
         "--score_sde_factors",
         type=float,
         nargs="+",
-        default=[0.1, 0.2, 0.3],
+        default=[0.1, 0.2, 0.3, 0.5, 0.7, 0.9, 1.0],
         help="Noise scale factors for Score SDE sampling",
     )
 
@@ -728,7 +728,14 @@ if __name__ == "__main__":
         "--methods",
         type=str,
         nargs="+",
-        default=["divfree_max", "ode_random", "divfree"],
+        default=[
+            "divfree_max",
+            # "ode_random",
+            "divfree",
+            "sde",
+            "edm_sde",
+            "score_sde",
+        ],
         choices=[
             "all",
             "ode_random",
