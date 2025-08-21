@@ -518,6 +518,7 @@ def batch_sample_ode_divfree_max_with_metrics(
                 # Add repulsion term within this sub-batch using vectorized approach
                 from utils import particle_guidance_forces
 
+                breakpoint()
                 raw_repulsion_forces = particle_guidance_forces(
                     sub_x, 0.0, alpha_t=1.0, kernel_type="euclidean"
                 )
@@ -1046,7 +1047,7 @@ def run_experiment(args):
                 {
                     "lambda_div": lambda_div,
                     "sub_batch_size": 4,
-                    "repulsion_strength": 0.05,
+                    "repulsion_strength": 0.02,
                     "noise_schedule_end_factor": 0.1,
                 },
                 f"ODE-divfree-max sampling with lambda_div={lambda_div}",
@@ -1191,7 +1192,7 @@ if __name__ == "__main__":
         "--methods",
         type=str,
         nargs="+",
-        default=["ode_baseline", "ode_divfree_max"],
+        default=["ode_divfree_max"],
         choices=[
             "all",
             "ode_baseline",

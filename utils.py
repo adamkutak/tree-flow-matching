@@ -65,6 +65,7 @@ def particle_guidance_forces(x_batch, t, alpha_t=1.0, kernel_type="euclidean"):
     else:
         raise ValueError(f"Unknown kernel type: {kernel_type}")
 
+    breakpoint()
     return forces
 
 
