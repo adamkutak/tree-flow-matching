@@ -518,7 +518,6 @@ def batch_sample_ode_divfree_max_with_metrics(
                 # Add repulsion term within this sub-batch using vectorized approach
                 from utils import particle_guidance_forces
 
-                breakpoint()
                 raw_repulsion_forces = particle_guidance_forces(
                     sub_x, 0.0, alpha_t=1.0, kernel_type="euclidean"
                 )
