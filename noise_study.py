@@ -460,9 +460,10 @@ def batch_sample_ode_divfree_max_with_metrics(
     batch_size=16,
     lambda_div=0.2,
     sub_batch_size=4,
+    repulsion_strength=0.1,
 ):
     """
-    ODE sampling with divergence-free term using maximally separated Gaussian noise
+    ODE sampling with divergence-free term using normal Gaussian noise plus repulsion
     within virtual batches, with divergence-free field magnitude tracking.
     """
     is_tensor = torch.is_tensor(class_label)
@@ -494,7 +495,7 @@ def batch_sample_ode_divfree_max_with_metrics(
 
             u_t = sampler.flow_model(t_batch, x, y)  # drift
 
-            # Apply divergence-free field in sub-batches with maximally separated noise
+            # Apply divfree + repulsion in sub-batches
             w_total = torch.zeros_like(x)
             num_sub_batches = (batch_size + sub_batch_size - 1) // sub_batch_size
 
@@ -503,32 +504,53 @@ def batch_sample_ode_divfree_max_with_metrics(
                 end_idx = min((sb + 1) * sub_batch_size, batch_size)
                 current_sub_batch_size = end_idx - start_idx
 
-                # Get maximally separated Gaussian noise for this sub-batch
-                max_separated_noise = sample_spherical_simplex_gaussian(
-                    current_sub_batch_size,
-                    sampler.channels,
-                    sampler.image_size,
-                    sampler.image_size,
-                    sampler.device,
-                )
-
-                # Make it divergence-free for this sub-batch
+                # Get sub-batch data
                 sub_x = x[start_idx:end_idx]
                 sub_t = t_batch[start_idx:end_idx]
                 sub_y = y[start_idx:end_idx]
                 sub_u_t = u_t[start_idx:end_idx]
 
-                # Project the maximally separated noise to be divergence-free
-                w_divfree = make_divergence_free(
-                    max_separated_noise, sub_x, sub_t, sub_u_t
-                )
-                w_total[start_idx:end_idx] = w_divfree
+                # Standard divfree term - normal Gaussian noise projected to be divergence-free
+                w_divfree_unscaled = divfree_swirl_si(sub_x, sub_t, sub_y, sub_u_t)
+                w_divfree = lambda_div * w_divfree_unscaled
 
-            w = lambda_div * w_total
+                # Add repulsion term within this sub-batch using vectorized approach
+                from utils import particle_guidance_forces
+
+                raw_repulsion_forces = particle_guidance_forces(
+                    sub_x, 0.0, alpha_t=1.0, kernel_type="euclidean"
+                )
+
+                # Regularize repulsion magnitude to match Gaussian magnitude
+                dims = tuple(range(1, w_divfree_unscaled.ndim))
+                gaussian_magnitude = torch.linalg.vector_norm(
+                    w_divfree_unscaled, dim=dims
+                ).mean()
+                repulsion_magnitude = torch.linalg.vector_norm(
+                    raw_repulsion_forces, dim=dims
+                ).mean()
+
+                if repulsion_magnitude > 1e-8:  # Avoid division by zero
+                    # Scale forces so their average magnitude equals gaussian magnitude
+                    regularization_factor = gaussian_magnitude / repulsion_magnitude
+                    regularized_repulsion = raw_repulsion_forces * regularization_factor
+                else:
+                    regularized_repulsion = raw_repulsion_forces
+
+                # Apply user-specified repulsion strength AFTER regularization
+                scaled_repulsion = regularized_repulsion * repulsion_strength
+
+                # Make divergence-free
+                repulsion_divfree = make_divergence_free(
+                    scaled_repulsion, sub_x, sub_t, sub_u_t
+                )
+
+                # Combine divfree and repulsion
+                w_total[start_idx:end_idx] = w_divfree + repulsion_divfree
 
             # Calculate what actually gets applied
             applied_velocity = u_t * dt
-            applied_divfree = w * dt
+            applied_divfree = w_total * dt
 
             # Track magnitudes of what's actually applied
             dims = tuple(range(1, u_t.ndim))
@@ -1011,7 +1033,11 @@ def run_experiment(args):
                 args.num_samples,
                 args.batch_size,
                 batch_sample_ode_divfree_max_with_metrics,
-                {"lambda_div": lambda_div, "sub_batch_size": 4},
+                {
+                    "lambda_div": lambda_div,
+                    "sub_batch_size": 4,
+                    "repulsion_strength": 0.1,
+                },
                 f"ODE-divfree-max sampling with lambda_div={lambda_div}",
             )
 
