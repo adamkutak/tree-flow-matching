@@ -470,6 +470,30 @@ def generate_and_compute_metrics(
                 selector=scoring_function,
                 use_global=True,
             )
+        elif sample_method == "noise_search_ode_divfree_max":
+            sample = sampler.batch_sample_noise_search_ode_divfree_max(
+                class_label=random_class_labels,
+                batch_size=current_batch_size,
+                num_branches=num_branches,
+                num_keep=num_keep,
+                rounds=rounds,
+                lambda_div=lambda_div,
+                selector=scoring_function,
+                use_global=True,
+            )
+        elif sample_method == "random_search_then_noise_search_ode_divfree_max":
+            sample = (
+                sampler.batch_sample_random_search_then_noise_search_ode_divfree_max(
+                    class_label=random_class_labels,
+                    batch_size=current_batch_size,
+                    num_branches=num_branches,
+                    num_keep=num_keep,
+                    rounds=rounds,
+                    lambda_div=lambda_div,
+                    selector=scoring_function,
+                    use_global=True,
+                )
+            )
         else:
             raise ValueError(f"Unsupported sample method: {sample_method}")
 
@@ -754,6 +778,8 @@ if __name__ == "__main__":
             "noise_search_ode_divfree",
             "noise_search_sde",
             "random_search_then_noise_search_ode_divfree",
+            "noise_search_ode_divfree_max",
+            "random_search_then_noise_search_ode_divfree_max",
         ],
         help="Sampling method to use (for both single samples and batch optimization)",
     )
