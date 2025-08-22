@@ -3182,6 +3182,107 @@ class MCTSFlowSampler:
         else:
             return current_sample
 
+    def _sample_with_divfree_max_noise(
+        self,
+        start_samples,
+        labels,
+        start_time=0.0,
+        lambda_div=0.2,
+        repulsion_strength=0.02,
+        noise_schedule_end_factor=0.5,
+        save_at_time=None,
+    ):
+        """
+        Helper function to sample from start_time to t=1 with divfree_max noise.
+        This handles multiple samples at once to compute repulsion forces between them.
+
+        Args:
+            start_samples: Starting samples (shape: [batch_size, C, H, W])
+            labels: Class labels (shape: [batch_size])
+            start_time: Time to start sampling from (0.0 to 1.0)
+            lambda_div: Scale factor for divergence-free field
+            repulsion_strength: Strength of repulsion forces
+            noise_schedule_end_factor: End factor for time-dependent noise scaling
+            save_at_time: Optional time to save intermediate sample (if None, only return final)
+
+        Returns:
+            If save_at_time is None: Final samples at t=1
+            If save_at_time is given: (intermediate_samples, final_samples)
+        """
+        current_samples = start_samples.clone()
+        batch_size = current_samples.shape[0]
+        base_dt = 1 / self.num_timesteps
+        current_time = start_time
+        intermediate_samples = None
+
+        while current_time < 1.0:
+            dt = min(base_dt, 1.0 - current_time)
+            t_batch = torch.full((batch_size,), current_time, device=self.device)
+
+            # Get velocity
+            u_t = self.flow_model(t_batch, current_samples, labels)
+
+            # Standard divfree term - normal Gaussian noise projected to be divergence-free
+            from utils import (
+                divfree_swirl_si,
+                make_divergence_free,
+                particle_guidance_forces,
+            )
+
+            w_unscaled = divfree_swirl_si(current_samples, t_batch, labels, u_t)
+            w_divfree = lambda_div * w_unscaled
+
+            # Add repulsion term using vectorized approach
+            raw_repulsion_forces = particle_guidance_forces(
+                current_samples, current_time, alpha_t=1.0, kernel_type="euclidean"
+            )
+
+            # Regularize repulsion magnitude to match Gaussian magnitude
+            dims = tuple(range(1, w_unscaled.ndim))
+            gaussian_magnitude = torch.linalg.vector_norm(w_unscaled, dim=dims).mean()
+            repulsion_magnitude = torch.linalg.vector_norm(
+                raw_repulsion_forces, dim=dims
+            ).mean()
+
+            if repulsion_magnitude > 1e-8:  # Avoid division by zero
+                # Scale forces so their average magnitude equals gaussian magnitude
+                regularization_factor = gaussian_magnitude / repulsion_magnitude
+                regularized_repulsion = raw_repulsion_forces * regularization_factor
+            else:
+                regularized_repulsion = raw_repulsion_forces
+
+            # Apply user-specified repulsion strength AFTER regularization
+            scaled_repulsion = regularized_repulsion * repulsion_strength
+
+            # Make repulsion forces divergence-free to maintain mathematical properties
+            repulsion_divfree = make_divergence_free(
+                scaled_repulsion, current_samples, t_batch, u_t
+            )
+
+            # Combine divfree term and repulsion term
+            total_perturbation = w_divfree + repulsion_divfree
+
+            # Apply time-dependent scaling: full strength at t=0, reduced at t=1
+            noise_scale_factor = 1.0 + (noise_schedule_end_factor - 1.0) * current_time
+            scaled_perturbation = total_perturbation * noise_scale_factor
+
+            # Update samples
+            current_samples = current_samples + (u_t + scaled_perturbation) * dt
+            current_time += dt
+
+            # Save intermediate sample if we've reached the save_at_time
+            if (
+                save_at_time is not None
+                and intermediate_samples is None
+                and np.isclose(current_time, save_at_time, atol=base_dt / 2)
+            ):
+                intermediate_samples = current_samples.clone()
+
+        if save_at_time is not None:
+            return intermediate_samples, current_samples
+        else:
+            return current_samples
+
     def batch_sample_noise_search_ode_divfree(
         self,
         class_label,
@@ -3318,6 +3419,249 @@ class MCTSFlowSampler:
                                 )
 
                             batch_samples.append(final_sample)
+
+                    # Stack samples for this batch element
+                    batch_samples = torch.cat(batch_samples, dim=0)
+                    all_round_samples.append(batch_samples)
+
+                    # Store intermediate samples for next round candidate selection
+                    if (
+                        next_start_time is not None
+                        and not use_final_samples_for_restart
+                    ):
+                        batch_intermediate = torch.cat(batch_intermediate, dim=0)
+                        all_intermediate_samples.append(batch_intermediate)
+
+                    # Create corresponding labels
+                    batch_labels = current_label[batch_idx : batch_idx + 1].repeat(
+                        num_keep * num_branches
+                    )
+                    all_round_labels.append(batch_labels)
+
+                # Evaluate all samples from this round
+                all_samples = torch.cat(all_round_samples, dim=0)
+                all_labels = torch.cat(all_round_labels, dim=0)
+
+                if use_global:
+                    all_scores = score_fn(all_samples)
+                else:
+                    all_scores = score_fn(all_samples, all_labels)
+
+                # Select top candidates for next round AND accumulate for global selection
+                new_candidates = []
+                start_idx = 0
+
+                for batch_idx in range(batch_size):
+                    batch_size_this = num_keep * num_branches
+                    end_idx = start_idx + batch_size_this
+
+                    batch_scores = all_scores[start_idx:end_idx]
+                    batch_samples = all_samples[start_idx:end_idx]
+                    batch_labels = all_labels[start_idx:end_idx]
+
+                    # Keep top num_keep samples for next round
+                    top_indices = torch.topk(batch_scores, num_keep).indices
+                    top_samples = batch_samples[top_indices]
+                    top_labels = batch_labels[top_indices]
+
+                    # For next round: use INTERMEDIATE samples (correct mode) or FINAL samples (legacy mode)
+                    if round_idx + 1 < rounds:
+                        # Check if we have legacy mode enabled (only applies to noise search functions)
+                        use_legacy_mode = (
+                            "use_final_samples_for_restart" in locals()
+                            and use_final_samples_for_restart
+                        )
+
+                        if use_legacy_mode:
+                            # Legacy mode: use final samples as restart points
+                            new_candidates.append(top_samples)
+                        elif all_intermediate_samples:
+                            # Correct mode: use intermediate samples
+                            batch_intermediates = all_intermediate_samples[batch_idx]
+                            top_intermediates = batch_intermediates[top_indices]
+                            new_candidates.append(top_intermediates)
+                        else:
+                            # Fallback: use final samples if no intermediates available
+                            new_candidates.append(top_samples)
+
+                    # Accumulate top K samples from this round for global selection
+                    all_round_top_samples[batch_idx].append(top_samples)
+                    all_round_top_labels[batch_idx].append(top_labels)
+
+                    start_idx = end_idx
+
+                current_candidates = new_candidates
+
+            # Global final selection: select best from ALL rounds' top K samples
+            final_samples = []
+            for batch_idx in range(batch_size):
+                # Concatenate top K samples from all rounds for this batch element
+                batch_all_samples = torch.cat(all_round_top_samples[batch_idx], dim=0)
+                batch_all_labels = torch.cat(all_round_top_labels[batch_idx], dim=0)
+
+                # Score all accumulated samples
+                if use_global:
+                    all_candidate_scores = score_fn(batch_all_samples)
+                else:
+                    all_candidate_scores = score_fn(batch_all_samples, batch_all_labels)
+
+                # Select globally best sample
+                best_idx = torch.argmax(all_candidate_scores)
+                final_samples.append(batch_all_samples[best_idx])
+
+            return self.unnormalize_images(torch.stack(final_samples))
+
+    def batch_sample_noise_search_ode_divfree_max(
+        self,
+        class_label,
+        batch_size=16,
+        num_branches=4,
+        num_keep=2,
+        rounds=3,
+        lambda_div=0.2,
+        repulsion_strength=0.02,
+        noise_schedule_end_factor=0.5,
+        selector="fid",
+        use_global=False,
+        use_final_samples_for_restart=False,
+    ):
+        """
+        Multi-round noise search with divergence-free max ODE sampling.
+        Each round starts from a different time point and uses divfree_max noise injection
+        to explore around the current best candidates with repulsion forces.
+
+        Args:
+            class_label: Target class(es) to generate. Can be a single integer or a tensor of class labels.
+            batch_size: Number of samples to generate
+            num_branches: Number of branches (N) to generate per round
+            num_keep: Number of candidates (K) to keep per round
+            rounds: Number of iterative refinement rounds (default 3)
+            lambda_div: Scale factor for the divergence-free field
+            repulsion_strength: Strength of repulsion forces between samples
+            noise_schedule_end_factor: End factor for time-dependent noise scaling
+            selector: Selection criteria - "fid", "mahalanobis", "mean", "inception_score", "dino_score"
+            use_global: Whether to use global statistics instead of class-specific ones
+            use_final_samples_for_restart: If True, use final samples from t=1.0 as restart points (legacy mode).
+                                         If False, use proper intermediate samples (default, correct behavior).
+        """
+        assert (
+            len(class_label) == batch_size if torch.is_tensor(class_label) else True
+        ), "class_label tensor length must match batch_size"
+
+        if num_branches == 1 and rounds == 1:
+            # If no search needed, just do basic ODE sampling
+            return self.batch_sample_ode_divfree(class_label, batch_size, lambda_div)
+
+        score_fn, use_global = self._get_score_function(selector, use_global)
+        self.flow_model.eval()
+
+        # Handle both tensor and single class label cases
+        if torch.is_tensor(class_label):
+            current_label = class_label
+        else:
+            current_label = torch.full((batch_size,), class_label, device=self.device)
+
+        round_start_times = [0.0, 0.5, 0.75]
+
+        with torch.no_grad():
+            # Initialize candidates: start with random noise for round 1
+            current_candidates = []
+            for i in range(batch_size):
+                # For round 1, start with random initial conditions
+                candidates = torch.randn(
+                    num_keep,
+                    self.channels,
+                    self.image_size,
+                    self.image_size,
+                    device=self.device,
+                )
+                current_candidates.append(candidates)
+
+            # Track top K samples from all rounds for global selection
+            all_round_top_samples = []  # List of lists for each batch element
+            all_round_top_labels = []  # Corresponding labels
+
+            for i in range(batch_size):
+                all_round_top_samples.append([])
+                all_round_top_labels.append([])
+
+            # Multi-round noise search
+            for round_idx in range(rounds):
+                start_time = round_start_times[round_idx]
+                print(
+                    f"Divfree-max noise search round {round_idx + 1}/{rounds}, start_time={start_time:.2f}"
+                )
+
+                all_round_samples = []
+                all_round_labels = []
+                all_intermediate_samples = []  # For next round
+
+                # Determine if we need to save intermediate for next round
+                next_start_time = None
+                if round_idx + 1 < len(round_start_times):
+                    next_start_time = round_start_times[round_idx + 1]
+
+                # Generate samples for each batch element
+                for batch_idx in range(batch_size):
+                    batch_samples = []
+                    batch_intermediate = []  # For next round
+
+                    # Collect all candidates for this batch element to process together
+                    # (this ensures repulsion forces are calculated within the same class)
+                    if round_idx == 0:
+                        # Round 1: start from random noise at t=0
+                        samples_to_process = torch.randn(
+                            num_keep * num_branches,
+                            self.channels,
+                            self.image_size,
+                            self.image_size,
+                            device=self.device,
+                        )
+                    else:
+                        # Later rounds: expand candidates to create branches
+                        candidates = current_candidates[
+                            batch_idx
+                        ]  # [num_keep, C, H, W]
+                        # Repeat each candidate num_branches times
+                        samples_to_process = candidates.repeat_interleave(
+                            num_branches, dim=0
+                        )  # [num_keep*num_branches, C, H, W]
+
+                    # Create labels for all samples in this batch
+                    batch_labels = current_label[batch_idx : batch_idx + 1].repeat(
+                        num_keep * num_branches
+                    )
+
+                    # Process all samples for this batch element together to get repulsion
+                    if (
+                        next_start_time is not None
+                        and not use_final_samples_for_restart
+                    ):
+                        # Correct mode: save intermediate samples for next round
+                        intermediate_samples, final_samples = (
+                            self._sample_with_divfree_max_noise(
+                                samples_to_process,
+                                batch_labels,
+                                start_time=start_time,
+                                lambda_div=lambda_div,
+                                repulsion_strength=repulsion_strength,
+                                noise_schedule_end_factor=noise_schedule_end_factor,
+                                save_at_time=next_start_time,
+                            )
+                        )
+                        batch_intermediate.append(intermediate_samples)
+                    else:
+                        # Legacy mode or last round: just sample normally
+                        final_samples = self._sample_with_divfree_max_noise(
+                            samples_to_process,
+                            batch_labels,
+                            start_time=start_time,
+                            lambda_div=lambda_div,
+                            repulsion_strength=repulsion_strength,
+                            noise_schedule_end_factor=noise_schedule_end_factor,
+                        )
+
+                    batch_samples.append(final_samples)
 
                     # Stack samples for this batch element
                     batch_samples = torch.cat(batch_samples, dim=0)
@@ -3873,6 +4217,247 @@ class MCTSFlowSampler:
                         else:
                             # Fallback: use final samples if no intermediates available
                             new_candidates.append(top_samples)
+
+                    # Accumulate top K samples from this round for global selection
+                    all_round_top_samples[batch_idx].append(top_samples)
+                    all_round_top_labels[batch_idx].append(top_labels)
+
+                    start_idx = end_idx
+
+                current_candidates = new_candidates
+
+            # Global final selection: select best from ALL rounds' top K samples
+            final_samples = []
+            for batch_idx in range(batch_size):
+                # Concatenate top K samples from all rounds for this batch element
+                batch_all_samples = torch.cat(all_round_top_samples[batch_idx], dim=0)
+                batch_all_labels = torch.cat(all_round_top_labels[batch_idx], dim=0)
+
+                # Score all accumulated samples
+                if use_global:
+                    all_candidate_scores = score_fn(batch_all_samples)
+                else:
+                    all_candidate_scores = score_fn(batch_all_samples, batch_all_labels)
+
+                # Select globally best sample
+                best_idx = torch.argmax(all_candidate_scores)
+                final_samples.append(batch_all_samples[best_idx])
+
+            return self.unnormalize_images(torch.stack(final_samples))
+
+    def batch_sample_random_search_then_noise_search_ode_divfree_max(
+        self,
+        class_label,
+        batch_size=16,
+        num_branches=4,
+        num_keep=2,
+        rounds=3,
+        lambda_div=0.2,
+        repulsion_strength=0.02,
+        noise_schedule_end_factor=0.5,
+        selector="fid",
+        use_global=False,
+        use_final_samples_for_restart=False,
+    ):
+        """
+        Two-stage inference scaling method that combines random search with divfree_max noise search:
+        1. First stage: Run random search to find high-scoring initial noise samples
+        2. Second stage: Use the winning initial noises from stage 1 as starting points for multi-round divfree_max noise search
+        """
+        assert (
+            len(class_label) == batch_size if torch.is_tensor(class_label) else True
+        ), "class_label tensor length must match batch_size"
+
+        if num_branches == 1:
+            # If no search needed, just do divfree_max noise search
+            return self.batch_sample_noise_search_ode_divfree_max(
+                class_label,
+                batch_size,
+                num_branches,
+                num_keep,
+                rounds,
+                lambda_div,
+                repulsion_strength,
+                noise_schedule_end_factor,
+                selector,
+                use_global,
+                use_final_samples_for_restart,
+            )
+
+        score_fn, use_global = self._get_score_function(selector, use_global)
+        self.flow_model.eval()
+
+        # Handle both tensor and single class label cases
+        if torch.is_tensor(class_label):
+            current_label = class_label
+        else:
+            current_label = torch.full((batch_size,), class_label, device=self.device)
+
+        with torch.no_grad():
+            print(f"Stage 1: Random search with {num_branches} branches")
+
+            # Stage 1: Random search to find good initial conditions
+            all_samples = []
+            all_labels = []
+
+            for batch_idx in range(batch_size):
+                batch_samples = []
+                for branch_idx in range(num_branches):
+                    # Generate sample from random initial condition
+                    sample = self.batch_sample_ode_divfree(
+                        current_label[batch_idx], 1, lambda_div
+                    )
+                    batch_samples.append(sample)
+
+                batch_samples = torch.cat(batch_samples, dim=0)
+                all_samples.append(batch_samples)
+
+                # Create corresponding labels
+                batch_labels = current_label[batch_idx : batch_idx + 1].repeat(
+                    num_branches
+                )
+                all_labels.append(batch_labels)
+
+            # Evaluate all samples from stage 1
+            all_samples = torch.cat(all_samples, dim=0)
+            all_labels = torch.cat(all_labels, dim=0)
+
+            if use_global:
+                all_scores = score_fn(all_samples)
+            else:
+                all_scores = score_fn(all_samples, all_labels)
+
+            # Select top initial conditions for stage 2
+            top_initial_conditions = []
+            start_idx = 0
+
+            for batch_idx in range(batch_size):
+                end_idx = start_idx + num_branches
+
+                batch_scores = all_scores[start_idx:end_idx]
+
+                # Keep top num_keep samples as initial conditions
+                top_indices = torch.topk(
+                    batch_scores, min(num_keep, num_branches)
+                ).indices
+
+                # Get the corresponding initial noise (we need to regenerate or store)
+                selected_samples = all_samples[start_idx:end_idx][top_indices]
+                top_initial_conditions.append(selected_samples)
+
+                start_idx = end_idx
+
+            print(
+                f"Stage 2: Divfree-max noise search with {rounds} rounds from top initial conditions"
+            )
+
+            # Stage 2: Multi-round divfree_max noise search starting from the best initial conditions
+            current_candidates = []
+            for batch_idx in range(batch_size):
+                candidates = top_initial_conditions[batch_idx]
+                current_candidates.append(candidates)
+
+            # Track top K samples from all rounds for global selection
+            all_round_top_samples = []
+            all_round_top_labels = []
+
+            for i in range(batch_size):
+                all_round_top_samples.append([])
+                all_round_top_labels.append([])
+
+            # Run divfree_max noise search rounds
+            for round_idx in range(rounds):
+                start_time = round_idx / rounds if round_idx > 0 else 0.0
+                print(
+                    f"Divfree-max noise search round {round_idx + 1}/{rounds}, start_time={start_time:.2f}"
+                )
+
+                all_round_samples = []
+                all_round_labels = []
+
+                # Generate samples for each batch element
+                for batch_idx in range(batch_size):
+                    batch_samples = []
+
+                    # For each candidate from previous round
+                    num_candidates = current_candidates[batch_idx].shape[0]
+
+                    # Collect all samples for this batch element to process together
+                    # (this ensures repulsion forces are calculated within the same class)
+                    if round_idx == 0:
+                        # Round 1: start from the winning initial conditions, but generate new samples for exploration
+                        samples_to_process = torch.randn(
+                            num_candidates * num_branches,
+                            self.channels,
+                            self.image_size,
+                            self.image_size,
+                            device=self.device,
+                        )
+                        current_time = 0.0
+                    else:
+                        # Later rounds: expand candidates to create branches
+                        candidates = current_candidates[batch_idx]
+                        samples_to_process = candidates.repeat_interleave(
+                            num_branches, dim=0
+                        )
+                        current_time = start_time
+
+                    # Create labels for all samples in this batch
+                    batch_labels = current_label[batch_idx : batch_idx + 1].repeat(
+                        num_candidates * num_branches
+                    )
+
+                    # Sample from current_time to t=1 with divfree_max noise
+                    final_samples = self._sample_with_divfree_max_noise(
+                        samples_to_process,
+                        batch_labels,
+                        start_time=current_time,
+                        lambda_div=lambda_div,
+                        repulsion_strength=repulsion_strength,
+                        noise_schedule_end_factor=noise_schedule_end_factor,
+                    )
+                    batch_samples.append(final_samples)
+
+                    # Stack samples for this batch element
+                    batch_samples = torch.cat(batch_samples, dim=0)
+                    all_round_samples.append(batch_samples)
+
+                    # Create corresponding labels
+                    batch_labels = current_label[batch_idx : batch_idx + 1].repeat(
+                        num_candidates * num_branches
+                    )
+                    all_round_labels.append(batch_labels)
+
+                # Evaluate all samples from this round
+                all_samples = torch.cat(all_round_samples, dim=0)
+                all_labels = torch.cat(all_round_labels, dim=0)
+
+                if use_global:
+                    all_scores = score_fn(all_samples)
+                else:
+                    all_scores = score_fn(all_samples, all_labels)
+
+                # Select top candidates for next round AND accumulate for global selection
+                new_candidates = []
+                start_idx = 0
+
+                for batch_idx in range(batch_size):
+                    num_candidates = current_candidates[batch_idx].shape[0]
+                    batch_size_this = num_candidates * num_branches
+                    end_idx = start_idx + batch_size_this
+
+                    batch_scores = all_scores[start_idx:end_idx]
+                    batch_samples = all_samples[start_idx:end_idx]
+                    batch_labels = all_labels[start_idx:end_idx]
+
+                    # Keep top num_keep samples for next round
+                    top_indices = torch.topk(batch_scores, num_keep).indices
+                    top_samples = batch_samples[top_indices]
+                    top_labels = batch_labels[top_indices]
+
+                    # For next round: use final samples
+                    if round_idx + 1 < rounds:
+                        new_candidates.append(top_samples)
 
                     # Accumulate top K samples from this round for global selection
                     all_round_top_samples[batch_idx].append(top_samples)
