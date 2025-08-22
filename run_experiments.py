@@ -20,7 +20,7 @@ SAMPLE_METHODS = [
 TIMESTEP_CONFIGS = [
     (20, 0.05, 0),
 ]  # (num_timesteps, branch_dt, branch_start_time)
-SAMPLE_SIZES = [1024]
+SAMPLE_SIZES = [128]
 BRANCH_PAIRS = "2:1,4:1,8:1"  # Always use these branch pairs
 SCORING_FUNCTION = "inception_score"  # Default scoring function
 DT_STD = 0.7  # Path exploration time step standard deviation
