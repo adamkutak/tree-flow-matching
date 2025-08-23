@@ -43,7 +43,15 @@ def run_experiment(cmd):
         return False
     finally:
         duration = time.perf_counter() - start
-        print(f"Duration: {duration:.2f}s")
+        total_seconds = int(duration)
+        hours, remainder = divmod(total_seconds, 3600)
+        minutes, seconds = divmod(remainder, 60)
+        if hours > 0:
+            print(f"Duration: {hours}h {minutes}m")
+        elif minutes > 0:
+            print(f"Duration: {minutes}m {seconds}s")
+        else:
+            print(f"Duration: {seconds}s")
 
 
 def main():
