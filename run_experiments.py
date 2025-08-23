@@ -2,6 +2,7 @@ import subprocess
 import os
 import json
 from datetime import datetime
+import time
 
 # Configuration constants for experiments
 DATASET = "imagenet256"
@@ -10,10 +11,10 @@ SAMPLE_METHODS = [
     # "score_sde_path_exploration",
     # "ode_divfree_path_exploration",
     # "random_search_then_divfree_path_exploration",
-    "random_search",
-    "noise_search_ode_divfree",
-    "noise_search_sde",
-    "random_search_then_noise_search_ode_divfree",
+    # "random_search",
+    # "noise_search_ode_divfree",
+    # "noise_search_sde",
+    # "random_search_then_noise_search_ode_divfree",
     "noise_search_ode_divfree_max",
     "random_search_then_noise_search_ode_divfree_max",
 ]
@@ -27,18 +28,22 @@ DT_STD = 0.7  # Path exploration time step standard deviation
 WARP_SCALE = 0.5  # Time warp scale factor
 DEVICE = "cuda"  # Default device
 NOISE_SCALE = 0.14
-LAMBDA_DIV = 1.2
+LAMBDA_DIV = 0.8
 
 
 def run_experiment(cmd):
     """Run a single experiment with the given command."""
     print(f"Running: {' '.join(cmd)}")
+    start = time.perf_counter()
     try:
         subprocess.run(cmd, check=True)
         return True
     except subprocess.CalledProcessError:
         print(f"Error running command: {' '.join(cmd)}")
         return False
+    finally:
+        duration = time.perf_counter() - start
+        print(f"Duration: {duration:.2f}s")
 
 
 def main():
