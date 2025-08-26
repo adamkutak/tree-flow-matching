@@ -28,7 +28,7 @@ DT_STD = 0.7  # Path exploration time step standard deviation
 WARP_SCALE = 0.5  # Time warp scale factor
 DEVICE = "cuda"  # Default device
 NOISE_SCALE = 0.14
-LAMBDA_DIV = 0.8
+LAMBDA_DIV = 0.85
 
 
 def run_experiment(cmd):
