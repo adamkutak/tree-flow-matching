@@ -11,7 +11,7 @@ SAMPLE_METHODS = [
     # "score_sde_path_exploration",
     # "ode_divfree_path_exploration",
     # "random_search_then_divfree_path_exploration",
-    "random_search",
+    # "random_search",
     "noise_search_ode_divfree",
     "noise_search_sde",
     "random_search_then_noise_search_ode_divfree",
