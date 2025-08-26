@@ -850,7 +850,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--rounds",
         type=int,
-        default=3,
+        default=5,
         help="Number of rounds for noise search methods",
     )
 
