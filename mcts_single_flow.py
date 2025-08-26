@@ -3289,7 +3289,7 @@ class MCTSFlowSampler:
         batch_size=16,
         num_branches=4,
         num_keep=2,
-        rounds=3,
+        rounds=5,
         lambda_div=0.2,
         selector="fid",
         use_global=False,
@@ -3329,7 +3329,7 @@ class MCTSFlowSampler:
         else:
             current_label = torch.full((batch_size,), class_label, device=self.device)
 
-        round_start_times = [0.0, 0.5, 0.75]
+        round_start_times = [0.0, 0.5, 0.75, 0.85, 0.95]
 
         with torch.no_grad():
             # Initialize candidates: start with random noise for round 1
@@ -3517,7 +3517,7 @@ class MCTSFlowSampler:
         batch_size=16,
         num_branches=4,
         num_keep=2,
-        rounds=3,
+        rounds=5,
         lambda_div=0.2,
         repulsion_strength=0.02,
         noise_schedule_end_factor=0.5,
@@ -3561,7 +3561,7 @@ class MCTSFlowSampler:
         else:
             current_label = torch.full((batch_size,), class_label, device=self.device)
 
-        round_start_times = [0.0, 0.5, 0.75]
+        round_start_times = [0.0, 0.5, 0.75, 0.85, 0.95]
 
         with torch.no_grad():
             # Initialize candidates: start with random noise for round 1
@@ -3760,7 +3760,7 @@ class MCTSFlowSampler:
         batch_size=16,
         num_branches=4,
         num_keep=2,
-        rounds=3,
+        rounds=5,
         noise_scale=0.05,
         selector="fid",
         use_global=False,
@@ -3800,7 +3800,7 @@ class MCTSFlowSampler:
         else:
             current_label = torch.full((batch_size,), class_label, device=self.device)
 
-        round_start_times = [0.0, 0.5, 0.75]
+        round_start_times = [0.0, 0.5, 0.75, 0.85, 0.95]
 
         with torch.no_grad():
             # Initialize candidates: start with random noise for round 1
@@ -3988,7 +3988,7 @@ class MCTSFlowSampler:
         batch_size=16,
         num_branches=4,
         num_keep=2,
-        rounds=3,
+        rounds=5,
         lambda_div=0.2,
         selector="fid",
         use_global=False,
@@ -4038,7 +4038,7 @@ class MCTSFlowSampler:
         else:
             current_label = torch.full((batch_size,), class_label, device=self.device)
 
-        round_start_times = [0.0, 0.5, 0.75]
+        round_start_times = [0.0, 0.5, 0.75, 0.85, 0.95]
 
         with torch.no_grad():
             print(f"Stage 1: Random search with {num_branches} branches")
@@ -4284,7 +4284,7 @@ class MCTSFlowSampler:
         batch_size=16,
         num_branches=4,
         num_keep=2,
-        rounds=3,
+        rounds=5,
         lambda_div=0.2,
         repulsion_strength=0.02,
         noise_schedule_end_factor=0.5,
@@ -4326,7 +4326,7 @@ class MCTSFlowSampler:
         else:
             current_label = torch.full((batch_size,), class_label, device=self.device)
 
-        round_start_times = [0.0, 0.5, 0.75]
+        round_start_times = [0.0, 0.5, 0.75, 0.85, 0.95]
 
         with torch.no_grad():
             print(f"Stage 1: Random search with {num_branches} branches")
