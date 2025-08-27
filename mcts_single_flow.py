@@ -4043,70 +4043,59 @@ class MCTSFlowSampler:
         with torch.no_grad():
             print(f"Stage 1: Random search with {num_branches} branches")
 
-            # Stage 1: Random search to find good initial conditions
-            all_samples = []
-            all_labels = []
+            base_dt = 1 / self.num_timesteps
 
-            for batch_idx in range(batch_size):
-                batch_samples = []
-                for branch_idx in range(num_branches):
-                    # Generate sample from random initial condition
-                    sample = self.batch_sample_ode_divfree(
-                        current_label[batch_idx], 1, lambda_div
-                    )
-                    batch_samples.append(sample)
+            all_initial_noises = []
+            all_final_samples = []
 
-                batch_samples = torch.cat(batch_samples, dim=0)
-                all_samples.append(batch_samples)
-
-                # Create corresponding labels
-                batch_labels = current_label[batch_idx : batch_idx + 1].repeat(
-                    num_branches
+            for _ in range(num_branches):
+                initial_noise = torch.randn(
+                    batch_size,
+                    self.channels,
+                    self.image_size,
+                    self.image_size,
+                    device=self.device,
                 )
-                all_labels.append(batch_labels)
+                all_initial_noises.append(initial_noise)
 
-            # Evaluate all samples from stage 1
-            all_samples = torch.cat(all_samples, dim=0)
-            all_labels = torch.cat(all_labels, dim=0)
+                current_samples = initial_noise.clone()
+                for step, t in enumerate(self.timesteps[:-1]):
+                    t_batch = torch.full((batch_size,), t.item(), device=self.device)
+                    velocity = self.flow_model(t_batch, current_samples, current_label)
+                    current_samples = current_samples + velocity * base_dt
 
-            if use_global:
-                all_scores = score_fn(all_samples)
-            else:
-                all_scores = score_fn(all_samples, all_labels)
+                all_final_samples.append(current_samples)
 
-            # Select top initial conditions for stage 2
-            top_initial_conditions = []
-            start_idx = 0
+            all_scores = []
+            for final_samples in all_final_samples:
+                if use_global:
+                    scores = score_fn(final_samples)
+                else:
+                    scores = score_fn(final_samples, current_label)
+                all_scores.append(scores)
 
-            for batch_idx in range(batch_size):
-                end_idx = start_idx + num_branches
+            all_scores = torch.stack(all_scores, dim=0)
+            best_branch_indices = torch.argmax(all_scores, dim=0)
 
-                batch_scores = all_scores[start_idx:end_idx]
+            winning_initial_noises = torch.zeros(
+                batch_size,
+                self.channels,
+                self.image_size,
+                self.image_size,
+                device=self.device,
+            )
 
-                # Keep top num_keep samples as initial conditions
-                top_indices = torch.topk(
-                    batch_scores, min(num_keep, num_branches)
-                ).indices
-
-                # Get the corresponding initial noise (we need to regenerate or store)
-                # For simplicity, we'll use the top samples as our starting points
-                # In practice, we'd want to store the initial noise that led to these samples
-                selected_samples = all_samples[start_idx:end_idx][top_indices]
-                top_initial_conditions.append(selected_samples)
-
-                start_idx = end_idx
+            for i in range(batch_size):
+                best_branch = best_branch_indices[i]
+                winning_initial_noises[i] = all_initial_noises[best_branch][i]
 
             print(
                 f"Stage 2: Noise search with {rounds} rounds from top initial conditions"
             )
 
-            # Stage 2: Multi-round noise search starting from the best initial conditions
             current_candidates = []
             for batch_idx in range(batch_size):
-                # Convert final samples back to noise space (approximation)
-                # In practice, we'd store the actual initial noise from stage 1
-                # For now, we'll use the selected samples as "candidates"
-                candidates = top_initial_conditions[batch_idx]
+                candidates = winning_initial_noises[batch_idx : batch_idx + 1]
                 current_candidates.append(candidates)
 
             # Track top K samples from all rounds for global selection
@@ -4141,20 +4130,12 @@ class MCTSFlowSampler:
                     # For each candidate from previous round
                     num_candidates = current_candidates[batch_idx].shape[0]
                     for candidate_idx in range(num_candidates):
-                        # Generate num_branches samples from this candidate
                         for branch_idx in range(num_branches):
                             if round_idx == 0:
-                                # Round 1: start from the winning initial conditions
-                                # Generate new random noise since we want to explore around winners
-                                sample_start = torch.randn(
-                                    1,
-                                    self.channels,
-                                    self.image_size,
-                                    self.image_size,
-                                    device=self.device,
-                                )
+                                sample_start = current_candidates[batch_idx][
+                                    candidate_idx : candidate_idx + 1
+                                ]
                             else:
-                                # Later rounds: start from previous candidate at start_time
                                 sample_start = current_candidates[batch_idx][
                                     candidate_idx : candidate_idx + 1
                                 ]
@@ -4331,56 +4312,51 @@ class MCTSFlowSampler:
         with torch.no_grad():
             print(f"Stage 1: Random search with {num_branches} branches")
 
-            # Stage 1: Random search to find good initial conditions
-            all_samples = []
-            all_labels = []
+            base_dt = 1 / self.num_timesteps
 
-            for batch_idx in range(batch_size):
-                batch_samples = []
-                for branch_idx in range(num_branches):
-                    # Generate sample from random initial condition
-                    sample = self.batch_sample_ode_divfree(
-                        current_label[batch_idx], 1, lambda_div
-                    )
-                    batch_samples.append(sample)
+            all_initial_noises = []
+            all_final_samples = []
 
-                batch_samples = torch.cat(batch_samples, dim=0)
-                all_samples.append(batch_samples)
-
-                # Create corresponding labels
-                batch_labels = current_label[batch_idx : batch_idx + 1].repeat(
-                    num_branches
+            for _ in range(num_branches):
+                initial_noise = torch.randn(
+                    batch_size,
+                    self.channels,
+                    self.image_size,
+                    self.image_size,
+                    device=self.device,
                 )
-                all_labels.append(batch_labels)
+                all_initial_noises.append(initial_noise)
 
-            # Evaluate all samples from stage 1
-            all_samples = torch.cat(all_samples, dim=0)
-            all_labels = torch.cat(all_labels, dim=0)
+                current_samples = initial_noise.clone()
+                for step, t in enumerate(self.timesteps[:-1]):
+                    t_batch = torch.full((batch_size,), t.item(), device=self.device)
+                    velocity = self.flow_model(t_batch, current_samples, current_label)
+                    current_samples = current_samples + velocity * base_dt
 
-            if use_global:
-                all_scores = score_fn(all_samples)
-            else:
-                all_scores = score_fn(all_samples, all_labels)
+                all_final_samples.append(current_samples)
 
-            # Select top initial conditions for stage 2
-            top_initial_conditions = []
-            start_idx = 0
+            all_scores = []
+            for final_samples in all_final_samples:
+                if use_global:
+                    scores = score_fn(final_samples)
+                else:
+                    scores = score_fn(final_samples, current_label)
+                all_scores.append(scores)
 
-            for batch_idx in range(batch_size):
-                end_idx = start_idx + num_branches
+            all_scores = torch.stack(all_scores, dim=0)
+            best_branch_indices = torch.argmax(all_scores, dim=0)
 
-                batch_scores = all_scores[start_idx:end_idx]
+            winning_initial_noises = torch.zeros(
+                batch_size,
+                self.channels,
+                self.image_size,
+                self.image_size,
+                device=self.device,
+            )
 
-                # Keep top num_keep samples as initial conditions
-                top_indices = torch.topk(
-                    batch_scores, min(num_keep, num_branches)
-                ).indices
-
-                # Get the corresponding initial noise (we need to regenerate or store)
-                selected_samples = all_samples[start_idx:end_idx][top_indices]
-                top_initial_conditions.append(selected_samples)
-
-                start_idx = end_idx
+            for i in range(batch_size):
+                best_branch = best_branch_indices[i]
+                winning_initial_noises[i] = all_initial_noises[best_branch][i]
 
             print(
                 f"Stage 2: Divfree-max noise search with {rounds} rounds from top initial conditions"
@@ -4389,7 +4365,7 @@ class MCTSFlowSampler:
             # Stage 2: Multi-round divfree_max noise search starting from the best initial conditions
             current_candidates = []
             for batch_idx in range(batch_size):
-                candidates = top_initial_conditions[batch_idx]
+                candidates = winning_initial_noises[batch_idx : batch_idx + 1]
                 current_candidates.append(candidates)
 
             # Track top K samples from all rounds for global selection
@@ -4427,16 +4403,11 @@ class MCTSFlowSampler:
                     # Collect all samples for this batch element to process together
                     # (this ensures repulsion forces are calculated within the same class)
                     if round_idx == 0:
-                        # Round 1: start from the winning initial conditions, but generate new samples for exploration
-                        samples_to_process = torch.randn(
-                            num_candidates * num_branches,
-                            self.channels,
-                            self.image_size,
-                            self.image_size,
-                            device=self.device,
+                        candidates = current_candidates[batch_idx]
+                        samples_to_process = candidates.repeat_interleave(
+                            num_branches, dim=0
                         )
                     else:
-                        # Later rounds: expand candidates to create branches
                         candidates = current_candidates[batch_idx]
                         samples_to_process = candidates.repeat_interleave(
                             num_branches, dim=0
