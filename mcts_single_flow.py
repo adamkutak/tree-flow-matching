@@ -3189,7 +3189,7 @@ class MCTSFlowSampler:
         start_time=0.0,
         lambda_div=0.2,
         repulsion_strength=0.02,
-        noise_schedule_end_factor=0.5,
+        noise_schedule_end_factor=0.7,
         save_at_time=None,
     ):
         """
@@ -3520,7 +3520,7 @@ class MCTSFlowSampler:
         rounds=9,
         lambda_div=0.2,
         repulsion_strength=0.02,
-        noise_schedule_end_factor=0.5,
+        noise_schedule_end_factor=0.7,
         selector="fid",
         use_global=False,
         use_final_samples_for_restart=False,
@@ -4287,7 +4287,7 @@ class MCTSFlowSampler:
         rounds=9,
         lambda_div=0.2,
         repulsion_strength=0.02,
-        noise_schedule_end_factor=0.5,
+        noise_schedule_end_factor=0.7,
         selector="fid",
         use_global=False,
         use_final_samples_for_restart=False,
