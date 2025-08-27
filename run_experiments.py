@@ -12,11 +12,11 @@ SAMPLE_METHODS = [
     # "ode_divfree_path_exploration",
     # "random_search_then_divfree_path_exploration",
     # "random_search",
-    # "noise_search_ode_divfree",
-    "noise_search_sde",
-    # "random_search_then_noise_search_ode_divfree",
-    "noise_search_ode_divfree_max",
-    "random_search_then_noise_search_ode_divfree_max",
+    "noise_search_ode_divfree",
+    # "noise_search_sde",
+    "random_search_then_noise_search_ode_divfree",
+    # "noise_search_ode_divfree_max",
+    # "random_search_then_noise_search_ode_divfree_max",
 ]
 TIMESTEP_CONFIGS = [
     (20, 0.05, 0),
@@ -28,7 +28,7 @@ DT_STD = 0.7  # Path exploration time step standard deviation
 WARP_SCALE = 0.5  # Time warp scale factor
 DEVICE = "cuda"  # Default device
 NOISE_SCALE = 0.14
-LAMBDA_DIV = 0.9
+LAMBDA_DIV = 0.7
 
 
 def run_experiment(cmd):
