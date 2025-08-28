@@ -469,7 +469,7 @@ def batch_sample_ode_divfree_max_with_metrics(
     lambda_div=0.2,
     sub_batch_size=4,
     repulsion_strength=0.02,
-    noise_schedule_end_factor=0.5,
+    noise_schedule_end_factor=0.7,
 ):
     """
     ODE sampling with divergence-free term using normal Gaussian noise plus repulsion
@@ -1057,7 +1057,7 @@ def run_experiment(args):
                     "lambda_div": lambda_div,
                     "sub_batch_size": 4,
                     "repulsion_strength": 0.02,
-                    "noise_schedule_end_factor": 0.1,
+                    "noise_schedule_end_factor": 0.7,
                 },
                 f"ODE-divfree-max sampling with lambda_div={lambda_div}",
             )
