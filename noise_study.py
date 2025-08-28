@@ -1254,12 +1254,12 @@ if __name__ == "__main__":
         type=str,
         nargs="+",
         default=[
-            # "ode_divfree_max",
+            "ode_divfree_max",
             # "ode_baseline",
             # "ode_divfree",
             # "sde",
             # "edm_sde",
-            "score_sde",
+            # "score_sde",
         ],
         choices=[
             "all",
