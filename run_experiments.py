@@ -13,7 +13,7 @@ SAMPLE_METHODS = [
     # "random_search_then_divfree_path_exploration",
     # "random_search",
     # "noise_search_ode_divfree",
-    # "noise_search_sde",
+    "noise_search_sde",
     # "random_search_then_noise_search_ode_divfree",
     "noise_search_ode_divfree_max",
     "random_search_then_noise_search_ode_divfree_max",
