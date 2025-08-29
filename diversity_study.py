@@ -245,7 +245,7 @@ def batch_sample_ode_divfree_max_identical_start(
     batch_size,
     lambda_div=0.2,
     repulsion_strength=0.02,
-    noise_schedule_end_factor=0.3,
+    noise_schedule_end_factor=0.7,
 ):
     """
     ODE-divfree sampling where samples start from identical noise. Uses normal divfree
