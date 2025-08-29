@@ -11,7 +11,7 @@ SAMPLE_METHODS = [
     # "score_sde_path_exploration",
     # "ode_divfree_path_exploration",
     # "random_search_then_divfree_path_exploration",
-    # "random_search",
+    "random_search",
     # "noise_search_ode_divfree",
     "noise_search_sde",
     # "random_search_then_noise_search_ode_divfree",
@@ -23,8 +23,7 @@ TIMESTEP_CONFIGS = [
 ]  # (num_timesteps, branch_dt, branch_start_time)
 SAMPLE_SIZES = [1024]
 BRANCH_PAIRS = "2:1,4:1,8:1"  # Always use these branch pairs
-# BRANCH_PAIRS = "2:1,4:1"  # Always use these branch pairs
-SCORING_FUNCTION = "inception_score"  # Default scoring function
+SCORING_FUNCTION = "dino_score"  # Default scoring function
 DT_STD = 0.7  # Path exploration time step standard deviation
 WARP_SCALE = 0.5  # Time warp scale factor
 DEVICE = "cuda"  # Default device
