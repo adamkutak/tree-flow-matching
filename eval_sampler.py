@@ -46,6 +46,9 @@ DEFAULT_OUTPUT_DIR = "./results"
 
 DEFAULT_NOISE_SCALE = 0.1
 DEFAULT_LAMBDA_DIV = 0.2
+DEFAULT_NOISE_SCHEDULE_END_FACTOR = 0.7
+DEFAULT_DETERMINISTIC_ROLLOUT = 0
+DEFAULT_REPULSION_DISABLE_UNTIL_TIME = 0.0
 
 BATCH_SIZE = 256
 
@@ -232,6 +235,9 @@ def evaluate_single_samples(
             noise_scale=noise_scale,
             lambda_div=lambda_div,
             rounds=args.rounds,
+            noise_schedule_end_factor=args.noise_schedule_end_factor,
+            deterministic_rollout=args.deterministic_rollout,
+            repulsion_disable_until_time=args.repulsion_disable_until_time,
         )
 
         # Store results for this branch/keep pair
@@ -283,6 +289,9 @@ def generate_and_compute_metrics(
     noise_scale=0.1,
     lambda_div=0.2,
     rounds=3,
+    noise_schedule_end_factor=DEFAULT_NOISE_SCHEDULE_END_FACTOR,
+    deterministic_rollout=DEFAULT_DETERMINISTIC_ROLLOUT,
+    repulsion_disable_until_time=DEFAULT_REPULSION_DISABLE_UNTIL_TIME,
 ):
     """
     Generate samples and compute metrics
@@ -478,8 +487,11 @@ def generate_and_compute_metrics(
                 num_keep=num_keep,
                 rounds=rounds,
                 lambda_div=lambda_div,
+                noise_schedule_end_factor=noise_schedule_end_factor,
                 selector=scoring_function,
                 use_global=True,
+                deterministic_rollout=bool(deterministic_rollout),
+                repulsion_disable_until_time=repulsion_disable_until_time,
             )
         elif sample_method == "random_search_then_noise_search_ode_divfree_max":
             sample = (
@@ -490,8 +502,11 @@ def generate_and_compute_metrics(
                     num_keep=num_keep,
                     rounds=rounds,
                     lambda_div=lambda_div,
+                    noise_schedule_end_factor=noise_schedule_end_factor,
                     selector=scoring_function,
                     use_global=True,
+                    deterministic_rollout=bool(deterministic_rollout),
+                    repulsion_disable_until_time=repulsion_disable_until_time,
                 )
             )
         else:
@@ -845,6 +860,27 @@ if __name__ == "__main__":
         type=float,
         default=DEFAULT_LAMBDA_DIV,
         help="Lambda for divergence-free sampling",
+    )
+
+    parser.add_argument(
+        "--noise_schedule_end_factor",
+        type=float,
+        default=DEFAULT_NOISE_SCHEDULE_END_FACTOR,
+        help="End factor for time-dependent noise scaling in divfree-max",
+    )
+
+    parser.add_argument(
+        "--deterministic_rollout",
+        type=int,
+        default=DEFAULT_DETERMINISTIC_ROLLOUT,
+        help="Use deterministic rollout for divfree-max (1) or stochastic (0)",
+    )
+
+    parser.add_argument(
+        "--repulsion_disable_until_time",
+        type=float,
+        default=DEFAULT_REPULSION_DISABLE_UNTIL_TIME,
+        help="Disable repulsion forces until this time t in divfree-max",
     )
 
     parser.add_argument(
