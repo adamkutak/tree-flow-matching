@@ -352,7 +352,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--scoring_function",
         type=str,
-        default="dino_score",
+        default="inception_score",
         choices=["inception_score", "dino_score", "global_mean_difference"],
         help="Scoring function for sample selection",
     )
