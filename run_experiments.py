@@ -29,6 +29,9 @@ WARP_SCALE = 0.5  # Time warp scale factor
 DEVICE = "cuda"  # Default device
 NOISE_SCALE = 0.14
 LAMBDA_DIV = 0.9
+NOISE_SCHEDULE_END_FACTOR = 0.7
+DETERMINISTIC_ROLLOUT = 0
+REPULSION_DISABLE_UNTIL_TIME = 0.0
 
 
 def run_experiment(cmd):
@@ -85,6 +88,9 @@ def main():
         "warp_scale": WARP_SCALE,
         "noise_scale": NOISE_SCALE,
         "lambda_div": LAMBDA_DIV,
+        "noise_schedule_end_factor": NOISE_SCHEDULE_END_FACTOR,
+        "deterministic_rollout": DETERMINISTIC_ROLLOUT,
+        "repulsion_disable_until_time": REPULSION_DISABLE_UNTIL_TIME,
         "device": DEVICE,
     }
 
@@ -129,6 +135,12 @@ def main():
                     str(NOISE_SCALE),
                     "--lambda_div",
                     str(LAMBDA_DIV),
+                    "--noise_schedule_end_factor",
+                    str(NOISE_SCHEDULE_END_FACTOR),
+                    "--deterministic_rollout",
+                    str(DETERMINISTIC_ROLLOUT),
+                    "--repulsion_disable_until_time",
+                    str(REPULSION_DISABLE_UNTIL_TIME),
                 ]
 
                 # Run the experiment

@@ -18,7 +18,6 @@ from utils import (
     score_si_linear,
     divergence_free_particle_guidance,
     get_alpha_schedule_flow_matching,
-    sample_spherical_simplex_gaussian,
     make_divergence_free,
 )
 

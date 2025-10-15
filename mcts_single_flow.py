@@ -3191,6 +3191,8 @@ class MCTSFlowSampler:
         repulsion_strength=0.02,
         noise_schedule_end_factor=0.7,
         save_at_time=None,
+        deterministic_rollout=False,
+        repulsion_disable_until_time=0.0,
     ):
         """
         Helper function to sample from start_time to t=1 with divfree_max noise.
@@ -3214,6 +3216,7 @@ class MCTSFlowSampler:
         base_dt = 1 / self.num_timesteps
         current_time = start_time
         intermediate_samples = None
+        did_noise_step = False
 
         while current_time < 1.0:
             dt = min(base_dt, 1.0 - current_time)
@@ -3232,39 +3235,47 @@ class MCTSFlowSampler:
             w_unscaled = divfree_swirl_si(current_samples, t_batch, labels, u_t)
             w_divfree = lambda_div * w_unscaled
 
-            # Add repulsion term using vectorized approach
-            raw_repulsion_forces = particle_guidance_forces(
-                current_samples, current_time, alpha_t=1.0, kernel_type="euclidean"
-            )
-
-            # Regularize repulsion magnitude to match Gaussian magnitude
-            dims = tuple(range(1, w_unscaled.ndim))
-            gaussian_magnitude = torch.linalg.vector_norm(w_unscaled, dim=dims).mean()
-            repulsion_magnitude = torch.linalg.vector_norm(
-                raw_repulsion_forces, dim=dims
-            ).mean()
-
-            if repulsion_magnitude > 1e-8:  # Avoid division by zero
-                # Scale forces so their average magnitude equals gaussian magnitude
-                regularization_factor = gaussian_magnitude / repulsion_magnitude
-                regularized_repulsion = raw_repulsion_forces * regularization_factor
+            # Add repulsion term using vectorized approach (optional disabling)
+            if current_time < repulsion_disable_until_time:
+                repulsion_divfree = torch.zeros_like(w_unscaled)
             else:
-                regularized_repulsion = raw_repulsion_forces
+                raw_repulsion_forces = particle_guidance_forces(
+                    current_samples, current_time, alpha_t=1.0, kernel_type="euclidean"
+                )
 
-            # Apply user-specified repulsion strength AFTER regularization
-            scaled_repulsion = regularized_repulsion * repulsion_strength
+                dims = tuple(range(1, w_unscaled.ndim))
+                gaussian_magnitude = torch.linalg.vector_norm(
+                    w_unscaled, dim=dims
+                ).mean()
+                repulsion_magnitude = torch.linalg.vector_norm(
+                    raw_repulsion_forces, dim=dims
+                ).mean()
 
-            # Make repulsion forces divergence-free to maintain mathematical properties
-            repulsion_divfree = make_divergence_free(
-                scaled_repulsion, current_samples, t_batch, u_t
-            )
+                if repulsion_magnitude > 1e-8:
+                    regularization_factor = gaussian_magnitude / repulsion_magnitude
+                    regularized_repulsion = raw_repulsion_forces * regularization_factor
+                else:
+                    regularized_repulsion = raw_repulsion_forces
+
+                scaled_repulsion = regularized_repulsion * repulsion_strength
+
+                repulsion_divfree = make_divergence_free(
+                    scaled_repulsion, current_samples, t_batch, u_t
+                )
 
             # Combine divfree term and repulsion term
             total_perturbation = w_divfree + repulsion_divfree
 
             # Apply time-dependent scaling: full strength at t=0, reduced at t=1
             noise_scale_factor = 1.0 + (noise_schedule_end_factor - 1.0) * current_time
-            scaled_perturbation = total_perturbation * noise_scale_factor
+            if deterministic_rollout:
+                if not did_noise_step:
+                    scaled_perturbation = total_perturbation * noise_scale_factor
+                    did_noise_step = True
+                else:
+                    scaled_perturbation = torch.zeros_like(total_perturbation)
+            else:
+                scaled_perturbation = total_perturbation * noise_scale_factor
 
             # Update samples
             current_samples = current_samples + (u_t + scaled_perturbation) * dt
@@ -3524,6 +3535,8 @@ class MCTSFlowSampler:
         selector="fid",
         use_global=False,
         use_final_samples_for_restart=False,
+        deterministic_rollout=False,
+        repulsion_disable_until_time=0.0,
     ):
         """
         Multi-round noise search with divergence-free max ODE sampling.
@@ -3647,6 +3660,8 @@ class MCTSFlowSampler:
                                 repulsion_strength=repulsion_strength,
                                 noise_schedule_end_factor=noise_schedule_end_factor,
                                 save_at_time=next_start_time,
+                                deterministic_rollout=deterministic_rollout,
+                                repulsion_disable_until_time=repulsion_disable_until_time,
                             )
                         )
                         batch_intermediate.append(intermediate_samples)
@@ -3659,6 +3674,8 @@ class MCTSFlowSampler:
                             lambda_div=lambda_div,
                             repulsion_strength=repulsion_strength,
                             noise_schedule_end_factor=noise_schedule_end_factor,
+                            deterministic_rollout=deterministic_rollout,
+                            repulsion_disable_until_time=repulsion_disable_until_time,
                         )
 
                     batch_samples.append(final_samples)
@@ -4272,6 +4289,8 @@ class MCTSFlowSampler:
         selector="fid",
         use_global=False,
         use_final_samples_for_restart=False,
+        deterministic_rollout=False,
+        repulsion_disable_until_time=0.0,
     ):
         """
         Two-stage inference scaling method that combines random search with divfree_max noise search:
@@ -4296,6 +4315,8 @@ class MCTSFlowSampler:
                 selector,
                 use_global,
                 use_final_samples_for_restart,
+                deterministic_rollout,
+                repulsion_disable_until_time,
             )
 
         score_fn, use_global = self._get_score_function(selector, use_global)
@@ -4433,6 +4454,8 @@ class MCTSFlowSampler:
                                 repulsion_strength=repulsion_strength,
                                 noise_schedule_end_factor=noise_schedule_end_factor,
                                 save_at_time=next_start_time,
+                                deterministic_rollout=deterministic_rollout,
+                                repulsion_disable_until_time=repulsion_disable_until_time,
                             )
                         )
                         batch_intermediate.append(intermediate_samples)
@@ -4445,6 +4468,8 @@ class MCTSFlowSampler:
                             lambda_div=lambda_div,
                             repulsion_strength=repulsion_strength,
                             noise_schedule_end_factor=noise_schedule_end_factor,
+                            deterministic_rollout=deterministic_rollout,
+                            repulsion_disable_until_time=repulsion_disable_until_time,
                         )
 
                     batch_samples.append(final_samples)
