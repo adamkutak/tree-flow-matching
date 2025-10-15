@@ -1,5 +1,5 @@
 # Flow Matching Inference Time Compute Scaling (For ImageNet Sit-XL/2 model)
-FoldFlow experiments code and running guide available here: https://github.com/adamkutak/foldflow-inferencescaling
+*NOTE:*: FoldFlow experiments code and running guide available here: https://github.com/adamkutak/foldflow-inferencescaling
 ## Installation Instructions (Python 3)
 
 ### 1. Clone Repository
