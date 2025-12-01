@@ -221,7 +221,7 @@ def create_comparison_figure(
     # Column titles
     computation_levels = ["1x", "2x", "4x", "8x"]
     for col, level in enumerate(computation_levels):
-        axes[0, col].set_title(f"{level} Computation", fontsize=14)
+        axes[0, col].set_title(f"{level} Computation", fontsize=24)
 
     # Plot samples
     for col, level in enumerate(computation_levels):
@@ -241,23 +241,22 @@ def create_comparison_figure(
 
             # Add sample index on the left
             if col == 0:
-                ax.set_ylabel(f"Sample {row + 1}", fontsize=12)
-
-    # Main title
-    plt.suptitle(
-        f"Class {target_class_label} Generation - {sample_method} - {dataset}\n"
-        f"Comparison across computation levels",
-        fontsize=16,
-    )
+                if samples_per_config == 1:
+                    ax.set_ylabel(f"Class {target_class_label}", fontsize=24)
+                else:
+                    ax.set_ylabel(f"Sample {row + 1}", fontsize=12)
 
     plt.tight_layout()
 
     # Save the figure
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    filename = f"class_{target_class_label}_{sample_method}_{dataset}_comparison_{timestamp}.png"
+    # Save as PDF instead of PNG
+    filename = f"class_{target_class_label}_{sample_method}_{dataset}_comparison_{timestamp}.pdf"
     filepath = os.path.join(output_dir, filename)
 
-    plt.savefig(filepath, dpi=300, bbox_inches="tight")
+    with PdfPages(filepath) as pdf:
+        pdf.savefig(fig, dpi=300, bbox_inches="tight")
+
     plt.close()
 
     print(f"Comparison figure saved to: {filepath}")
