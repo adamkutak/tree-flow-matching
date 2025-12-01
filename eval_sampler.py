@@ -238,6 +238,7 @@ def evaluate_single_samples(
             noise_schedule_end_factor=args.noise_schedule_end_factor,
             deterministic_rollout=args.deterministic_rollout,
             repulsion_disable_until_time=args.repulsion_disable_until_time,
+            round_start_times=args.round_start_times,
         )
 
         # Store results for this branch/keep pair
@@ -292,6 +293,7 @@ def generate_and_compute_metrics(
     noise_schedule_end_factor=DEFAULT_NOISE_SCHEDULE_END_FACTOR,
     deterministic_rollout=DEFAULT_DETERMINISTIC_ROLLOUT,
     repulsion_disable_until_time=DEFAULT_REPULSION_DISABLE_UNTIL_TIME,
+    round_start_times=None,
 ):
     """
     Generate samples and compute metrics
@@ -447,6 +449,9 @@ def generate_and_compute_metrics(
                 branch_dt=branch_dt,
             )
         elif sample_method == "noise_search_ode_divfree":
+            kwargs = {}
+            if round_start_times is not None:
+                kwargs["round_start_times"] = round_start_times
             sample = sampler.batch_sample_noise_search_ode_divfree(
                 class_label=random_class_labels,
                 batch_size=current_batch_size,
@@ -456,8 +461,12 @@ def generate_and_compute_metrics(
                 lambda_div=lambda_div,
                 selector=scoring_function,
                 use_global=True,
+                **kwargs,
             )
         elif sample_method == "noise_search_sde":
+            kwargs = {}
+            if round_start_times is not None:
+                kwargs["round_start_times"] = round_start_times
             sample = sampler.batch_sample_noise_search_sde(
                 class_label=random_class_labels,
                 batch_size=current_batch_size,
@@ -467,8 +476,12 @@ def generate_and_compute_metrics(
                 noise_scale=noise_scale,
                 selector=scoring_function,
                 use_global=True,
+                **kwargs,
             )
         elif sample_method == "random_search_then_noise_search_ode_divfree":
+            kwargs = {}
+            if round_start_times is not None:
+                kwargs["round_start_times"] = round_start_times
             sample = sampler.batch_sample_random_search_then_noise_search_ode_divfree(
                 class_label=random_class_labels,
                 batch_size=current_batch_size,
@@ -478,8 +491,12 @@ def generate_and_compute_metrics(
                 lambda_div=lambda_div,
                 selector=scoring_function,
                 use_global=True,
+                **kwargs,
             )
         elif sample_method == "noise_search_ode_divfree_max":
+            kwargs = {}
+            if round_start_times is not None:
+                kwargs["round_start_times"] = round_start_times
             sample = sampler.batch_sample_noise_search_ode_divfree_max(
                 class_label=random_class_labels,
                 batch_size=current_batch_size,
@@ -492,8 +509,12 @@ def generate_and_compute_metrics(
                 use_global=True,
                 deterministic_rollout=bool(deterministic_rollout),
                 repulsion_disable_until_time=repulsion_disable_until_time,
+                **kwargs,
             )
         elif sample_method == "random_search_then_noise_search_ode_divfree_max":
+            kwargs = {}
+            if round_start_times is not None:
+                kwargs["round_start_times"] = round_start_times
             sample = (
                 sampler.batch_sample_random_search_then_noise_search_ode_divfree_max(
                     class_label=random_class_labels,
@@ -507,6 +528,7 @@ def generate_and_compute_metrics(
                     use_global=True,
                     deterministic_rollout=bool(deterministic_rollout),
                     repulsion_disable_until_time=repulsion_disable_until_time,
+                    **kwargs,
                 )
             )
         else:
@@ -836,6 +858,13 @@ if __name__ == "__main__":
 
     # Additional parameters
     parser.add_argument(
+        "--round_start_times",
+        type=str,
+        default=None,
+        help="Comma-separated list of start times for noise search rounds (e.g., '0.0,0.2,0.4')",
+    )
+
+    parser.add_argument(
         "--dt_std",
         type=float,
         default=DEFAULT_DT_STD,
@@ -891,6 +920,16 @@ if __name__ == "__main__":
     )
 
     args = parser.parse_args()
+
+    # Parse round_start_times if provided
+    if args.round_start_times:
+        args.round_start_times = [float(t) for t in args.round_start_times.split(",")]
+        args.rounds = len(args.round_start_times)
+        print(
+            f"Using custom round start times: {args.round_start_times} (rounds={args.rounds})"
+        )
+    else:
+        args.round_start_times = None
 
     # Parse branch pairs
     args.branch_pairs = [
