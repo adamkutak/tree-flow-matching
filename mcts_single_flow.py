@@ -3305,6 +3305,7 @@ class MCTSFlowSampler:
         selector="fid",
         use_global=False,
         use_final_samples_for_restart=False,
+        round_start_times=[0.0, 0.2, 0.4, 0.6, 0.75, 0.8, 0.85, 0.9, 0.95],
     ):
         """
         Multi-round noise search with divergence-free ODE sampling.
@@ -3339,8 +3340,6 @@ class MCTSFlowSampler:
             current_label = class_label
         else:
             current_label = torch.full((batch_size,), class_label, device=self.device)
-
-        round_start_times = [0.0, 0.2, 0.4, 0.6, 0.75, 0.8, 0.85, 0.9, 0.95]
 
         with torch.no_grad():
             # Initialize candidates: start with random noise for round 1
@@ -3537,6 +3536,7 @@ class MCTSFlowSampler:
         use_final_samples_for_restart=False,
         deterministic_rollout=False,
         repulsion_disable_until_time=0.0,
+        round_start_times=[0.0, 0.2, 0.4, 0.6, 0.75, 0.8, 0.85, 0.9, 0.95],
     ):
         """
         Multi-round noise search with divergence-free max ODE sampling.
@@ -3573,8 +3573,6 @@ class MCTSFlowSampler:
             current_label = class_label
         else:
             current_label = torch.full((batch_size,), class_label, device=self.device)
-
-        round_start_times = [0.0, 0.2, 0.4, 0.6, 0.75, 0.8, 0.85, 0.9, 0.95]
 
         with torch.no_grad():
             # Initialize candidates: start with random noise for round 1
@@ -3782,6 +3780,7 @@ class MCTSFlowSampler:
         selector="fid",
         use_global=False,
         use_final_samples_for_restart=False,
+        round_start_times=[0.0, 0.2, 0.4, 0.6, 0.75, 0.8, 0.85, 0.9, 0.95],
     ):
         """
         Multi-round noise search with SDE sampling.
@@ -3816,8 +3815,6 @@ class MCTSFlowSampler:
             current_label = class_label
         else:
             current_label = torch.full((batch_size,), class_label, device=self.device)
-
-        round_start_times = [0.0, 0.2, 0.4, 0.6, 0.75, 0.8, 0.85, 0.9, 0.95]
 
         with torch.no_grad():
             # Initialize candidates: start with random noise for round 1
@@ -4010,6 +4007,7 @@ class MCTSFlowSampler:
         selector="fid",
         use_global=False,
         use_final_samples_for_restart=False,
+        round_start_times=[0.0, 0.2, 0.4, 0.6, 0.75, 0.8, 0.85, 0.9, 0.95],
     ):
         """
         Two-stage inference scaling method that combines random search with noise search:
@@ -4054,8 +4052,6 @@ class MCTSFlowSampler:
             current_label = class_label
         else:
             current_label = torch.full((batch_size,), class_label, device=self.device)
-
-        round_start_times = [0.0, 0.2, 0.4, 0.6, 0.75, 0.8, 0.85, 0.9, 0.95]
 
         with torch.no_grad():
             print(f"Stage 1: Random search with {num_branches} branches")
@@ -4291,6 +4287,7 @@ class MCTSFlowSampler:
         use_final_samples_for_restart=False,
         deterministic_rollout=False,
         repulsion_disable_until_time=0.0,
+        round_start_times=[0.0, 0.2, 0.4, 0.6, 0.75, 0.8, 0.85, 0.9, 0.95],
     ):
         """
         Two-stage inference scaling method that combines random search with divfree_max noise search:
@@ -4327,8 +4324,6 @@ class MCTSFlowSampler:
             current_label = class_label
         else:
             current_label = torch.full((batch_size,), class_label, device=self.device)
-
-        round_start_times = [0.0, 0.2, 0.4, 0.6, 0.75, 0.8, 0.85, 0.9, 0.95]
 
         with torch.no_grad():
             print(f"Stage 1: Random search with {num_branches} branches")
