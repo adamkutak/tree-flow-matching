@@ -239,6 +239,7 @@ def evaluate_single_samples(
             deterministic_rollout=args.deterministic_rollout,
             repulsion_disable_until_time=args.repulsion_disable_until_time,
             round_start_times=args.round_start_times,
+            branch_schedule=args.branch_schedule,
         )
 
         # Store results for this branch/keep pair
@@ -294,6 +295,7 @@ def generate_and_compute_metrics(
     deterministic_rollout=DEFAULT_DETERMINISTIC_ROLLOUT,
     repulsion_disable_until_time=DEFAULT_REPULSION_DISABLE_UNTIL_TIME,
     round_start_times=None,
+    branch_schedule=None,
 ):
     """
     Generate samples and compute metrics
@@ -343,6 +345,11 @@ def generate_and_compute_metrics(
         all_class_labels.append(random_class_labels)
 
         # Generate samples using the specified method
+        if branch_schedule is not None:
+            current_num_branches = branch_schedule
+        else:
+            current_num_branches = num_branches
+
         if sample_method == "ode":
             sample = sampler.batch_sample_ode(
                 class_label=random_class_labels,
@@ -500,7 +507,7 @@ def generate_and_compute_metrics(
             sample = sampler.batch_sample_noise_search_ode_divfree_max(
                 class_label=random_class_labels,
                 batch_size=current_batch_size,
-                num_branches=num_branches,
+                num_branches=current_num_branches,
                 num_keep=num_keep,
                 rounds=rounds,
                 lambda_div=lambda_div,
@@ -865,6 +872,13 @@ if __name__ == "__main__":
     )
 
     parser.add_argument(
+        "--branch_schedule",
+        type=str,
+        default=None,
+        help="Comma-separated list of branch counts per round (e.g., '1,2,4'). Overrides branch_pairs for num_branches.",
+    )
+
+    parser.add_argument(
         "--dt_std",
         type=float,
         default=DEFAULT_DT_STD,
@@ -930,6 +944,13 @@ if __name__ == "__main__":
         )
     else:
         args.round_start_times = None
+
+    # Parse branch_schedule if provided
+    if args.branch_schedule:
+        args.branch_schedule = [int(b) for b in args.branch_schedule.split(",")]
+        print(f"Using custom branch schedule: {args.branch_schedule}")
+    else:
+        args.branch_schedule = None
 
     # Parse branch pairs
     args.branch_pairs = [
