@@ -3335,6 +3335,112 @@ class MCTSFlowSampler:
         else:
             return current_samples
 
+    def _sample_with_divfree_max_noise_coarse(
+        self,
+        start_samples,
+        labels,
+        start_time=0.0,
+        lambda_div=0.2,
+        repulsion_strength=0.02,
+        noise_schedule_end_factor=0.7,
+        save_at_time=None,
+        deterministic_rollout=False,
+        repulsion_disable_until_time=0.0,
+        cfg_scale=None,
+        simulate_forward_dt=0.1,
+        fine_dt_threshold=0.7,
+    ):
+        """
+        Helper function to sample from start_time to t=1 with divfree_max noise,
+        using coarser timesteps for simulation forward to save compute.
+
+        Uses simulate_forward_dt for t < fine_dt_threshold, then base_dt for t >= fine_dt_threshold.
+        """
+        current_samples = start_samples.clone()
+        batch_size = current_samples.shape[0]
+        base_dt = 1 / self.num_timesteps
+        current_time = start_time
+        intermediate_samples = None
+        did_noise_step = False
+
+        from utils import (
+            divfree_swirl_si,
+            make_divergence_free,
+            particle_guidance_forces,
+        )
+
+        while current_time < 1.0:
+            if current_time < fine_dt_threshold:
+                dt = min(
+                    simulate_forward_dt,
+                    fine_dt_threshold - current_time,
+                    1.0 - current_time,
+                )
+            else:
+                dt = min(base_dt, 1.0 - current_time)
+
+            t_batch = torch.full((batch_size,), current_time, device=self.device)
+
+            u_t = self.get_velocity(
+                t_batch, current_samples, labels, cfg_scale=cfg_scale
+            )
+
+            w_unscaled = divfree_swirl_si(current_samples, t_batch, labels, u_t)
+            w_divfree = lambda_div * w_unscaled
+
+            if current_time < repulsion_disable_until_time:
+                repulsion_divfree = torch.zeros_like(w_unscaled)
+            else:
+                raw_repulsion_forces = particle_guidance_forces(
+                    current_samples, current_time, alpha_t=1.0, kernel_type="euclidean"
+                )
+
+                dims = tuple(range(1, w_unscaled.ndim))
+                gaussian_magnitude = torch.linalg.vector_norm(
+                    w_unscaled, dim=dims
+                ).mean()
+                repulsion_magnitude = torch.linalg.vector_norm(
+                    raw_repulsion_forces, dim=dims
+                ).mean()
+
+                if repulsion_magnitude > 1e-8:
+                    regularization_factor = gaussian_magnitude / repulsion_magnitude
+                    regularized_repulsion = raw_repulsion_forces * regularization_factor
+                else:
+                    regularized_repulsion = raw_repulsion_forces
+
+                scaled_repulsion = regularized_repulsion * repulsion_strength
+                repulsion_divfree = make_divergence_free(
+                    scaled_repulsion, current_samples, t_batch, u_t
+                )
+
+            total_perturbation = w_divfree + repulsion_divfree
+
+            noise_scale_factor = 1.0 + (noise_schedule_end_factor - 1.0) * current_time
+            if deterministic_rollout:
+                if not did_noise_step:
+                    scaled_perturbation = total_perturbation * noise_scale_factor
+                    did_noise_step = True
+                else:
+                    scaled_perturbation = torch.zeros_like(total_perturbation)
+            else:
+                scaled_perturbation = total_perturbation * noise_scale_factor
+
+            current_samples = current_samples + (u_t + scaled_perturbation) * dt
+            current_time += dt
+
+            if (
+                save_at_time is not None
+                and intermediate_samples is None
+                and np.isclose(current_time, save_at_time, atol=base_dt / 2)
+            ):
+                intermediate_samples = current_samples.clone()
+
+        if save_at_time is not None:
+            return intermediate_samples, current_samples
+        else:
+            return current_samples
+
     def batch_sample_noise_search_ode_divfree(
         self,
         class_label,
@@ -3772,6 +3878,224 @@ class MCTSFlowSampler:
                     all_round_top_samples[batch_idx].append(top_samples)
                     all_round_top_labels[batch_idx].append(top_labels)
 
+                    start_idx = end_idx
+
+                current_candidates = new_candidates
+
+            final_samples = []
+            for batch_idx in range(batch_size):
+                batch_all_samples = torch.cat(all_round_top_samples[batch_idx], dim=0)
+                batch_all_labels = torch.cat(all_round_top_labels[batch_idx], dim=0)
+
+                if use_global:
+                    all_candidate_scores = score_fn(batch_all_samples)
+                else:
+                    all_candidate_scores = score_fn(batch_all_samples, batch_all_labels)
+
+                best_idx = torch.argmax(all_candidate_scores)
+                final_samples.append(batch_all_samples[best_idx])
+
+            return self.unnormalize_images(torch.stack(final_samples))
+
+    def batch_sample_noise_search_ode_divfree_max_coarse(
+        self,
+        class_label,
+        batch_size=16,
+        num_branches=4,
+        num_keep=2,
+        rounds=9,
+        lambda_div=0.2,
+        repulsion_strength=0.02,
+        noise_schedule_end_factor=0.3,
+        selector="fid",
+        use_global=False,
+        use_final_samples_for_restart=False,
+        deterministic_rollout=False,
+        repulsion_disable_until_time=0.0,
+        round_start_times=[0.0, 0.2, 0.4, 0.6, 0.75, 0.8, 0.85, 0.9, 0.95],
+        cfg_scale=None,
+        simulate_forward_dt=0.1,
+        fine_dt_threshold=0.7,
+    ):
+        """
+        Multi-round noise search with divergence-free max ODE sampling,
+        using coarser timesteps for simulation forward to save compute.
+
+        Uses simulate_forward_dt for t < fine_dt_threshold, then base_dt for t >= fine_dt_threshold.
+        """
+        assert (
+            len(class_label) == batch_size if torch.is_tensor(class_label) else True
+        ), "class_label tensor length must match batch_size"
+
+        is_branch_schedule = isinstance(num_branches, list)
+        if is_branch_schedule:
+            first_num_branches = num_branches[0]
+        else:
+            first_num_branches = num_branches
+
+        if first_num_branches == 1 and rounds == 1:
+            return self.batch_sample_ode_divfree(class_label, batch_size, lambda_div)
+
+        score_fn, use_global = self._get_score_function(selector, use_global)
+        self.flow_model.eval()
+
+        if torch.is_tensor(class_label):
+            current_label = class_label
+        else:
+            current_label = torch.full((batch_size,), class_label, device=self.device)
+
+        with torch.no_grad():
+            current_candidates = []
+            for i in range(batch_size):
+                candidates = torch.randn(
+                    num_keep,
+                    self.channels,
+                    self.image_size,
+                    self.image_size,
+                    device=self.device,
+                )
+                current_candidates.append(candidates)
+
+            all_round_top_samples = []
+            all_round_top_labels = []
+
+            for i in range(batch_size):
+                all_round_top_samples.append([])
+                all_round_top_labels.append([])
+
+            for round_idx in range(rounds):
+                start_time = round_start_times[round_idx]
+
+                if is_branch_schedule:
+                    round_num_branches = num_branches[round_idx]
+                else:
+                    round_num_branches = num_branches
+
+                print(
+                    f"Divfree-max coarse noise search round {round_idx + 1}/{rounds}, start_time={start_time:.2f}, branches={round_num_branches}"
+                )
+
+                all_round_samples = []
+                all_round_labels = []
+                all_intermediate_samples = []
+
+                next_start_time = None
+                if round_idx + 1 < len(round_start_times):
+                    next_start_time = round_start_times[round_idx + 1]
+
+                for batch_idx in range(batch_size):
+                    batch_samples = []
+                    batch_intermediate = []
+
+                    if round_idx == 0:
+                        samples_to_process = torch.randn(
+                            num_keep * round_num_branches,
+                            self.channels,
+                            self.image_size,
+                            self.image_size,
+                            device=self.device,
+                        )
+                    else:
+                        candidates = current_candidates[batch_idx]
+                        samples_to_process = candidates.repeat_interleave(
+                            round_num_branches, dim=0
+                        )
+
+                    batch_labels = current_label[batch_idx : batch_idx + 1].repeat(
+                        num_keep * round_num_branches
+                    )
+
+                    if (
+                        next_start_time is not None
+                        and not use_final_samples_for_restart
+                    ):
+                        intermediate_samples, final_samples = (
+                            self._sample_with_divfree_max_noise_coarse(
+                                samples_to_process,
+                                batch_labels,
+                                start_time=start_time,
+                                lambda_div=lambda_div,
+                                repulsion_strength=repulsion_strength,
+                                noise_schedule_end_factor=noise_schedule_end_factor,
+                                save_at_time=next_start_time,
+                                deterministic_rollout=deterministic_rollout,
+                                repulsion_disable_until_time=repulsion_disable_until_time,
+                                cfg_scale=cfg_scale,
+                                simulate_forward_dt=simulate_forward_dt,
+                                fine_dt_threshold=fine_dt_threshold,
+                            )
+                        )
+                        batch_intermediate.append(intermediate_samples)
+                    else:
+                        final_samples = self._sample_with_divfree_max_noise_coarse(
+                            samples_to_process,
+                            batch_labels,
+                            start_time=start_time,
+                            lambda_div=lambda_div,
+                            repulsion_strength=repulsion_strength,
+                            noise_schedule_end_factor=noise_schedule_end_factor,
+                            deterministic_rollout=deterministic_rollout,
+                            repulsion_disable_until_time=repulsion_disable_until_time,
+                            cfg_scale=cfg_scale,
+                            simulate_forward_dt=simulate_forward_dt,
+                            fine_dt_threshold=fine_dt_threshold,
+                        )
+
+                    batch_samples.append(final_samples)
+                    batch_samples = torch.cat(batch_samples, dim=0)
+                    all_round_samples.append(batch_samples)
+
+                    if (
+                        next_start_time is not None
+                        and not use_final_samples_for_restart
+                    ):
+                        batch_intermediate = torch.cat(batch_intermediate, dim=0)
+                        all_intermediate_samples.append(batch_intermediate)
+
+                    batch_labels = current_label[batch_idx : batch_idx + 1].repeat(
+                        num_keep * round_num_branches
+                    )
+                    all_round_labels.append(batch_labels)
+
+                all_samples = torch.cat(all_round_samples, dim=0)
+                all_labels = torch.cat(all_round_labels, dim=0)
+
+                if use_global:
+                    all_scores = score_fn(all_samples)
+                else:
+                    all_scores = score_fn(all_samples, all_labels)
+
+                new_candidates = []
+                start_idx = 0
+
+                for batch_idx in range(batch_size):
+                    batch_size_this = num_keep * round_num_branches
+                    end_idx = start_idx + batch_size_this
+
+                    batch_scores = all_scores[start_idx:end_idx]
+                    batch_samples = all_samples[start_idx:end_idx]
+                    batch_labels = all_labels[start_idx:end_idx]
+
+                    top_indices = torch.topk(batch_scores, num_keep).indices
+                    top_samples = batch_samples[top_indices]
+                    top_labels = batch_labels[top_indices]
+
+                    if round_idx + 1 < rounds:
+                        use_legacy_mode = (
+                            "use_final_samples_for_restart" in locals()
+                            and use_final_samples_for_restart
+                        )
+                        if use_legacy_mode:
+                            new_candidates.append(top_samples)
+                        elif all_intermediate_samples:
+                            batch_intermediates = all_intermediate_samples[batch_idx]
+                            top_intermediates = batch_intermediates[top_indices]
+                            new_candidates.append(top_intermediates)
+                        else:
+                            new_candidates.append(top_samples)
+
+                    all_round_top_samples[batch_idx].append(top_samples)
+                    all_round_top_labels[batch_idx].append(top_labels)
                     start_idx = end_idx
 
                 current_candidates = new_candidates
