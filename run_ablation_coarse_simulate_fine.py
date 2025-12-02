@@ -19,7 +19,6 @@ LAMBDA_DIV = 0.9
 NOISE_SCHEDULE_END_FACTOR = 0.7
 DETERMINISTIC_ROLLOUT = 0
 REPULSION_DISABLE_UNTIL_TIME = 0.0
-ROUND_START_TIMES = "0.0,0.2,0.4,0.6,0.8,0.9"
 
 
 def run_experiment(cmd):
@@ -65,7 +64,6 @@ def main():
         "noise_schedule_end_factor": NOISE_SCHEDULE_END_FACTOR,
         "deterministic_rollout": DETERMINISTIC_ROLLOUT,
         "repulsion_disable_until_time": REPULSION_DISABLE_UNTIL_TIME,
-        "round_start_times": ROUND_START_TIMES,
     }
 
     with open(f"{results_dir}/ablation_config.json", "w") as f:
@@ -96,8 +94,6 @@ def main():
         str(DETERMINISTIC_ROLLOUT),
         "--repulsion_disable_until_time",
         str(REPULSION_DISABLE_UNTIL_TIME),
-        "--round_start_times",
-        ROUND_START_TIMES,
         "--branch_dt",
         str(DT),
     ]
