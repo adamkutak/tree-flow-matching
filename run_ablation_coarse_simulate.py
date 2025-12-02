@@ -100,8 +100,8 @@ def main():
         str(REPULSION_DISABLE_UNTIL_TIME),
         "--round_start_times",
         ROUND_START_TIMES,
-        "--num_timesteps",
-        str(NUM_TIMESTEPS),
+        "--branch_dt",
+        str(DT),
     ]
 
     for branch_pairs in BRANCH_PAIRS_LIST:
