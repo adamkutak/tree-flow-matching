@@ -6,9 +6,12 @@ import time
 
 DATASET = "imagenet256"
 SAMPLE_SIZES = [256]
-BRANCH_PAIRS = "1:1,2:1,4:1,8:1"
+BRANCH_PAIRS_LIST = ["1:1", "2:1", "4:1", "8:1"]
 SCORING_FUNCTION = "dino_score"
 DEVICE = "cuda"
+
+BASELINE_CFG_SCALE = 1.5
+CFG_RANGE = 1.0
 
 TIMESTEP_CONFIGS = [
     (20, 0.05, 0),
@@ -59,9 +62,11 @@ def main():
         "dataset": DATASET,
         "timestep_configs": TIMESTEP_CONFIGS,
         "sample_sizes": SAMPLE_SIZES,
-        "branch_pairs": BRANCH_PAIRS,
+        "branch_pairs_list": BRANCH_PAIRS_LIST,
         "scoring_function": SCORING_FUNCTION,
         "device": DEVICE,
+        "baseline_cfg_scale": BASELINE_CFG_SCALE,
+        "cfg_range": CFG_RANGE,
     }
 
     with open(f"{results_dir}/ablation_config.json", "w") as f:
@@ -72,29 +77,58 @@ def main():
     print(f"\n=== Running CFG Search Ablation Experiments ===\n")
     print("This ablation tests using CFG scale variation as the branching mechanism")
     print("instead of noise injection.\n")
+    print(f"Baseline CFG scale: {BASELINE_CFG_SCALE} (used for random search baseline)")
+    print(
+        f"CFG range: {CFG_RANGE} (CFG values span {BASELINE_CFG_SCALE - CFG_RANGE/2} to {BASELINE_CFG_SCALE + CFG_RANGE/2})\n"
+    )
 
     for num_timesteps, branch_dt, branch_start_time in TIMESTEP_CONFIGS:
         for n_samples in SAMPLE_SIZES:
-            cmd = base_cmd + [
-                "--eval_mode",
-                "single_samples",
-                "--sample_method",
-                "cfg_search",
-                "--scoring_function",
-                SCORING_FUNCTION,
-                "--n_samples",
-                str(n_samples),
-                "--branch_pairs",
-                BRANCH_PAIRS,
-                "--branch_dt",
-                str(branch_dt),
-                "--branch_start_time",
-                str(branch_start_time),
-            ]
+            for branch_pairs in BRANCH_PAIRS_LIST:
+                print(
+                    f"\n=== Running Random Search Baseline ({branch_pairs}, cfg={BASELINE_CFG_SCALE}) ==="
+                )
+                cmd = base_cmd + [
+                    "--eval_mode",
+                    "single_samples",
+                    "--sample_method",
+                    "random_search",
+                    "--scoring_function",
+                    SCORING_FUNCTION,
+                    "--n_samples",
+                    str(n_samples),
+                    "--branch_pairs",
+                    branch_pairs,
+                    "--branch_dt",
+                    str(branch_dt),
+                    "--branch_start_time",
+                    str(branch_start_time),
+                    "--cfg_scale",
+                    str(BASELINE_CFG_SCALE),
+                ]
+                if run_experiment(cmd):
+                    completed_experiments += 1
 
-            print(f"\nRunning CFG Search")
-            if run_experiment(cmd):
-                completed_experiments += 1
+            for branch_pairs in BRANCH_PAIRS_LIST:
+                print(f"\n=== Running CFG Search ({branch_pairs}) ===")
+                cmd = base_cmd + [
+                    "--eval_mode",
+                    "single_samples",
+                    "--sample_method",
+                    "cfg_search",
+                    "--scoring_function",
+                    SCORING_FUNCTION,
+                    "--n_samples",
+                    str(n_samples),
+                    "--branch_pairs",
+                    branch_pairs,
+                    "--branch_dt",
+                    str(branch_dt),
+                    "--branch_start_time",
+                    str(branch_start_time),
+                ]
+                if run_experiment(cmd):
+                    completed_experiments += 1
 
     print(
         f"\nCFG search ablation sweep completed! {completed_experiments} experiments ran successfully."
