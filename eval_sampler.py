@@ -241,6 +241,8 @@ def evaluate_single_samples(
             round_start_times=args.round_start_times,
             branch_schedule=args.branch_schedule,
             cfg_scale=args.cfg_scale,
+            simulate_forward_dt=args.simulate_forward_dt,
+            fine_dt_threshold=args.fine_dt_threshold,
         )
 
         # Store results for this branch/keep pair
@@ -298,6 +300,8 @@ def generate_and_compute_metrics(
     round_start_times=None,
     branch_schedule=None,
     cfg_scale=None,
+    simulate_forward_dt=None,
+    fine_dt_threshold=0.7,
 ):
     """
     Generate samples and compute metrics
@@ -558,6 +562,27 @@ def generate_and_compute_metrics(
                 use_global=True,
                 baseline_cfg_scale=1.5,
                 cfg_range=1.0,
+                **kwargs,
+            )
+        elif sample_method == "noise_search_ode_divfree_max_coarse":
+            kwargs = {}
+            if round_start_times is not None:
+                kwargs["round_start_times"] = round_start_times
+            sample = sampler.batch_sample_noise_search_ode_divfree_max_coarse(
+                class_label=random_class_labels,
+                batch_size=current_batch_size,
+                num_branches=current_num_branches,
+                num_keep=num_keep,
+                rounds=rounds,
+                lambda_div=lambda_div,
+                noise_schedule_end_factor=noise_schedule_end_factor,
+                selector=scoring_function,
+                use_global=True,
+                deterministic_rollout=bool(deterministic_rollout),
+                repulsion_disable_until_time=repulsion_disable_until_time,
+                cfg_scale=cfg_scale,
+                simulate_forward_dt=simulate_forward_dt,
+                fine_dt_threshold=fine_dt_threshold,
                 **kwargs,
             )
         else:
@@ -847,6 +872,7 @@ if __name__ == "__main__":
             "noise_search_ode_divfree_max",
             "random_search_then_noise_search_ode_divfree_max",
             "cfg_search",
+            "noise_search_ode_divfree_max_coarse",
         ],
         help="Sampling method to use (for both single samples and batch optimization)",
     )
@@ -961,6 +987,18 @@ if __name__ == "__main__":
         type=float,
         default=None,
         help="Classifier-free guidance scale (if None, no CFG is used)",
+    )
+    parser.add_argument(
+        "--simulate_forward_dt",
+        type=float,
+        default=None,
+        help="Coarser dt for simulating forward (for coarse ablation). If None, uses base dt.",
+    )
+    parser.add_argument(
+        "--fine_dt_threshold",
+        type=float,
+        default=0.7,
+        help="Time threshold after which to use fine dt (default 0.7)",
     )
 
     args = parser.parse_args()
