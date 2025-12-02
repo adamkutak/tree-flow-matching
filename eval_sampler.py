@@ -240,6 +240,7 @@ def evaluate_single_samples(
             repulsion_disable_until_time=args.repulsion_disable_until_time,
             round_start_times=args.round_start_times,
             branch_schedule=args.branch_schedule,
+            cfg_scale=args.cfg_scale,
         )
 
         # Store results for this branch/keep pair
@@ -296,6 +297,7 @@ def generate_and_compute_metrics(
     repulsion_disable_until_time=DEFAULT_REPULSION_DISABLE_UNTIL_TIME,
     round_start_times=None,
     branch_schedule=None,
+    cfg_scale=None,
 ):
     """
     Generate samples and compute metrics
@@ -312,6 +314,7 @@ def generate_and_compute_metrics(
         branch_start_time: Time to start branching
         fid: FID instance for calculation
         dataset: Dataset containing real samples
+        cfg_scale: If provided, use classifier-free guidance with this scale.
 
     Returns:
         Dictionary of metrics
@@ -374,6 +377,7 @@ def generate_and_compute_metrics(
                 num_branches=num_branches,
                 selector=scoring_function,
                 use_global=True,
+                cfg_scale=cfg_scale,
             )
         elif sample_method == "sde_path_exploration":
             sample = sampler.batch_sample_sde_path_exploration(
@@ -516,6 +520,7 @@ def generate_and_compute_metrics(
                 use_global=True,
                 deterministic_rollout=bool(deterministic_rollout),
                 repulsion_disable_until_time=repulsion_disable_until_time,
+                cfg_scale=cfg_scale,
                 **kwargs,
             )
         elif sample_method == "random_search_then_noise_search_ode_divfree_max":
@@ -535,8 +540,25 @@ def generate_and_compute_metrics(
                     use_global=True,
                     deterministic_rollout=bool(deterministic_rollout),
                     repulsion_disable_until_time=repulsion_disable_until_time,
+                    cfg_scale=cfg_scale,
                     **kwargs,
                 )
+            )
+        elif sample_method == "cfg_search":
+            kwargs = {}
+            if round_start_times is not None:
+                kwargs["round_start_times"] = round_start_times
+            sample = sampler.batch_sample_cfg_search(
+                class_label=random_class_labels,
+                batch_size=current_batch_size,
+                num_branches=num_branches,
+                num_keep=num_keep,
+                rounds=rounds,
+                selector=scoring_function,
+                use_global=True,
+                baseline_cfg_scale=1.5,
+                cfg_range=1.0,
+                **kwargs,
             )
         else:
             raise ValueError(f"Unsupported sample method: {sample_method}")
@@ -824,6 +846,7 @@ if __name__ == "__main__":
             "random_search_then_noise_search_ode_divfree",
             "noise_search_ode_divfree_max",
             "random_search_then_noise_search_ode_divfree_max",
+            "cfg_search",
         ],
         help="Sampling method to use (for both single samples and batch optimization)",
     )
@@ -931,6 +954,13 @@ if __name__ == "__main__":
         type=int,
         default=9,
         help="Number of rounds for noise search methods",
+    )
+
+    parser.add_argument(
+        "--cfg_scale",
+        type=float,
+        default=None,
+        help="Classifier-free guidance scale (if None, no CFG is used)",
     )
 
     args = parser.parse_args()
