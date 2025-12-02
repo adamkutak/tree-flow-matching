@@ -5,7 +5,7 @@ from datetime import datetime
 import time
 
 DATASET = "imagenet256"
-SAMPLE_SIZES = [256]
+SAMPLE_SIZES = [128]
 SCORING_FUNCTION = "dino_score"
 DEVICE = "cuda"
 
