@@ -98,53 +98,48 @@ def main():
         str(DT),
     ]
 
-    for branch_pairs in BRANCH_PAIRS_LIST:
-        print(f"\n=== Running Random Search ({branch_pairs}, dt=0.01) ===")
-        cmd = base_cmd + [
-            "--eval_mode",
-            "single_samples",
-            "--sample_method",
-            "random_search",
-            "--branch_pairs",
-            branch_pairs,
-        ]
-        if run_experiment(cmd):
-            completed_experiments += 1
+    # RESUMING: Random search and standard noise search already completed
+    # RESUMING: simulate_forward_dt=0.05 completed for 1:1, 2:1, 4:1
+    # REMAINING: simulate_forward_dt=0.05 for 8:1, and all of simulate_forward_dt=0.1
 
+    # Run remaining 8:1 for simulate_forward_dt=0.05
+    print(
+        f"\n=== Running Coarse Simulate Noise Search (8:1, simulate_forward_dt=0.05) ==="
+    )
+    cmd = base_cmd + [
+        "--eval_mode",
+        "single_samples",
+        "--sample_method",
+        "noise_search_ode_divfree_max_coarse",
+        "--branch_pairs",
+        "8:1",
+        "--simulate_forward_dt",
+        "0.05",
+        "--fine_dt_threshold",
+        str(FINE_DT_THRESHOLD),
+    ]
+    if run_experiment(cmd):
+        completed_experiments += 1
+
+    # Run all of simulate_forward_dt=0.1
     for branch_pairs in BRANCH_PAIRS_LIST:
         print(
-            f"\n=== Running Standard Noise Search ODE Divfree Max ({branch_pairs}, dt=0.01) ==="
+            f"\n=== Running Coarse Simulate Noise Search ({branch_pairs}, simulate_forward_dt=0.1) ==="
         )
         cmd = base_cmd + [
             "--eval_mode",
             "single_samples",
             "--sample_method",
-            "noise_search_ode_divfree_max",
+            "noise_search_ode_divfree_max_coarse",
             "--branch_pairs",
             branch_pairs,
+            "--simulate_forward_dt",
+            "0.1",
+            "--fine_dt_threshold",
+            str(FINE_DT_THRESHOLD),
         ]
         if run_experiment(cmd):
             completed_experiments += 1
-
-    for simulate_forward_dt in SIMULATE_FORWARD_DT_OPTIONS:
-        for branch_pairs in BRANCH_PAIRS_LIST:
-            print(
-                f"\n=== Running Coarse Simulate Noise Search ({branch_pairs}, simulate_forward_dt={simulate_forward_dt}) ==="
-            )
-            cmd = base_cmd + [
-                "--eval_mode",
-                "single_samples",
-                "--sample_method",
-                "noise_search_ode_divfree_max_coarse",
-                "--branch_pairs",
-                branch_pairs,
-                "--simulate_forward_dt",
-                str(simulate_forward_dt),
-                "--fine_dt_threshold",
-                str(FINE_DT_THRESHOLD),
-            ]
-            if run_experiment(cmd):
-                completed_experiments += 1
 
     print(
         f"\nAblation sweep completed! {completed_experiments} experiments ran successfully."
