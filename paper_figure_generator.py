@@ -221,7 +221,7 @@ def create_comparison_figure(
     # Column titles
     computation_levels = ["1x", "2x", "4x", "8x"]
     for col, level in enumerate(computation_levels):
-        axes[0, col].set_title(f"{level} Computation", fontsize=14, fontweight="bold")
+        axes[0, col].set_title(f"{level} Computation", fontsize=24)
 
     # Plot samples
     for col, level in enumerate(computation_levels):
@@ -241,24 +241,22 @@ def create_comparison_figure(
 
             # Add sample index on the left
             if col == 0:
-                ax.set_ylabel(f"Sample {row + 1}", fontsize=12)
-
-    # Main title
-    plt.suptitle(
-        f"Class {target_class_label} Generation - {sample_method} - {dataset}\n"
-        f"Comparison across computation levels",
-        fontsize=16,
-        fontweight="bold",
-    )
+                if samples_per_config == 1:
+                    ax.set_ylabel(f"Class {target_class_label}", fontsize=24)
+                else:
+                    ax.set_ylabel(f"Sample {row + 1}", fontsize=12)
 
     plt.tight_layout()
 
     # Save the figure
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    filename = f"class_{target_class_label}_{sample_method}_{dataset}_comparison_{timestamp}.png"
+    # Save as PDF instead of PNG
+    filename = f"class_{target_class_label}_{sample_method}_{dataset}_comparison_{timestamp}.pdf"
     filepath = os.path.join(output_dir, filename)
 
-    plt.savefig(filepath, dpi=300, bbox_inches="tight")
+    with PdfPages(filepath) as pdf:
+        pdf.savefig(fig, dpi=300, bbox_inches="tight")
+
     plt.close()
 
     print(f"Comparison figure saved to: {filepath}")
@@ -510,16 +508,12 @@ def create_multi_class_pdf_figure(
         # Column titles (computation levels)
         computation_levels = ["1x", "2x", "4x", "8x"]
         for col, level in enumerate(computation_levels):
-            axes[0, col].set_title(
-                f"{level} Computation", fontsize=14, fontweight="bold"
-            )
+            axes[0, col].set_title(f"{level} Computation", fontsize=24)
 
         # Row labels (classes) and plot samples
         for row, class_label in enumerate(target_class_labels):
             # Add class label on the left
-            axes[row, 0].set_ylabel(
-                f"Class {class_label}", fontsize=12, fontweight="bold"
-            )
+            axes[row, 0].set_ylabel(f"Class {class_label}", fontsize=24)
 
             for col, level in enumerate(computation_levels):
                 ax = axes[row, col]
@@ -533,14 +527,6 @@ def create_multi_class_pdf_figure(
                 ax.imshow(img)
                 ax.set_xticks([])
                 ax.set_yticks([])
-
-        # Main title
-        plt.suptitle(
-            f"Multi-Class Generation Comparison - {sample_method} - {dataset}\n"
-            f"Classes: {target_class_labels} across computation levels",
-            fontsize=16,
-            fontweight="bold",
-        )
 
         plt.tight_layout()
 

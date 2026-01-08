@@ -238,6 +238,11 @@ def evaluate_single_samples(
             noise_schedule_end_factor=args.noise_schedule_end_factor,
             deterministic_rollout=args.deterministic_rollout,
             repulsion_disable_until_time=args.repulsion_disable_until_time,
+            round_start_times=args.round_start_times,
+            branch_schedule=args.branch_schedule,
+            cfg_scale=args.cfg_scale,
+            simulate_forward_dt=args.simulate_forward_dt,
+            fine_dt_threshold=args.fine_dt_threshold,
         )
 
         # Store results for this branch/keep pair
@@ -292,6 +297,11 @@ def generate_and_compute_metrics(
     noise_schedule_end_factor=DEFAULT_NOISE_SCHEDULE_END_FACTOR,
     deterministic_rollout=DEFAULT_DETERMINISTIC_ROLLOUT,
     repulsion_disable_until_time=DEFAULT_REPULSION_DISABLE_UNTIL_TIME,
+    round_start_times=None,
+    branch_schedule=None,
+    cfg_scale=None,
+    simulate_forward_dt=None,
+    fine_dt_threshold=0.7,
 ):
     """
     Generate samples and compute metrics
@@ -308,6 +318,7 @@ def generate_and_compute_metrics(
         branch_start_time: Time to start branching
         fid: FID instance for calculation
         dataset: Dataset containing real samples
+        cfg_scale: If provided, use classifier-free guidance with this scale.
 
     Returns:
         Dictionary of metrics
@@ -341,6 +352,11 @@ def generate_and_compute_metrics(
         all_class_labels.append(random_class_labels)
 
         # Generate samples using the specified method
+        if branch_schedule is not None:
+            current_num_branches = branch_schedule
+        else:
+            current_num_branches = num_branches
+
         if sample_method == "ode":
             sample = sampler.batch_sample_ode(
                 class_label=random_class_labels,
@@ -365,6 +381,7 @@ def generate_and_compute_metrics(
                 num_branches=num_branches,
                 selector=scoring_function,
                 use_global=True,
+                cfg_scale=cfg_scale,
             )
         elif sample_method == "sde_path_exploration":
             sample = sampler.batch_sample_sde_path_exploration(
@@ -447,6 +464,9 @@ def generate_and_compute_metrics(
                 branch_dt=branch_dt,
             )
         elif sample_method == "noise_search_ode_divfree":
+            kwargs = {}
+            if round_start_times is not None:
+                kwargs["round_start_times"] = round_start_times
             sample = sampler.batch_sample_noise_search_ode_divfree(
                 class_label=random_class_labels,
                 batch_size=current_batch_size,
@@ -456,8 +476,12 @@ def generate_and_compute_metrics(
                 lambda_div=lambda_div,
                 selector=scoring_function,
                 use_global=True,
+                **kwargs,
             )
         elif sample_method == "noise_search_sde":
+            kwargs = {}
+            if round_start_times is not None:
+                kwargs["round_start_times"] = round_start_times
             sample = sampler.batch_sample_noise_search_sde(
                 class_label=random_class_labels,
                 batch_size=current_batch_size,
@@ -467,8 +491,12 @@ def generate_and_compute_metrics(
                 noise_scale=noise_scale,
                 selector=scoring_function,
                 use_global=True,
+                **kwargs,
             )
         elif sample_method == "random_search_then_noise_search_ode_divfree":
+            kwargs = {}
+            if round_start_times is not None:
+                kwargs["round_start_times"] = round_start_times
             sample = sampler.batch_sample_random_search_then_noise_search_ode_divfree(
                 class_label=random_class_labels,
                 batch_size=current_batch_size,
@@ -478,12 +506,16 @@ def generate_and_compute_metrics(
                 lambda_div=lambda_div,
                 selector=scoring_function,
                 use_global=True,
+                **kwargs,
             )
         elif sample_method == "noise_search_ode_divfree_max":
+            kwargs = {}
+            if round_start_times is not None:
+                kwargs["round_start_times"] = round_start_times
             sample = sampler.batch_sample_noise_search_ode_divfree_max(
                 class_label=random_class_labels,
                 batch_size=current_batch_size,
-                num_branches=num_branches,
+                num_branches=current_num_branches,
                 num_keep=num_keep,
                 rounds=rounds,
                 lambda_div=lambda_div,
@@ -492,8 +524,13 @@ def generate_and_compute_metrics(
                 use_global=True,
                 deterministic_rollout=bool(deterministic_rollout),
                 repulsion_disable_until_time=repulsion_disable_until_time,
+                cfg_scale=cfg_scale,
+                **kwargs,
             )
         elif sample_method == "random_search_then_noise_search_ode_divfree_max":
+            kwargs = {}
+            if round_start_times is not None:
+                kwargs["round_start_times"] = round_start_times
             sample = (
                 sampler.batch_sample_random_search_then_noise_search_ode_divfree_max(
                     class_label=random_class_labels,
@@ -507,7 +544,46 @@ def generate_and_compute_metrics(
                     use_global=True,
                     deterministic_rollout=bool(deterministic_rollout),
                     repulsion_disable_until_time=repulsion_disable_until_time,
+                    cfg_scale=cfg_scale,
+                    **kwargs,
                 )
+            )
+        elif sample_method == "cfg_search":
+            kwargs = {}
+            if round_start_times is not None:
+                kwargs["round_start_times"] = round_start_times
+            sample = sampler.batch_sample_cfg_search(
+                class_label=random_class_labels,
+                batch_size=current_batch_size,
+                num_branches=num_branches,
+                num_keep=num_keep,
+                rounds=rounds,
+                selector=scoring_function,
+                use_global=True,
+                baseline_cfg_scale=1.5,
+                cfg_range=1.0,
+                **kwargs,
+            )
+        elif sample_method == "noise_search_ode_divfree_max_coarse":
+            kwargs = {}
+            if round_start_times is not None:
+                kwargs["round_start_times"] = round_start_times
+            sample = sampler.batch_sample_noise_search_ode_divfree_max_coarse(
+                class_label=random_class_labels,
+                batch_size=current_batch_size,
+                num_branches=current_num_branches,
+                num_keep=num_keep,
+                rounds=rounds,
+                lambda_div=lambda_div,
+                noise_schedule_end_factor=noise_schedule_end_factor,
+                selector=scoring_function,
+                use_global=True,
+                deterministic_rollout=bool(deterministic_rollout),
+                repulsion_disable_until_time=repulsion_disable_until_time,
+                cfg_scale=cfg_scale,
+                simulate_forward_dt=simulate_forward_dt,
+                fine_dt_threshold=fine_dt_threshold,
+                **kwargs,
             )
         else:
             raise ValueError(f"Unsupported sample method: {sample_method}")
@@ -795,6 +871,8 @@ if __name__ == "__main__":
             "random_search_then_noise_search_ode_divfree",
             "noise_search_ode_divfree_max",
             "random_search_then_noise_search_ode_divfree_max",
+            "cfg_search",
+            "noise_search_ode_divfree_max_coarse",
         ],
         help="Sampling method to use (for both single samples and batch optimization)",
     )
@@ -835,6 +913,20 @@ if __name__ == "__main__":
     )
 
     # Additional parameters
+    parser.add_argument(
+        "--round_start_times",
+        type=str,
+        default=None,
+        help="Comma-separated list of start times for noise search rounds (e.g., '0.0,0.2,0.4')",
+    )
+
+    parser.add_argument(
+        "--branch_schedule",
+        type=str,
+        default=None,
+        help="Comma-separated list of branch counts per round (e.g., '1,2,4'). Overrides branch_pairs for num_branches.",
+    )
+
     parser.add_argument(
         "--dt_std",
         type=float,
@@ -890,7 +982,43 @@ if __name__ == "__main__":
         help="Number of rounds for noise search methods",
     )
 
+    parser.add_argument(
+        "--cfg_scale",
+        type=float,
+        default=None,
+        help="Classifier-free guidance scale (if None, no CFG is used)",
+    )
+    parser.add_argument(
+        "--simulate_forward_dt",
+        type=float,
+        default=None,
+        help="Coarser dt for simulating forward (for coarse ablation). If None, uses base dt.",
+    )
+    parser.add_argument(
+        "--fine_dt_threshold",
+        type=float,
+        default=0.7,
+        help="Time threshold after which to use fine dt (default 0.7)",
+    )
+
     args = parser.parse_args()
+
+    # Parse round_start_times if provided
+    if args.round_start_times:
+        args.round_start_times = [float(t) for t in args.round_start_times.split(",")]
+        args.rounds = len(args.round_start_times)
+        print(
+            f"Using custom round start times: {args.round_start_times} (rounds={args.rounds})"
+        )
+    else:
+        args.round_start_times = None
+
+    # Parse branch_schedule if provided
+    if args.branch_schedule:
+        args.branch_schedule = [int(b) for b in args.branch_schedule.split(",")]
+        print(f"Using custom branch schedule: {args.branch_schedule}")
+    else:
+        args.branch_schedule = None
 
     # Parse branch pairs
     args.branch_pairs = [
